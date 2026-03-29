@@ -1,0 +1,12 @@
+{
+  "timezone": "US/Eastern",
+  "open": "09:30",
+  "close": "16:00",
+  "trading_days": [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday"
+  ]
+}

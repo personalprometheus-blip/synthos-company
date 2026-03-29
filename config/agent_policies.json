@@ -1,0 +1,17 @@
+{
+  "market_hours": [
+    "sentinel",
+    "scoop",
+    "vault"
+  ],
+  "off_hours": [
+    "patches",
+    "blueprint",
+    "librarian",
+    "fidget"
+  ],
+  "always_on": [
+    "timekeeper"
+  ],
+  "note": "Agents listed under market_hours run with elevated priority during trading hours"
+}

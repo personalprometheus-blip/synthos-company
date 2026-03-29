@@ -1,0 +1,6 @@
+{
+  "allowed_ips": [],
+  "mode": "testing",
+  "updated_at": "2026-03-27",
+  "note": "Add your home IP and dev Pi IP before enabling IP allowlisting"
+}

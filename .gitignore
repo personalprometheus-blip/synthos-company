@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+
+# Environment / secrets
+company.env
+*.env
+
+# Install state
+.install_complete
+.install_progress.json
+
+# Logs
+logs/*.log
+logs/crash_reports/
+
+# Runtime state / caches
+data/.cve_cache.json
+data/.sentinel_alerted_*
+data/.patches_state.json
+data/librarian_latest.json
+data/morning_report.json
+data/patches_latest.json
+data/backup_log.json
+data/audit_result.json
+data/package_manifest.json
+data/timekeeper_status.json
+config/package_manifest.json
+.known_good/
+
+# Scoop / trigger files
+data/scoop_trigger.json
+data/suggestions.json
+data/post_deploy_watch.json

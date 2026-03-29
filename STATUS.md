@@ -41,6 +41,20 @@
 | CL-012 | HIGH | company.db schema undocumented |
 | ~~strongbox~~ | ~~HIGH~~ | ~~strongbox.py in wrong repo~~ — RESOLVED (Step 4) |
 
+## ⚠️ Security Note — Integrity Gate
+
+The company integrity gate architecture is defined in `docs/governance/COMPANY_INTEGRITY_GATE_SPEC.md` (retail repo).
+
+**Until the pre-release security phase is complete:**
+- The integrity gate is enforced at setup time only (installer)
+- There is NO boot-time gate — company agents start without a pre-flight integrity check
+- A misconfigured or tampered environment will not be caught at runtime
+- This is accepted for the current phase but must be resolved before live trading or adversarial deployment
+
+Full boot-time enforcement is tracked in PROJECT_STATUS.md (retail repo) under Phase 6 — Pre-Release Security Hardening.
+
+---
+
 ## Notes for AI Agents
 - patches.py was killed for the current work session — restart at end: `nohup python3 /home/pi/synthos-company/agents/patches.py --mode continuous >> logs/bug_finder.log 2>&1 &`
 - company.env contains secrets — never commit it (gitignored)

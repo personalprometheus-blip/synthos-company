@@ -12,8 +12,8 @@ Role:
     - Encrypted daily backups of all retail Pi data to cloud storage
     - Flagging compliance issues to the project lead
 
-  Vault does not send emails. It writes to suggestions.json and triggers
-  Scoop for any customer-facing communication.
+  Vault does not send emails. It writes suggestions to company.db via
+  db_helpers.post_suggestion() and triggers Scoop for customer-facing communication.
 
   Backup encryption: AES-256 via Fernet (cryptography library).
   The encryption key is held by the project lead, not stored on any Pi.
@@ -72,7 +72,7 @@ if _osp.join(_COMPANY_DIR, "utils") not in _sys.path:
 
 from synthos_paths import (
     BASE_DIR, DATA_DIR, LOGS_DIR, DB_PATH,
-    SUGGESTIONS_FILE, SCOOP_TRIGGER, ENV_PATH,
+    SCOOP_TRIGGER, ENV_PATH,
     BACKUP_STAGING, RETAIL_DIR,
 )
 from db_helpers import DB

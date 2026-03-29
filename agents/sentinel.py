@@ -10,8 +10,8 @@ Role:
   Retail Pis POST their heartbeat JSON here every hour during market hours.
   Sentinel is accountable for knowing if any customer Pi goes silent.
 
-  Sentinel does NOT send emails. It writes alerts to suggestions.json
-  and notifies Scoop via a trigger file. Scoop delivers the message.
+  Sentinel does NOT send emails. It writes alerts to company.db via
+  db_helpers.post_suggestion() and notifies Scoop via a trigger file. Scoop delivers the message.
 
 Heartbeat endpoint:
   POST /heartbeat
@@ -71,7 +71,7 @@ if _osp.join(_COMPANY_DIR, "utils") not in _sys.path:
 
 from synthos_paths import (
     BASE_DIR, DATA_DIR, LOGS_DIR, DB_PATH,
-    SUGGESTIONS_FILE, SCOOP_TRIGGER, ENV_PATH,
+    SCOOP_TRIGGER, ENV_PATH,
 )
 from db_helpers import DB
 
@@ -297,7 +297,7 @@ def check_all_silence() -> None:
 def _alert_silence(pi_id: str, age_hours: float, severity: str,
                    mail_enabled: bool) -> None:
     """
-    Write a silence alert to suggestions.json.
+    Write a silence alert to company.db via db_helpers.post_suggestion().
     Scoop picks it up and sends the email.
     Deduplicates — won't re-alert for the same Pi within 4 hours.
     """

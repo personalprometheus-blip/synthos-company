@@ -67,7 +67,7 @@ if _osp.join(_COMPANY_DIR, "utils") not in _sys.path:
 
 from synthos_paths import (
     BASE_DIR, DATA_DIR, LOGS_DIR, CONFIG_DIR, DB_PATH,
-    SUGGESTIONS_FILE, ENV_PATH, RETAIL_DIR,
+    ENV_PATH, RETAIL_DIR,
 )
 from db_helpers import DB
 
@@ -679,7 +679,7 @@ if __name__ == "__main__":
         print(f"  Missing required:  {len(results['missing_required'])}")
         print(f"  Unapproved pkgs:   {len(results['unapproved'])}")
         print(f"  Duplicate fns:     {len(results['duplicates'])}")
-        print(f"  Suggestions filed: see suggestions.json\n")
+        print(f"  Suggestions filed: written to company.db via db_helpers\n")
 
     elif args.cve_check:
         vulns = run_cve_check()

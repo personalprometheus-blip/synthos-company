@@ -39,7 +39,7 @@ Company node is the authority domain. Retail is the validated domain.
 | fidget.py | Feedback processing | db_helpers.post_suggestion() |
 | scoop.py | Sole outbound email sender | db_helpers (scoop queue) |
 | timekeeper.py | DB slot coordination | db_helpers (slots table) |
-| strongbox.py | Automated backups | — (NEEDS MOVE from retail repo) |
+| strongbox.py | Automated backups | — |
 
 ## Critical Rules
 - scoop.py is the ONLY permitted outbound email sender
@@ -49,7 +49,7 @@ Company node is the authority domain. Retail is the validated domain.
 - Never import or call license_validator.py — that is retail-only
 
 ## Known Open Issues
-- strongbox.py is currently in the retail repo (src/) — must be moved here (Step 4 of normalization)
+- strongbox.py is correctly placed in agents/ (Step 4 complete); wired into installer and nightly cron (0 23 * * *); backup model not yet aligned to BACKUP_STRATEGY_INITIAL.md — tracked in milestones.md
 - company.db schema is undocumented — needs PRAGMA table_info extraction (CL-012)
 - TOOL_DEPENDENCY_ARCHITECTURE.md does not classify company agents (CL-009)
 

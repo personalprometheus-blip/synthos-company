@@ -91,6 +91,7 @@ REQUIRED_AGENT_FILES = [
     "scoop.py",
     "vault.py",
     "timekeeper.py",
+    "strongbox.py",
 ]
 
 REQUIRED_UTIL_FILES = [
@@ -300,6 +301,9 @@ def register_cron() -> bool:
 
         # Librarian — weekly Sunday 9am ET
         f"0 9 * * 0          {py} {agent('librarian.py')} >> {logf('librarian')} 2>&1",
+
+        # Strongbox (Backup Manager) — nightly 11pm ET
+        f"0 23 * * *         {py} {agent('strongbox.py')} >> {logf('strongbox')} 2>&1",
 
         "",
     ])

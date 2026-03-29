@@ -20,7 +20,7 @@
 
 ### Phase 3 — Normalization Sprint
 
-- [ ] **Step 4:** Move strongbox.py from retail repo (synthos/src/) to agents/ here — verify running
+- [x] **Step 4:** Move strongbox.py from retail repo (synthos/src/) to agents/ here — done
 - [ ] **Step 5:** Document company.db schema (PRAGMA table_info) — currently undocumented (CL-012)
 
 ---
@@ -39,7 +39,7 @@
 |----|----------|-------------|
 | CL-009 | HIGH | Company agents not classified in TOOL_DEPENDENCY_ARCHITECTURE.md |
 | CL-012 | HIGH | company.db schema undocumented |
-| strongbox | HIGH | strongbox.py in wrong repo — no backups running |
+| ~~strongbox~~ | ~~HIGH~~ | ~~strongbox.py in wrong repo~~ — RESOLVED (Step 4) |
 
 ## Notes for AI Agents
 - patches.py was killed for the current work session — restart at end: `nohup python3 /home/pi/synthos-company/agents/patches.py --mode continuous >> logs/bug_finder.log 2>&1 &`

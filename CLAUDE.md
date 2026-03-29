@@ -20,7 +20,8 @@ Retail node code → https://github.com/personalprometheus-blip/synthos
 Company node is the authority domain. Retail is the validated domain.
 
 ## Where To Find Things
-- Project status → STATUS.md
+- **Master project status** → synthos repo: PROJECT_STATUS.md (phases, cross-repo blockers, overall progress)
+- **This node's status** → STATUS.md (company node operational health)
 - Agent source code → agents/
 - Shared DB utilities → utils/db_helpers.py
 - Path resolution → utils/synthos_paths.py
@@ -54,6 +55,6 @@ Company node is the authority domain. Retail is the validated domain.
 
 ## How To Update Progress
 When a task is complete:
-1. Update STATUS.md in this repo
-2. Update docs/milestones.md in retail repo
-3. Commit: `git commit -m "progress: [what was completed]"`
+1. Update STATUS.md in this repo (company node health)
+2. Check off in PROJECT_STATUS.md in the retail repo (master tracker)
+3. Commit both repos: `git commit -m "progress: [what was completed]"`

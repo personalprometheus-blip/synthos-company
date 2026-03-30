@@ -57,7 +57,7 @@ All paths are derived from `SYNTHOS_HOME`. **No tool, script, or document may ha
 ```yaml
 variables:
   SYNTHOS_HOME:   "<resolved at runtime — root of synthos installation>"
-  CORE_DIR:       "${SYNTHOS_HOME}/core"
+  CORE_DIR:       "${SYNTHOS_HOME}/src"
   USER_DIR:       "${SYNTHOS_HOME}/user"
   DATA_DIR:       "${SYNTHOS_HOME}/data"
   LOG_DIR:        "${SYNTHOS_HOME}/logs"
@@ -174,7 +174,6 @@ required_files:
     - watchdog.py
     - health_check.py
     - shutdown.py
-    - cleanup.py
     - synthos_heartbeat.py
     - portal.py
     - patch.py
@@ -264,7 +263,7 @@ required_files:
 | `synthos_heartbeat.py` | Session-end heartbeat writer — POSTs to Company Pi at agent session completion | Runtime |
 | `portal.py` | Web portal — kill switch, trade approvals, settings, log viewer, live status | Runtime |
 | `patch.py` | Non-volatile update system — safe file replacement with backup | Repair |
-| `install.py` | Guided installer with web UI — 7-step setup wizard | Bootstrap |
+| `install_retail.py` | Guided installer with web UI — 7-step setup wizard | Bootstrap |
 | `sync.py` | Dev sync utility — file updates from GitHub | Maintenance |
 | `license_validator.py` | DEFERRED_FROM_CURRENT_BASELINE — retail entitlement gate; not yet built; not a required artifact in current release | Security |
 | `uninstall.py` | Full system removal — cleans legacy paths, unregisters cron | Repair |

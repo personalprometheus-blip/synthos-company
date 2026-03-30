@@ -1,6 +1,11 @@
 # SUGGESTIONS.JSON — FULL SYSTEM SPECIFICATION
 ## Object Semantics, Lifecycle, Authority, Mutation, Validation, and Schema
 
+> **STATUS: SUPERSEDED**
+> All suggestion writes now go through `db_helpers.post_suggestion()` → `company.db`.
+> `suggestions.json` is no longer written, read, or required by any agent.
+> This document is retained for historical reference only. See `DATABASE_SCHEMA_CANONICAL.md` for the current schema.
+
 **Document Version:** 1.0
 **Date:** 2026-03-27
 **Status:** Active — governing contract for all agents

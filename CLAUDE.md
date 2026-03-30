@@ -22,11 +22,12 @@ Company node is the authority domain. Retail is the validated domain.
 ## Where To Find Things
 - **Master project status** → synthos repo: PROJECT_STATUS.md (phases, cross-repo blockers, overall progress)
 - **This node's status** → STATUS.md (company node operational health)
+- **All governance, specs, validation, and planning docs** → documentation/
 - Agent source code → agents/
 - Shared DB utilities → utils/db_helpers.py
 - Path resolution → utils/synthos_paths.py
 - Installer → install_company.py
-- Integrity gate spec → see retail repo: docs/governance/COMPANY_INTEGRITY_GATE_SPEC.md
+- Integrity gate spec → documentation/governance/COMPANY_INTEGRITY_GATE_SPEC.md
 
 ## Agent Roster (agents/)
 | File | Role | Write path |

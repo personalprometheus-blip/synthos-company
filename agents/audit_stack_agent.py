@@ -37,6 +37,8 @@ _db = get_db_helpers()
 # CONSTANTS
 # ============================================================
 
+AGENT_VERSION = "1.0.0"
+
 # Default active lanes when none are specified by the caller
 DEFAULT_ACTIVE_LANES = {"correctness", "compliance", "anomaly", "bias", "robustness"}
 
@@ -182,6 +184,25 @@ FAULT_ROOT_CAUSE = {
     "missing_citation":           "stale_data",
     "unsupported_citation":       "stale_data",
     "unresolved_source_conflict": "stale_data",
+}
+
+# ============================================================
+# V1 SCHEMA DEFINITIONS
+# ============================================================
+
+INPUT_SCHEMA = {
+    "trade_output": {"type": "dict", "required": True,  "description": "Trade Logic Agent output (passed as result_payload)"},
+    "run_id":       {"type": "str",  "required": True},
+    "active_lanes": {"type": "list", "required": False, "description": "Override active lane set (default: 5 lanes)"},
+}
+
+OUTPUT_SCHEMA = {
+    "master_classification":        {"type": "str",  "values": ["pass", "review_recommended", "fail", "block_output", "escalate_systemic_issue"]},
+    "final_stack_signal":           {"type": "str",  "values": ["clean", "warning", "faulty", "blocked", "systemic_failure"]},
+    "only_bias_lane_failed":        {"type": "bool", "description": "True when exactly one lane fails and it is bias"},
+    "only_correctness_lane_failed": {"type": "bool", "description": "True when exactly one lane fails and it is correctness"},
+    "lane_states":                  {"type": "dict", "description": "Per-lane classification state"},
+    "decision_log":                 {"type": "list", "description": "Full gate trace"},
 }
 
 # ============================================================
@@ -1709,6 +1730,46 @@ def main():
         print(f"Stack Score           : {result.get('stack_score')}")
         print(f"Final Stack Signal    : {result.get('final_stack_signal')}")
         print(f"{'='*72}\n")
+
+
+# ============================================================
+# V1 ENTRY POINT
+# ============================================================
+
+def run_agent(snapshot: dict) -> dict:
+    """
+    V1 standard entry point for the Validator Stack.
+
+    snapshot keys:
+        trade_output  (required) — Trade Logic Agent output dict
+        run_id        (required) — unique run identifier
+        active_lanes  (optional) — list of lanes to activate
+
+    Returns the audit stack output dict extended with:
+        only_bias_lane_failed        — bool
+        only_correctness_lane_failed — bool
+    """
+    trade_output = snapshot.get("trade_output")
+    run_id       = snapshot.get("run_id", "unknown")
+    active_lanes = snapshot.get("active_lanes")
+
+    submission = {
+        "submission_id":  run_id,
+        "result_payload": trade_output,
+    }
+    if active_lanes:
+        submission["requested_lanes"] = active_lanes
+
+    result = audit_stack(submission)
+
+    # Compute V1 specialist-reroute flags
+    lane_states  = result.get("lane_states", {})
+    failed_lanes = [ln for ln, st in lane_states.items()
+                    if st in ("fail", "block_output", "escalate_systemic_issue")]
+    result["only_bias_lane_failed"]        = (failed_lanes == ["bias"])
+    result["only_correctness_lane_failed"] = (failed_lanes == ["correctness"])
+
+    return result
 
 
 if __name__ == "__main__":

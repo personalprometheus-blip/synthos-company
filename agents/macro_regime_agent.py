@@ -40,6 +40,8 @@ _db    = get_db_helpers()
 # CONSTANTS
 # ============================================================
 
+AGENT_VERSION = "1.0.0"
+
 # Gate 1 — System Gate
 MIN_REQUIRED_MACRO_INPUTS  = 3
 MAX_SNAPSHOT_AGE_MINUTES   = 60
@@ -259,6 +261,28 @@ MACRO_INPUT_KEYS = [
     "net_liquidity_change", "DXY_return", "WTI_return",
     "macro_news_sentiment_score",
 ]
+
+# ============================================================
+# V1 SCHEMA DEFINITIONS
+# ============================================================
+
+INPUT_SCHEMA = {
+    "snapshot_id":              {"type": "str",  "required": True,  "description": "Snapshot identifier"},
+    "timestamp":                {"type": "str",  "required": True,  "description": "ISO UTC snapshot timestamp"},
+    "macro_data_status":        {"type": "str",  "required": True,  "description": "'online' or other"},
+    "SPX_feed_status":          {"type": "str",  "required": False, "description": "'online' or other"},
+    "snapshot_payload":         {"type": "dict", "required": True,  "description": "All macro metric values"},
+    "processed_snapshot_store": {"type": "list", "required": True,  "description": "Previously processed SHA-256 hashes"},
+}
+
+OUTPUT_SCHEMA = {
+    "final_macro_state":    {"type": "str",   "values": ["strong_expansion", "mild_expansion", "neutral", "mild_contraction", "strong_contraction", "stagflation_override"]},
+    "macro_confidence":     {"type": "float", "range": "[0.0, 1.0]"},
+    "macro_regime_score":   {"type": "float", "range": "[-1.0, 1.0]"},
+    "warning_states":       {"type": "list",  "description": "Active divergence warnings"},
+    "final_macro_signal":   {"type": "float", "range": "[-1.0, 1.0]"},
+    "decision_log":         {"type": "list",  "description": "Full gate trace"},
+}
 
 # ============================================================
 # REGIME DECISION LOG
@@ -2335,6 +2359,14 @@ def main():
             wt = result.get("component_weights", {}).get(comp, 0)
             print(f"  {comp:12s}  score={score:+.4f}  weight={wt:.4f}")
         print(f"{'='*72}\n")
+
+
+# ============================================================
+# V1 ENTRY POINT
+# ============================================================
+
+#: V1 standard entry point. Accepts snapshot dict, returns output dict.
+run_agent = process_snapshot
 
 
 if __name__ == "__main__":

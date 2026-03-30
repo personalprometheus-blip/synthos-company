@@ -86,6 +86,8 @@ logging.basicConfig(
 )
 log = logging.getLogger("social_rumor_agent")
 
+AGENT_VERSION = "1.0.0"
+
 # ── CONSTANTS — GATE 1: SYSTEM GATE ───────────────────────────────────────────
 
 MAX_SOCIAL_AGE_HOURS          = 4       # posts older than this → stale
@@ -423,6 +425,21 @@ def _market_session(ts: datetime) -> str:
     if current_minutes > close_minutes:
         return "postmarket"
     return "intraday"
+
+# ── V1 SCHEMA DEFINITIONS ─────────────────────────────────────────────────────
+
+INPUT_SCHEMA = {
+    "normalized_social": {"type": "dict", "required": True,  "description": "Normalized social/rumor fields"},
+    "run_id":            {"type": "str",  "required": True},
+    "timestamp":         {"type": "str",  "required": True,  "description": "ISO UTC snapshot timestamp"},
+}
+
+OUTPUT_SCHEMA = {
+    "classification":     {"type": "str",  "values": ["bullish_rumor_signal", "bearish_rumor_signal", "relative_alpha_signal", "manipulation_watch", "benchmark_regime_signal", "upgraded_to_confirmed_event", "ignore"]},
+    "overall_confidence": {"type": "float", "range": "[0.0, 1.0]"},
+    "confirmation_state": {"type": "str",  "values": ["confirmed", "provisional", "contradictory", "unresolved"]},
+    "decision_log":       {"type": "list", "description": "Full gate trace"},
+}
 
 # ── RUMOR DECISION LOG ─────────────────────────────────────────────────────────
 
@@ -2130,6 +2147,120 @@ def main():
         print(json.dumps(summary, indent=2))
     elif args.mode == "status":
         show_status()
+
+
+# ── V1 ENTRY POINT ────────────────────────────────────────────────────────────
+
+def run_agent(snapshot: dict) -> dict:
+    """
+    V1 standard entry point for the Social / Rumor Agent (7.3).
+
+    Accepts a snapshot dict with normalized social data instead of making
+    live API calls. The classification spine (process_post) runs on the
+    normalized_social dict mapped to the expected post field format.
+
+    snapshot keys:
+        normalized_social  (required) — normalized social/rumor fields:
+            text               — post text content
+            source_id          — source platform identifier
+            post_time          — ISO UTC post timestamp
+            credibility_score  — source credibility 0-100
+            language           — language code (default "en")
+            repost_count       — repost/share count
+            engagement_count   — total engagements
+            bot_probability    — float 0-1
+            confirmation_count — independent confirmations
+            sentiment_score    — float [-1, 1]
+            benchmark_context  — dict with trend/vol/drawdown_active (optional)
+        run_id     (required) — unique run identifier
+        timestamp  (required) — ISO UTC snapshot timestamp
+
+    Returns:
+        classification     — V1 rumor signal category
+        overall_confidence — composite confidence [0.0, 1.0]
+        confirmation_state — confirmed | provisional | contradictory | unresolved
+        decision_log       — full gate trace list
+    """
+    normalized_social = snapshot.get("normalized_social")
+    run_id            = snapshot.get("run_id", "unknown")
+    timestamp         = snapshot.get("timestamp")
+
+    if not normalized_social:
+        return {
+            "halted":             True,
+            "halt_reason":        "no_social_input",
+            "classification":     None,
+            "overall_confidence": 0.0,
+            "confirmation_state": "unresolved",
+            "decision_log":       [],
+        }
+
+    # Resolve run timestamp from snapshot (deterministic — never datetime.now())
+    try:
+        if timestamp:
+            run_ts = datetime.fromisoformat(
+                timestamp.replace("Z", "+00:00")
+            ).replace(tzinfo=timezone.utc)
+        else:
+            run_ts = _now_utc()
+    except (ValueError, AttributeError):
+        run_ts = _now_utc()
+
+    # Map normalized_social fields to the post dict format expected by process_post
+    post = {
+        "post_id":           run_id,
+        "source_id":         normalized_social.get("source_id", "synthetic"),
+        "post_time":         normalized_social.get("post_time", timestamp),
+        "text":              normalized_social.get("text", ""),
+        "language":          normalized_social.get("language", "en"),
+        "character_count":   len(normalized_social.get("text", "")),
+        "credibility_score": normalized_social.get("credibility_score", 70),
+        "source_score":      normalized_social.get("credibility_score", 70) / 100.0,
+        "repost_count":      normalized_social.get("repost_count", 0),
+        "engagement_count":  normalized_social.get("engagement_count", 0),
+        "bot_probability":   normalized_social.get("bot_probability", 0.0),
+        "confirmation_count": normalized_social.get("confirmation_count", 0),
+        "sentiment_score":   normalized_social.get("sentiment_score", 0.0),
+        **{k: v for k, v in normalized_social.items()},
+    }
+
+    benchmark = normalized_social.get("benchmark_context", {})
+    run_cache = []
+
+    result = process_post(post, run_ts, run_cache, benchmark)
+
+    # Map internal classification values to V1 output states
+    internal_cls = result.get("classification", "ignore")
+    _cls_map = {
+        "long_bias":                   "bullish_rumor_signal",
+        "short_bias":                  "bearish_rumor_signal",
+        "relative_alpha":              "relative_alpha_signal",
+        "relative_alpha_signal":       "relative_alpha_signal",
+        "manipulation_watch":          "manipulation_watch",
+        "benchmark_regime":            "benchmark_regime_signal",
+        "benchmark_regime_signal":     "benchmark_regime_signal",
+        "upgraded_to_confirmed_event": "upgraded_to_confirmed_event",
+        "discard_pre_signal":          "ignore",
+        "no_signal":                   "ignore",
+        "ignore":                      "ignore",
+    }
+    v1_cls = _cls_map.get(internal_cls, "ignore")
+
+    _conf_map = {
+        "confirmed":           "confirmed",
+        "provisional":         "provisional",
+        "contradictory":       "contradictory",
+        "unresolved":          "unresolved",
+        "expired_unconfirmed": "unresolved",
+    }
+    raw_conf = result.get("confirmation_state", "unresolved")
+
+    return {
+        "classification":     v1_cls,
+        "overall_confidence": float(result.get("composite_score", 0.0)),
+        "confirmation_state": _conf_map.get(raw_conf, "unresolved"),
+        "decision_log":       result.get("decision_log", []),
+    }
 
 
 if __name__ == "__main__":

@@ -86,6 +86,8 @@ logging.basicConfig(
 )
 log = logging.getLogger("bias_audit_agent")
 
+AGENT_VERSION = "1.0.0"
+
 # ── CONSTANTS — GATE 3: GROUP MAPPING ─────────────────────────────────────────
 
 GROUP_MAPPING_THRESHOLD       = 0.50    # confidence minimum for group mapping
@@ -289,6 +291,19 @@ PROHIBITED_JUSTIFICATION_TERMS = {
     "because of their race", "due to their gender", "because of their religion",
     "due to their nationality", "because of their age",
     "because of their disability", "due to their sexual orientation",
+}
+
+# ── V1 SCHEMA DEFINITIONS ─────────────────────────────────────────────────────
+
+INPUT_SCHEMA = {
+    "trade_output": {"type": "dict", "required": True,  "description": "Trade Logic Agent output"},
+    "run_id":       {"type": "str",  "required": True},
+}
+
+OUTPUT_SCHEMA = {
+    "classification": {"type": "str",  "values": ["block_output", "fail_bias_audit", "pass_with_bias_warning", "fairness_review_recommended", "pass"]},
+    "bias_findings":  {"type": "list", "description": "Identified bias codes"},
+    "decision_log":   {"type": "list", "description": "Full gate trace"},
 }
 
 # ── BIAS AUDIT DECISION LOG ────────────────────────────────────────────────────
@@ -1731,6 +1746,74 @@ def main():
           f"faults: {len(audit.get('fault_register', []))}")
     if audit.get("halt_reason"):
         print(f"Halted: {audit['halt_reason']}")
+
+
+# ── V1 ENTRY POINT ────────────────────────────────────────────────────────────
+
+def run_agent(snapshot: dict) -> dict:
+    """
+    V1 standard entry point for the Bias Detection Agent (7.10).
+
+    snapshot keys:
+        trade_output  (required) — Trade Logic Agent output dict
+        run_id        (required) — unique run identifier
+
+    Returns:
+        classification — block_output | fail_bias_audit | pass_with_bias_warning |
+                         fairness_review_recommended | pass
+        bias_findings  — list of bias code strings
+        decision_log   — list of gate trace records
+    """
+    trade_output = snapshot.get("trade_output")
+    run_id       = snapshot.get("run_id", "unknown")
+
+    submission = {
+        "result_id":      run_id,
+        "result_type":    "trade_output",
+        "result_payload": trade_output if trade_output is not None else {},
+        "bias_rule_set":  {"mode": "trade_output_bias_audit"},
+    }
+    if trade_output is None:
+        submission["result_payload"] = None
+
+    result = audit_bias(submission)
+
+    # Map internal classification values to V1 output states
+    raw_cls = result.get("classification", "block_output")
+    cls_map = {
+        "block_output":               "block_output",
+        "fail_bias_audit":            "fail_bias_audit",
+        "pass_with_bias_warning":     "pass_with_bias_warning",
+        "fairness_review_recommended":"fairness_review_recommended",
+        "pass":                       "pass",
+        # Internal names that map to V1 states
+        "escalate_systemic_issue":    "block_output",
+        "review_recommended":         "fairness_review_recommended",
+        "pass_with_warnings":         "pass_with_bias_warning",
+    }
+
+    bias_findings = [f.get("fault_state", "unknown")
+                     for f in result.get("fault_register", [])]
+
+    # Convert gates dict to decision_log list for V1 contract
+    gates = result.get("gates", {})
+    decision_log = [
+        {
+            "gate":        gnum,
+            "name":        gdata.get("name", ""),
+            "inputs":      gdata.get("inputs", {}),
+            "result":      gdata.get("result", ""),
+            "reason_code": gdata.get("reason", ""),
+            "ts":          gdata.get("ts", ""),
+        }
+        for gnum, gdata in sorted(gates.items())
+    ]
+
+    return {
+        "classification": cls_map.get(raw_cls, "fail_bias_audit"),
+        "bias_findings":  bias_findings,
+        "decision_log":   decision_log,
+    }
 
 
 if __name__ == "__main__":

@@ -85,6 +85,8 @@ logging.basicConfig(
 )
 log = logging.getLogger("result_audit_agent")
 
+AGENT_VERSION = "1.0.0"
+
 # ── CONSTANTS — GATE 1: SYSTEM GATE ───────────────────────────────────────────
 
 # (Gate 1 has no numeric thresholds — all checks are null/hash comparisons)
@@ -260,6 +262,21 @@ FAULT_SCOPE = {
     "data_leakage":                 ("decision_output", "critical"),
     "adversarial_vulnerability":    ("decision_output", "critical"),
     "causal_overreach":             ("decision_output", "critical"),
+}
+
+# ── V1 SCHEMA DEFINITIONS ─────────────────────────────────────────────────────
+
+AGENT_VERSION = "1.0.0"
+
+INPUT_SCHEMA = {
+    "trade_output": {"type": "dict", "required": True,  "description": "Trade Logic Agent output"},
+    "run_id":       {"type": "str",  "required": True},
+}
+
+OUTPUT_SCHEMA = {
+    "classification": {"type": "str",  "values": ["block_output", "fail", "pass_with_warnings", "pass"]},
+    "fault_list":     {"type": "list", "description": "Identified fault codes"},
+    "decision_log":   {"type": "list", "description": "Full gate trace"},
 }
 
 # ── AUDIT DECISION LOG ─────────────────────────────────────────────────────────
@@ -2365,6 +2382,71 @@ def main():
           f"faults: {len(audit.get('fault_register', []))}")
     if audit.get("halt_reason"):
         print(f"Halted: {audit['halt_reason']}")
+
+
+# ── V1 ENTRY POINT ────────────────────────────────────────────────────────────
+
+def run_agent(snapshot: dict) -> dict:
+    """
+    V1 standard entry point for the Fault Detection Agent (7.9).
+
+    snapshot keys:
+        trade_output  (required) — Trade Logic Agent output dict
+        run_id        (required) — unique run identifier
+
+    Returns:
+        classification  — block_output | fail | pass_with_warnings | pass
+        fault_list      — list of fault code strings
+        decision_log    — list of gate trace records
+    """
+    trade_output = snapshot.get("trade_output")
+    run_id       = snapshot.get("run_id", "unknown")
+
+    submission = {
+        "result_id":           run_id,
+        "result_type":         "trade_output",
+        "result_payload":      trade_output if trade_output is not None else {},
+        "evaluation_rule_set": {"mode": "trade_output_audit"},
+    }
+    if trade_output is None:
+        submission["result_payload"] = None
+
+    result = audit_result(submission)
+
+    # Map internal classification values to V1 output states
+    raw_cls = result.get("classification", "block_output")
+    cls_map = {
+        "block_output":            "block_output",
+        "escalate_systemic_issue": "block_output",
+        "fail":                    "fail",
+        "manual_investigation":    "fail",
+        "review_recommended":      "pass_with_warnings",
+        "pass_with_warnings":      "pass_with_warnings",
+        "pass":                    "pass",
+    }
+
+    fault_list = [f.get("fault_state", "unknown")
+                  for f in result.get("fault_register", [])]
+
+    # Convert gates dict to decision_log list for V1 contract
+    gates = result.get("gates", {})
+    decision_log = [
+        {
+            "gate":        gnum,
+            "name":        gdata.get("name", ""),
+            "inputs":      gdata.get("inputs", {}),
+            "result":      gdata.get("result", ""),
+            "reason_code": gdata.get("reason", ""),
+            "ts":          gdata.get("ts", ""),
+        }
+        for gnum, gdata in sorted(gates.items())
+    ]
+
+    return {
+        "classification": cls_map.get(raw_cls, "fail"),
+        "fault_list":     fault_list,
+        "decision_log":   decision_log,
+    }
 
 
 if __name__ == "__main__":

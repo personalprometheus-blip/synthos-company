@@ -47,6 +47,8 @@ _db    = get_db_helpers()
 # CONSTANTS
 # ============================================================
 
+AGENT_VERSION = "1.0.0"
+
 # Gate 1 — System Gate
 MIN_REQUIRED_AGENTS        = 2
 MIN_CONFIDENT_AGENT_COUNT  = 3
@@ -229,6 +231,35 @@ FLOW_WEIGHTS       = (0.70, 0.15, 0.15)
 NEWS_WEIGHTS       = (0.75, 0.15, 0.10)
 RUMOR_WEIGHTS      = (0.75, 0.15, 0.10)
 
+
+# ============================================================
+# V1 SCHEMA DEFINITIONS
+# ============================================================
+
+INPUT_SCHEMA = {
+    "snapshot_id":              {"type": "str",  "required": True},
+    "timestamp":                {"type": "str",  "required": True,  "description": "ISO UTC snapshot timestamp"},
+    "macro_agent_output":       {"type": "dict", "required": False, "description": "Macro Regime Agent output"},
+    "sentiment_agent_output":   {"type": "dict", "required": False, "description": "Market Sentiment Agent output"},
+    "flow_agent_output":        {"type": "dict", "required": False, "description": "Positioning/Flow Agent output"},
+    "news_agent_output":        {"type": "dict", "required": False, "description": "News Agent output"},
+    "rumor_agent_output":       {"type": "dict", "required": False, "description": "Social Rumor Agent output"},
+    "benchmark_state_output":   {"type": "dict", "required": False, "description": "Benchmark anchor data"},
+    "validator_output":         {"type": "dict", "required": False, "description": "Must be null at this stage"},
+    "processed_snapshot_store": {"type": "list", "required": True,  "description": "Previously processed hashes"},
+}
+
+OUTPUT_SCHEMA = {
+    "final_market_state":        {"type": "str",   "values": ["strong_risk_on", "mild_risk_on", "neutral", "mild_risk_off", "strong_risk_off", "panic_override", "deleveraging_override", "blocked_override"]},
+    "final_market_state_signal": {"type": "float", "range": "[-1.0, 1.0]"},
+    "aggregate_market_score":    {"type": "float", "range": "[-1.0, 1.0]"},
+    "aggregate_confidence":      {"type": "float", "range": "[0.0, 1.0]"},
+    "market_regime_state":       {"type": "str",   "description": "Named market regime"},
+    "classification":            {"type": "str",   "description": "Action classification"},
+    "warning_states":            {"type": "list",  "description": "Active divergence warnings"},
+    "downstream_route":          {"type": "str",   "description": "Bias instruction for Trade Logic Agent"},
+    "decision_log":              {"type": "list",  "description": "Full gate trace"},
+}
 
 # ============================================================
 # AGGREGATOR DECISION LOG
@@ -2406,6 +2437,14 @@ def main():
             if hasattr(dlog, k):
                 setattr(dlog, k, v)
         print(dlog.to_human_readable())
+
+
+# ============================================================
+# V1 ENTRY POINT
+# ============================================================
+
+#: V1 standard entry point. Accepts snapshot dict, returns output dict.
+run_agent = aggregate_market_state
 
 
 if __name__ == "__main__":

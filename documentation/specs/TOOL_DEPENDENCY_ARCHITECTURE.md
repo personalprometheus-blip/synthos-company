@@ -321,6 +321,42 @@ if __name__ == '__main__':
 
 ---
 
+## Company Node Agent Classification
+
+> **CL-009 RESOLVED** — Company agents were previously unclassified in this document.
+> Classifications added 2026-03-30.
+
+### Roster
+
+| Agent | Class | Description |
+|---|---|---|
+| `blueprint.py` | **Repair** | Implements approved suggestions; performs atomic code deploys (staging → validate → rename). Triggered by CRITICAL bug or CVE events and scheduled Mon–Thu build window. |
+| `sentinel.py` | **Runtime** | Long-running Flask server (port 5004); receives retail Pi heartbeats, detects silence, escalates via Scoop. |
+| `vault.py` | **Maintenance** | Scheduled license key management, compliance scans, customer lifecycle transitions, and encrypted backup orchestration. |
+| `patches.py` | **Observability** | Scans retail Pi logs and system state for bugs and anomalies; detects, documents, and escalates. Does not modify any code or configuration. |
+| `librarian.py` | **Maintenance** | Scheduled dependency audits, CVE scanning, and approved package manifest maintenance. Does not install packages. |
+| `fidget.py` | **Observability** | Monitors API usage and cost across all agents; detects spend anomalies; reports to morning digest. Does not modify agent behavior. |
+| `scoop.py` | **Runtime** | Long-running queue processor; sole permitted outbound communication channel (email/SMS). All other agents write to the scoop queue — never send directly. |
+| `timekeeper.py` | **Runtime** | Long-running scheduler and DB slot coordinator; serializes write access to company.db via request/grant model. |
+| `strongbox.py` | **Maintenance** | Scheduled backup compression, encryption, and Cloudflare R2 upload; enforces 30-day rolling retention; verifies integrity via checksum. |
+
+### Classification Notes
+
+- `blueprint.py` is classified **Repair** rather than Maintenance because its trigger is bug/CVE remediation or approved suggestion implementation — not routine upkeep. Its scheduled build window is the deployment vehicle, not a maintenance window in the traditional sense.
+- `patches.py` and `fidget.py` are **Observability** because they exclusively monitor and report; neither modifies system state or configuration.
+- `scoop.py` and `timekeeper.py` are **Runtime** because they run continuously and must be alive for other agents to function correctly.
+
+### Additional Agents (unclassified — pending roster decision)
+
+The following agents exist in `agents/` but are not yet in the official company agent roster. Classification is deferred until roster status is confirmed.
+
+- `social_rumor_agent.py` — Social feed signal processor (likely **Runtime** or **Data**)
+- `result_audit_agent.py` — Result quality evaluator (likely **Observability**)
+- `bias_audit_agent.py` — Bias detection auditor (likely **Observability**)
+- `audit_stack_agent.py` — Multi-lane audit spine (likely **Observability**)
+
+---
+
 **Version:** 1.0
 **Last Updated:** March 2026
 **Next Review:** June 2026

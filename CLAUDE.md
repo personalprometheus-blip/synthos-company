@@ -13,7 +13,7 @@ Raspberry Pi 4B/5, cloud VM (AWS/GCP/DigitalOcean), local server, or Docker cont
 The only requirement is persistent storage for company.db and network access from retail nodes.
 
 ## Current Phase
-Phase 3 — Normalization Sprint (same phase as retail repo)
+Phase 5 — Deployment Pipeline
 
 ## Node Architecture
 - **company_node** (Pi 4B, this machine): ops agents, licensing, backups, monitoring — this repo
@@ -55,9 +55,9 @@ Company node is the authority domain. Retail is the validated domain.
 - Never import or call license_validator.py — that is retail-only
 
 ## Known Open Issues
-- strongbox.py is correctly placed in agents/ (Step 4 complete); wired into installer and nightly cron (0 23 * * *); backup model not yet aligned to BACKUP_STRATEGY_INITIAL.md — tracked in milestones.md
-- company.db schema is undocumented — needs PRAGMA table_info extraction (CL-012)
-- TOOL_DEPENDENCY_ARCHITECTURE.md does not classify company agents (CL-009)
+- strongbox.py backup model not yet fully aligned to BACKUP_STRATEGY_INITIAL.md — tracked in milestones.md
+- SYS-B06: Installer core/ vs flat layout mismatch — Phase 5 work
+- SYS-B07: update-staging branch absent — Phase 5 work
 
 ## How To Update Progress
 When a task is complete:

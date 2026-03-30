@@ -5,8 +5,8 @@
 > **Companion:** `synthos` owns retail_node (Pi 2W) + master PROJECT_STATUS.md — do NOT put retail code here
 > **Separate:** `Sentinel` repo is unrelated to Synthos
 
-**Last Updated:** 2026-03-29
-**Current Phase:** Phase 3 — Normalization Sprint
+**Last Updated:** 2026-03-30
+**Current Phase:** Phase 5 — Deployment Pipeline
 **Repo:** synthos-company (this repo)
 **Companion:** synthos (retail node) — https://github.com/personalprometheus-blip/synthos
 
@@ -18,23 +18,9 @@
 - patches.py bugs fixed (dry-run, timezone, continuous mode)
 - **Suggestions pipeline migrated to DB:** sentinel.py, vault.py, librarian.py now write via `db_helpers.post_suggestion()` — no longer write directly to suggestions.json
 - Repo initialized with professional structure (CLAUDE.md, STATUS.md, README.md, .gitignore)
-
----
-
-## 🟡 In Progress
-
-### Phase 3 — Normalization Sprint
-
-- [x] **Step 4:** Move strongbox.py from retail repo (synthos/src/) to agents/ here — done
-- [ ] **Step 5:** Document company.db schema (PRAGMA table_info) — currently undocumented (CL-012)
-
----
-
-## 🔴 Not Started
-
-### Phase 4 — Ground Truth Declaration
-- Requires Phase 3 complete
-- See retail repo STATUS.md for full milestone plan
+- Phase 3 normalization complete: strongbox.py moved, company.db schema canonicalized (CL-012 RESOLVED), all suggestion pipeline migrations done
+- Company agents classified in TOOL_DEPENDENCY_ARCHITECTURE.md (CL-009 RESOLVED)
+- Phase 4 Ground Truth declared — docs/GROUND_TRUTH.md
 
 ---
 
@@ -42,9 +28,9 @@
 
 | ID | Severity | Description |
 |----|----------|-------------|
-| CL-009 | HIGH | Company agents not classified in TOOL_DEPENDENCY_ARCHITECTURE.md |
-| CL-012 | HIGH | company.db schema undocumented |
-| ~~strongbox~~ | ~~HIGH~~ | ~~strongbox.py in wrong repo~~ — RESOLVED (Step 4) |
+| ~~CL-009~~ | ~~HIGH~~ | ~~Company agents not classified in TOOL_DEPENDENCY_ARCHITECTURE.md~~ — RESOLVED 2026-03-30 |
+| ~~CL-012~~ | ~~HIGH~~ | ~~company.db schema undocumented~~ — RESOLVED: docs/specs/DATABASE_SCHEMA_CANONICAL.md |
+| ~~strongbox~~ | ~~HIGH~~ | ~~strongbox.py in wrong repo~~ — RESOLVED |
 
 ## ⚠️ Security Note — Integrity Gate
 

@@ -66,12 +66,12 @@ LOG_FILE       = BASE_DIR / "logs" / "mail_agent.log"
 
 ET = ZoneInfo("America/New_York")
 
-load_dotenv(BASE_DIR / ".env", override=True)
+load_dotenv(BASE_DIR / "company.env", override=True)
 
 SENDGRID_API_KEY   = os.environ.get("SENDGRID_API_KEY", "")
-SENDGRID_FROM      = os.environ.get("SENDGRID_FROM_EMAIL", "alerts@synthos.app")
+SENDGRID_FROM      = os.environ.get("SENDGRID_FROM", "alerts@synthos.app")
 SENDGRID_FROM_NAME = os.environ.get("SENDGRID_FROM_NAME", "Synthos")
-PROJECT_LEAD_EMAIL = os.environ.get("PROJECT_LEAD_EMAIL", "")
+PROJECT_LEAD_EMAIL = os.environ.get("OPERATOR_EMAIL", "")
 
 # Gmail SMTP config -- uncomment when command portal transport toggle is ready
 # GMAIL_USER         = os.environ.get("GMAIL_USER", "")

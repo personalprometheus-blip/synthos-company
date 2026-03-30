@@ -165,23 +165,26 @@ def read_source_file(rel_path: str) -> str | None:
 
 
 COMPONENT_MAP = {
-    "Bolt":            ["core/agent1_trader.py"],
-    "Trader agent":    ["core/agent1_trader.py"],
-    "Scout":           ["core/agent2_research.py"],
-    "Research agent":  ["core/agent2_research.py"],
-    "Pulse":           ["core/agent3_sentiment.py"],
-    "Sentiment agent": ["core/agent3_sentiment.py"],
-    "Patches":         ["agents/patches.py"],
-    "Blueprint":       ["agents/blueprint.py"],
-    "Sentinel":        ["agents/sentinel.py"],
-    "Vault":           ["agents/vault.py"],
-    "Librarian":       ["agents/librarian.py"],
-    "Fidget":          ["agents/fidget.py"],
-    "Scoop":           ["agents/scoop.py"],
-    "Timekeeper":      ["agents/timekeeper.py"],
-    "Watchdog":        ["core/watchdog.py"],
-    "All Pis":         ["core/agent1_trader.py", "core/agent2_research.py",
-                        "core/agent3_sentiment.py"],
+    "Bolt":              ["agents/trade_logic_agent.py"],
+    "Trader agent":      ["agents/trade_logic_agent.py"],
+    "Trade logic":       ["agents/trade_logic_agent.py"],
+    "Scout":             ["agents/news_agent.py"],
+    "Research agent":    ["agents/news_agent.py"],
+    "News agent":        ["agents/news_agent.py"],
+    "Pulse":             ["agents/market_sentiment_agent.py"],
+    "Sentiment agent":   ["agents/market_sentiment_agent.py"],
+    "Market sentiment":  ["agents/market_sentiment_agent.py"],
+    "Patches":           ["agents/patches.py"],
+    "Blueprint":         ["agents/blueprint.py"],
+    "Sentinel":          ["agents/sentinel.py"],
+    "Vault":             ["agents/vault.py"],
+    "Librarian":         ["agents/librarian.py"],
+    "Fidget":            ["agents/fidget.py"],
+    "Scoop":             ["agents/scoop.py"],
+    "Timekeeper":        ["agents/timekeeper.py"],
+    "Watchdog":          ["src/watchdog.py"],
+    "All Pis":           ["agents/trade_logic_agent.py", "agents/news_agent.py",
+                          "agents/market_sentiment_agent.py"],
 }
 
 ALWAYS_INCLUDE = [
@@ -240,7 +243,7 @@ OUTPUT FORMAT — JSON only, nothing else:
   "confidence": "HIGH|MEDIUM|LOW",
   "files_changed": [
     {
-      "path": "core/agent1_trader.py",
+      "path": "agents/trade_logic_agent.py",
       "change_type": "modify|create|delete",
       "description": "Specific change and reasoning",
       "full_content": "... complete file ..."

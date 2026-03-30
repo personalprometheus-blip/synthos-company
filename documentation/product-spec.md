@@ -15,17 +15,17 @@ Synthos monitors U.S. Congressional trading disclosures (via Congress.gov API) a
 ## Core Trading Pipeline (retail_node)
 
 ```
-agent2_research.py (Scout)
+news_agent.py (Scout)
   └─ Fetches congressional disclosures daily
   └─ Scores members by historical win rate (member_weights)
   └─ Writes signals to signals.db
 
-agent3_sentiment.py (Pulse)
+market_sentiment_agent.py (Pulse)
   └─ Runs market sentiment scan
   └─ Writes sentiment scores to scan_log
   └─ Issues pulse_warning if sentiment is bearish
 
-agent1_trader.py (Bolt)
+trade_logic_agent.py (Bolt)
   └─ Reads scored signals from signals.db
   └─ Applies Option B logic:
        MIRROR  → adjusted_score ≥ threshold, no pulse_warning

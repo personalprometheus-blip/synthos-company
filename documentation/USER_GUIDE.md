@@ -231,9 +231,9 @@ tail -20 /home/pi/synthos/synthos_build/logs/boot.log
 
 | Agent | Name | Role |
 |-------|------|------|
-| agent1_trader.py | Bolt | Scores signals, queues approvals, executes trades |
-| agent2_research.py | Scout | Fetches congressional disclosures, scores members |
-| agent3_sentiment.py | Pulse | Market sentiment scan, issues pulse_warning |
+| trade_logic_agent.py | Bolt | Scores signals, queues approvals, executes trades |
+| news_agent.py | Scout | Fetches congressional disclosures, scores members |
+| market_sentiment_agent.py | Pulse | Market sentiment scan, issues pulse_warning |
 | portal.py | Portal | Your web interface on port 5001 |
 | watchdog.py | Watchdog | Monitors for crashes, triggers rollback if needed |
 

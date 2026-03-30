@@ -93,13 +93,13 @@ REQUIRED_ENV_KEYS = [
 ]
 
 REQUIRED_PYTHON_FILES = [
-    "agent1_trader.py", "agent2_research.py", "agent3_sentiment.py",
+    "trade_logic_agent.py", "news_agent.py", "market_sentiment_agent.py",
     "database.py", "heartbeat.py", "boot_sequence.py", "watchdog.py",
     "cleanup.py", "portal.py", "health_check.py",
 ]
 
 REQUIRED_CRON_PATTERNS = [
-    "agent1_trader.py", "agent2_research.py", "agent3_sentiment.py",
+    "trade_logic_agent.py", "news_agent.py", "market_sentiment_agent.py",
     "heartbeat.py", "cleanup.py", "boot_sequence.py",
 ]
 

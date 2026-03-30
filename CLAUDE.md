@@ -15,6 +15,11 @@ The only requirement is persistent storage for company.db and network access fro
 ## Current Phase
 Phase 3 — Normalization Sprint (same phase as retail repo)
 
+## Node Architecture
+- **company_node** (Pi 4B, this machine): ops agents, licensing, backups, monitoring — this repo
+- **process_node** (Pi 3): news/signal ingestion pipeline, article enrichment, Redis-based distribution — repo TBD; hardware in hand, SD card arriving ~2026-03-31. Part of company system; isolated to avoid resource contention.
+- **retail_node** (Pi 2W): trading agents, portal, signals.db — synthos repo
+
 ## Companion Repo
 Retail node code → https://github.com/personalprometheus-blip/synthos
 Company node is the authority domain. Retail is the validated domain.

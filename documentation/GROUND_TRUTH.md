@@ -14,7 +14,7 @@
 
 Synthos is a distributed, offline-capable algorithmic trading assistant deployed on Raspberry Pi hardware. It monitors United States Congressional trading disclosures, scores signals using multi-agent analysis, and executes paper trades via the Alpaca API.
 
-The system operates across two physically distinct node types: retail nodes (customer-facing, run the trading agents) and a company node (company-operated, runs infrastructure, monitoring, and key management). Each node type runs its own software repository.
+The system operates across three physically distinct node types: retail nodes (customer-facing, run the trading agents), a process node (company-operated, runs the news/signal ingestion pipeline, article enrichment, and cross-node distribution), and a company node (company-operated, runs infrastructure, monitoring, and key management). Each node type runs its own software repository. The process node is part of the company system, isolated on separate hardware to avoid resource contention. Inter-node messaging uses Redis (Streams for pipeline handoff, Pub/Sub for portal fan-out); SQLite is retained for all persistent state.
 
 ### What problem it solves
 

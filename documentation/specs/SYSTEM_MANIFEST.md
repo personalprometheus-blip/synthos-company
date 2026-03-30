@@ -1,12 +1,20 @@
 # SYNTHOS — SYSTEM MANIFEST
 
-**Document Version:** 4.0
-**Supersedes:** SYSTEM_MANIFEST_1_.md v3.0
-**Last Updated:** 2026-03-28
+**Document Version:** 5.0
+**Supersedes:** SYSTEM_MANIFEST_1_.md v4.0
+**Last Updated:** 2026-03-30
 **Audience:** Engineers, AI agents, automated deployment systems
 **Status:** Active
 
 ---
+
+## CHANGE LOG (v4.0 → v5.0)
+
+| Change | Detail |
+|--------|--------|
+| process_node added | Three-node architecture declared; process_node (Pi 3) added to NODE_DEFINITIONS, FILE_LOCATIONS, SYSTEM_PATHS |
+| Redis added | Redis (Streams + Pub/Sub) declared as inter-node and intra-pipeline communication layer |
+| Communication model | SQLite retained for persistent state; Redis for pipeline handoff and fan-out |
 
 ## CHANGE LOG (v3.0 → v4.0)
 
@@ -29,9 +37,13 @@ manifest_version: 4.0
 last_updated:     2026-03-28
 description: >
   Synthos is a distributed, offline-capable algorithmic trading assistant
-  deployed on Raspberry Pi hardware. It operates across two node types:
-  retail nodes (customer-facing trading agents) and company nodes
-  (company-operated operations and infrastructure).
+  deployed on Raspberry Pi hardware. It operates across three node types:
+  retail nodes (customer-facing trading agents), a process node
+  (news/signal ingestion pipeline, article enrichment, cross-node distribution),
+  and company nodes (company-operated operations and infrastructure).
+  The process node is part of the company system, isolated on its own hardware
+  to avoid resource contention. Inter-node messaging uses Redis (Streams for
+  pipeline, Pub/Sub for fan-out); SQLite is retained for persistent state.
   End-user access is delivered through a web portal layer that tunnels
   sessions to retail Pi portals — Pis are never directly internet-accessible.
   The system is fully self-contained after installation and requires no
@@ -83,6 +95,8 @@ node_specific:
     home_default:    "/home/${SYNTHOS_USER}/synthos"
   company_node:
     home_default:    "/home/${SYNTHOS_USER}/synthos-company"
+  process_node:
+    home_default:    "/home/${SYNTHOS_USER}/synthos-process"   # repo TBD — not yet created
 ```
 
 **Resolution order for `SYNTHOS_HOME`:**
@@ -205,6 +219,31 @@ cron_entries:
 note: >
   Cron paths are generated dynamically at install time from the resolved
   SYNTHOS_HOME. The above are templates; actual entries use real paths.
+```
+
+### process_node
+
+```yaml
+role:          Signal processing and distribution pipeline
+hardware:      Raspberry Pi 3 (hardware in hand; SD card arriving ~2026-03-31)
+purpose: >
+  Ingest all news and signal sources (Alpaca API, government APIs/websites,
+  press releases, RSS feeds, targeted social media). Run internal agent pipeline.
+  Enrich flagged articles via validation stack. Distribute enriched data to
+  company_node portal and retail_node portal (identical enriched output to both).
+autonomy:      Part of company system; isolated to avoid resource contention on company_node
+license_required: false
+communication:
+  internal:    Redis Streams (agent-to-agent pipeline handoff)
+  outbound:    Redis Pub/Sub (fan-out to company_node and retail_node portals)
+persistence:   SQLite (TBD — for persistent state); Redis is not the persistent store
+repo:          TBD — not yet created
+status:        Planned — hardware ready; repo pending SD card setup
+
+pipeline_flow: >
+  Ingest → scan (retail_node: trader + sentiment agents) → if flagged →
+  validation stack [TBD — waiting on agent completion] → enrich →
+  distribute to company_node portal + retail_node portal
 ```
 
 ### company_node
@@ -337,6 +376,13 @@ retail_node:
   ${SNAPSHOT_DIR}/
   ${CONFIG_DIR}/allowed_outbound_ips.json
 
+process_node:
+  # Repo TBD — not yet created. Paths are placeholders following project conventions.
+  ${SYNTHOS_HOME}/agents/[ingestion_agent.py]   # news/signal ingestion — name TBD
+  ${SYNTHOS_HOME}/agents/[pipeline_agent.py]    # scan + enrich + distribute — name TBD
+  ${SYNTHOS_HOME}/data/[process.db]             # SQLite persistent state — schema TBD
+  # Redis runs as a service on this node (no file path — system service)
+
 company_node:
   ${SYNTHOS_HOME}/agents/patches.py
   ${SYNTHOS_HOME}/agents/blueprint.py
@@ -436,6 +482,18 @@ Added keys:
 ## 10. VERSION_HISTORY
 
 ```yaml
+v5.0:
+  date:  2026-03-30
+  label: Three-node architecture — process_node added
+  changes:
+    - process_node (Pi 3) declared as third node type
+    - NODE_DEFINITIONS: process_node added with pipeline flow and communication model
+    - FILE_LOCATIONS: process_node placeholder paths added
+    - SYSTEM_PATHS: process_node home_default added
+    - Redis declared as inter-node + intra-pipeline communication layer
+    - SQLite retained for all persistent state
+    - process_node repo TBD — hardware in hand, SD card arriving ~2026-03-31
+
 v4.0:
   date:  2026-03-28
   label: Agent renaming + web access layer + IP allowlist formalization

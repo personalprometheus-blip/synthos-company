@@ -1,13 +1,22 @@
 # SYNTHOS TECHNICAL ARCHITECTURE
 ## System-Wide Design and Agent Integration Model
 
-**Document Version:** 3.0
+**Document Version:** 4.0
 **Date:** March 2026
-**Supersedes:** v2.0 (SYNTHOS_TECHNICAL_ARCHITECTURE_1_.md)
+**Supersedes:** v3.0
 **Audience:** Engineers, AI agents building/maintaining the system
 **Scope:** Retail customer deployments + company infrastructure + web access layer
 
 ---
+
+## CHANGE LOG (v3.0 → v4.0)
+
+| Change | Detail |
+|--------|--------|
+| process_node added | Three-node architecture declared; process_node (Pi 3) added to executive summary and system diagram |
+| Part 3.5 added | process_node architecture — responsibilities, pipeline flow, communication stack |
+| Redis declared | Redis (Streams + Pub/Sub) is the inter-node and intra-pipeline communication layer |
+| Scenario E added | News ingestion and distribution data flow scenario |
 
 ## CHANGE LOG (v2.0 → v3.0)
 
@@ -28,8 +37,11 @@ Synthos is a distributed system with three tiers:
 | Tier | Hardware | Purpose | Autonomy |
 |------|----------|---------|----------|
 | **Retail** | Pi 2W | Customer trading agents | Completely standalone |
+| **Process** | Pi 3 | News/signal ingestion, pipeline, article enrichment, distribution | Part of company system; isolated |
 | **Company** | Pi 4B | Operations, monitoring, experiments | Internal only |
 | **Web Access** | Cloud-hosted | End-user portal delivery via domain tunnel | See Addendum 2 |
+
+**process_node** is part of the company system but runs on its own hardware to avoid resource contention on company_node. It communicates via Redis (Streams for intra-pipeline, Pub/Sub for fan-out to portals). Repo TBD — hardware in hand, SD card arriving ~2026-03-31.
 
 **Key principle:** Retail Pis are *self-contained forever*. Company Pi is *optional infrastructure*. Customers connect through the web portal. Pis are never directly reachable from the public internet.
 
@@ -67,6 +79,37 @@ Synthos is a distributed system with three tiers:
                │                  (customer can disable)
                │
                └─→ Alpaca API (paper/live trades)
+
+
+                    PROCESS ENVIRONMENT (part of company system)
+                    ============================================
+
+    ┌─────────────────────────────────────────┐
+    │  Pi 3 (process-pi-3) [repo TBD]         │
+    │  ─────────────────────────────────────  │
+    │  • News/signal ingestion                │
+    │    - Alpaca API (market data)           │
+    │    - Government APIs + websites         │
+    │    - Press releases                     │
+    │    - RSS feeds (news organizations)     │
+    │    - Targeted social media accounts     │
+    │  • Agent pipeline (Redis Streams)       │
+    │    - Scan: trader + sentiment agents    │
+    │    - Validation stack [TBD]             │
+    │    - Article enrichment                 │
+    │  • Redis Pub/Sub fan-out                │
+    │    → company_node portal                │
+    │    → retail_node portal                 │
+    │  • SQLite (persistent state — TBD)      │
+    │  ─────────────────────────────────────  │
+    │  Communication: Redis (local service)   │
+    │  Hardware: SD card arriving ~2026-03-31 │
+    └──────────────────────────────┬──────────┘
+               │                  │
+               │  Redis Pub/Sub   │
+               ▼                  ▼
+        company_node          retail_node
+          portal                portal
 
 
                     COMPANY ENVIRONMENT
@@ -164,6 +207,18 @@ Synthos is a distributed system with three tiers:
 5. Runs 7-step setup wizard (key validation — DEFERRED_FROM_CURRENT_BASELINE; not enforced in current release)
 6. Pi reboots, agents start
 7. Agents check for existing state before initializing (see §2.5)
+```
+
+**Scenario E: News ingestion and distribution (process_node)**
+```
+1. process_node ingests from all sources (Alpaca, gov APIs, press releases, RSS, social)
+2. Article published to Redis Stream
+3. trader agent (retail_node) + sentiment agent (retail_node) scan the article
+4. If flagged → article enters validation stack [TBD — waiting on agent completion]
+5. Enriched article written back to Redis
+6. Redis Pub/Sub fan-out → company_node portal + retail_node portal (identical data)
+7. Both portals display enriched article to their respective users
+[Near real-time — not real-time; latency of seconds to low minutes is acceptable]
 ```
 
 **Scenario D: Bug fix / code update**
@@ -528,6 +583,52 @@ Services on ports 5002 (Command Interface), 5003 (Installer Delivery), and 5004 
 
 ---
 
+## PART 3.5: PROCESS NODE ARCHITECTURE (Signal Pipeline)
+
+### Overview
+
+process_node is a dedicated Pi 3 running the news/signal ingestion pipeline. It is part of the company system but physically isolated to avoid resource contention on company_node. It has no customer-facing role.
+
+**Hardware:** Raspberry Pi 3
+**Status:** Hardware in hand; SD card arriving ~2026-03-31; repo not yet created
+
+### Responsibilities
+
+1. **Ingest** all news and signal sources:
+   - Alpaca API (market data)
+   - Government APIs and websites
+   - Press releases
+   - RSS feeds (news organizations)
+   - Targeted social media accounts (public figures)
+
+2. **Pipeline** (agent-to-agent via Redis Streams):
+   - Scan: trader agent (retail_node) + sentiment agent (retail_node) evaluate each article
+   - If flagged: route through validation stack [TBD — agent composition pending]
+   - Enrich article with agent output
+
+3. **Distribute** (Redis Pub/Sub):
+   - Enriched articles fan out to company_node portal and retail_node portal
+   - Both nodes receive identical enriched data
+
+### Communication Stack
+
+| Layer | Technology | Purpose |
+|-------|-----------|---------|
+| Intra-pipeline | Redis Streams | Agent-to-agent handoff within process_node |
+| Cross-node fan-out | Redis Pub/Sub | Push enriched articles to company + retail portals |
+| Persistent state | SQLite | Deduplication, run history, article state (schema TBD) |
+| Cross-node maintenance | SQLite (existing) | Unchanged — company.db and signals.db not replaced |
+
+**Decision:** Near real-time delivery is acceptable. Redis is the baseline; a validation benchmark will determine if any layer needs upgrading.
+
+### Deferred
+
+- Validation stack composition and node placement — waiting on in-progress agent completion
+- process_node repo name and structure — TBD at setup time
+- process_node SQLite schema — TBD
+
+---
+
 ## PART 4: SECURITY & NETWORK MODEL
 
 ### 4.1 Transport Security
@@ -719,6 +820,6 @@ Summary of scope:
 
 ## END OF DOCUMENT
 
-**Version:** 3.0
+**Version:** 4.0
 **Last Updated:** March 2026
-**Supersedes:** SYNTHOS_TECHNICAL_ARCHITECTURE_1_.md v2.0
+**Supersedes:** v3.0

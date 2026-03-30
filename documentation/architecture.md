@@ -1,6 +1,6 @@
 # ARCHITECTURE
 
-**Last Updated:** 2026-03-29
+**Last Updated:** 2026-03-30
 **Full spec:** docs/specs/SYNTHOS_TECHNICAL_ARCHITECTURE.md
 **System manifest:** docs/specs/SYSTEM_MANIFEST.md
 
@@ -14,19 +14,21 @@ The retail node is Pi-specific (Pi 2W / Pi Zero 2W). Only the retail node has
 a hardware constraint.
 
 ```
-retail_node (Pi 2W)          company_node (Pi 4B / Pi 5 / cloud / other)
-─────────────────────        ────────────────────────────────────────────
-agent1_trader.py             agents/blueprint.py         synthos_monitor.py
-agent2_research.py           agents/sentinel.py          └─ port 5000
-agent3_sentiment.py          agents/vault.py             └─ receives heartbeats
-portal.py (port 5001)        agents/patches.py
-watchdog.py                  agents/librarian.py
-heartbeat.py → signals.db    agents/fidget.py
-synthos_heartbeat.py ────────► MONITOR_URL:5000          scoop.py (email delivery)
-interrogation_listener.py    agents/timekeeper.py        strongbox.py (MISPLACED —
-  └─ UDP 5556/5557           db_helpers.py               should be here, not in src/)
-                             company.db
+retail_node (Pi 2W)          process_node (Pi 3)              company_node (Pi 4B / Pi 5 / cloud / other)
+─────────────────────        ──────────────────────────────   ────────────────────────────────────────────
+agent1_trader.py             [repo TBD — not yet created]     agents/blueprint.py         synthos_monitor.py
+agent2_research.py           ─ news ingestion                 agents/sentinel.py          └─ port 5000
+agent3_sentiment.py          ─ signal pipeline (Redis)        agents/vault.py             └─ receives heartbeats
+portal.py (port 5001)        ─ article enrichment             agents/patches.py
+watchdog.py                  ─ Redis Pub/Sub fan-out          agents/librarian.py
+heartbeat.py → signals.db      → retail_node portal           agents/fidget.py
+synthos_heartbeat.py ─────────────────────────────────────► MONITOR_URL:5000          scoop.py (email delivery)
+interrogation_listener.py      → company_node portal          agents/timekeeper.py        strongbox.py (MISPLACED —
+  └─ UDP 5556/5557           Redis (pipeline + pub/sub)       db_helpers.py               should be here, not in src/)
+                             SQLite (persistent state TBD)    company.db
 ```
+
+**Note:** process_node is considered part of the company system. It is isolated on its own hardware to avoid resource contention with company_node. SD card arriving ~2026-03-31; repo not yet created.
 
 ---
 
@@ -36,6 +38,7 @@ interrogation_listener.py    agents/timekeeper.py        strongbox.py (MISPLACED
 |-------|----------|-------|--------|
 | signals.db | src/ (dev flat) / data/ (deployed) | retail_node | Active |
 | company.db | synthos-company/data/ | company_node | Active |
+| Redis | process_node (local) | process_node | Planned — pipeline + pub/sub inter-node messaging |
 | suggestions (JSON) | synthos-company/data/suggestions.json | LEGACY | Split — being migrated |
 | suggestions (DB) | company.db.suggestions | CANONICAL | Active |
 | deploy_watches (JSON) | synthos-company/data/post_deploy_watch.json | LEGACY | Split — broken |
@@ -53,6 +56,14 @@ interrogation_listener.py    agents/timekeeper.py        strongbox.py (MISPLACED
 | agent1_trader.py | Bolt / ExecutionAgent | Signal scoring, trade execution | Cron |
 | agent2_research.py | Scout / ResearchAgent | Congressional disclosure research | Cron |
 | agent3_sentiment.py | Pulse / SentimentAgent | Market sentiment scoring | Cron |
+
+### Process Node Agents ([repo TBD]/agents/)
+| File | Role | Schedule |
+|------|------|----------|
+| [TBD] | News/signal ingestion — Alpaca, APIs, gov sites, press releases, RSS, targeted social media | Scheduled |
+| [TBD] | Agent pipeline — scan, enrich, validate, distribute | Event-driven (Redis Streams) |
+
+**Note:** Validation stack agent assignments are deferred pending completion of in-progress agents.
 
 ### Company Node Agents (synthos-company/agents/)
 | File | Role | Schedule |

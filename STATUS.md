@@ -1,5 +1,10 @@
 # COMPANY NODE STATUS
 
+> **REPO IDENTITY:** `personalprometheus-blip/synthos-company` — local: `/home/pi/synthos-company/`
+> **This repo owns:** company_node (Pi 4B) — blueprint, sentinel, vault, patches, librarian, scoop, etc.
+> **Companion:** `synthos` owns retail_node (Pi 2W) + master PROJECT_STATUS.md — do NOT put retail code here
+> **Separate:** `Sentinel` repo is unrelated to Synthos
+
 **Last Updated:** 2026-03-29
 **Current Phase:** Phase 3 — Normalization Sprint
 **Repo:** synthos-company (this repo)

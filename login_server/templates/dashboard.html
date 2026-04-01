@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Synthos — Dashboard</title>
+  <title>Synthos — Your Devices</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -67,63 +67,160 @@
       text-decoration: none;
     }
 
-    .logout-link:hover {
-      text-decoration: underline;
-    }
+    .logout-link:hover { text-decoration: underline; }
 
     /* ── Main ── */
     main {
-      max-width: 680px;
-      margin: 64px auto;
+      max-width: 720px;
+      margin: 56px auto;
       padding: 0 24px;
     }
 
-    .welcome {
-      margin-bottom: 40px;
+    .page-header {
+      margin-bottom: 32px;
     }
 
-    .welcome h1 {
-      font-size: 26px;
-      font-weight: 600;
-      color: #f0f0f0;
-      margin-bottom: 8px;
-    }
-
-    .welcome p {
-      font-size: 15px;
-      color: #6b7280;
-      line-height: 1.5;
-    }
-
-    /* ── Portal card ── */
-    .portal-card {
-      background: #111118;
-      border: 1px solid #1e1e2e;
-      border-radius: 12px;
-      padding: 32px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 24px;
-    }
-
-    .portal-info h2 {
-      font-size: 16px;
+    .page-header h1 {
+      font-size: 24px;
       font-weight: 600;
       color: #f0f0f0;
       margin-bottom: 6px;
     }
 
-    .portal-info p {
-      font-size: 13px;
+    .page-header p {
+      font-size: 14px;
       color: #6b7280;
-      line-height: 1.5;
+    }
+
+    /* ── Error / notice ── */
+    .error-banner {
+      background: #2d1515;
+      border: 1px solid #5c1a1a;
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-size: 13px;
+      color: #f87171;
+      margin-bottom: 24px;
+    }
+
+    /* ── Node cards ── */
+    .node-list {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .node-card {
+      background: #111118;
+      border: 1px solid #1e1e2e;
+      border-radius: 12px;
+      padding: 24px 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      transition: border-color 0.15s;
+    }
+
+    .node-card:hover {
+      border-color: #2e2e4e;
+    }
+
+    .node-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    /* Static name view */
+    .node-name-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+
+    .node-name {
+      font-size: 16px;
+      font-weight: 600;
+      color: #f0f0f0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .rename-btn {
+      background: none;
+      border: none;
+      color: #4b5563;
+      font-size: 12px;
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 4px;
+      transition: color 0.15s;
+      white-space: nowrap;
+    }
+
+    .rename-btn:hover { color: #9ca3af; }
+
+    /* Inline rename form (hidden by default) */
+    .rename-form {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+
+    .rename-form.visible { display: flex; }
+
+    .rename-input {
+      flex: 1;
+      padding: 5px 10px;
+      background: #1a1a24;
+      border: 1px solid #6366f1;
+      border-radius: 6px;
+      color: #e0e0e0;
+      font-size: 14px;
+      outline: none;
+      max-width: 260px;
+    }
+
+    .rename-save {
+      padding: 5px 12px;
+      background: #6366f1;
+      border: none;
+      border-radius: 6px;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+
+    .rename-save:hover { opacity: 0.85; }
+
+    .rename-cancel {
+      padding: 5px 10px;
+      background: none;
+      border: 1px solid #2a2a3a;
+      border-radius: 6px;
+      color: #6b7280;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .rename-cancel:hover { border-color: #4b5563; }
+
+    /* Node meta */
+    .node-meta {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
     }
 
     .node-badge {
       display: inline-block;
-      margin-top: 10px;
-      padding: 3px 10px;
+      padding: 2px 9px;
       background: #1a1a2e;
       border: 1px solid #2a2a4a;
       border-radius: 20px;
@@ -132,9 +229,25 @@
       font-family: 'SF Mono', 'Fira Code', monospace;
     }
 
-    .launch-btn {
+    .node-url {
+      font-size: 12px;
+      color: #4b5563;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 260px;
+    }
+
+    /* Actions */
+    .node-actions {
       flex-shrink: 0;
-      padding: 12px 24px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .launch-btn {
+      padding: 10px 20px;
       background: linear-gradient(135deg, #6366f1, #8b5cf6);
       border: none;
       border-radius: 8px;
@@ -148,49 +261,30 @@
       white-space: nowrap;
     }
 
-    .launch-btn:hover {
-      opacity: 0.9;
-    }
+    .launch-btn:hover { opacity: 0.9; }
 
-    /* ── Error ── */
-    .error-banner {
-      background: #2d1515;
-      border: 1px solid #5c1a1a;
-      border-radius: 8px;
-      padding: 12px 16px;
-      font-size: 13px;
-      color: #f87171;
-      margin-bottom: 24px;
-    }
-
-    /* ── Info row ── */
-    .info-row {
-      margin-top: 32px;
-      padding: 20px 24px;
+    /* Empty state */
+    .empty-state {
+      text-align: center;
+      padding: 64px 32px;
       background: #111118;
-      border: 1px solid #1e1e2e;
-      border-radius: 10px;
-      display: flex;
-      gap: 32px;
-    }
-
-    .info-item {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-
-    .info-label {
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.6px;
+      border: 1px dashed #2a2a3a;
+      border-radius: 12px;
       color: #4b5563;
-      font-weight: 600;
     }
 
-    .info-value {
-      font-size: 13px;
-      color: #9ca3af;
+    .empty-state p {
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .empty-state code {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 12px;
+      background: #1a1a2e;
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: #8b8bcc;
     }
   </style>
 </head>
@@ -207,38 +301,98 @@
   </nav>
 
   <main>
-    <div class="welcome">
-      <h1>Welcome back</h1>
-      <p>Your trading node is active. Launch your portal to view positions, signals, and system status.</p>
+    <div class="page-header">
+      <h1>Your Devices</h1>
+      <p>
+        {% if nodes %}
+          {{ nodes | length }} Pi{% if nodes | length != 1 %}s{% endif %} connected to your account. Choose one to open its portal.
+        {% else %}
+          No devices connected yet.
+        {% endif %}
+      </p>
     </div>
 
     {% if error %}
     <div class="error-banner">{{ error }}</div>
     {% endif %}
 
-    <div class="portal-card">
-      <div class="portal-info">
-        <h2>Trading Portal</h2>
-        <p>Live portfolio view, pending approvals, signal intelligence, and system controls.</p>
-        <span class="node-badge">{{ user['node_id'] }}</span>
+    {% if nodes %}
+    <div class="node-list">
+      {% for node in nodes %}
+      <div class="node-card" id="card-{{ node['node_id'] }}">
+        <div class="node-info">
+
+          <!-- Static name row -->
+          <div class="node-name-row" id="view-{{ node['node_id'] }}">
+            <span class="node-name">{{ node['nickname'] if node['nickname'] else node['node_id'] }}</span>
+            <button class="rename-btn" onclick="showRename('{{ node['node_id'] }}', '{{ node['nickname'] if node['nickname'] else node['node_id'] }}')">rename</button>
+          </div>
+
+          <!-- Inline rename form -->
+          <div class="rename-form" id="rename-{{ node['node_id'] }}">
+            <input class="rename-input" id="rename-input-{{ node['node_id'] }}"
+                   type="text" placeholder="Nickname for this Pi"
+                   onkeydown="if(event.key==='Enter')saveRename('{{ node['node_id'] }}'); if(event.key==='Escape')cancelRename('{{ node['node_id'] }}')">
+            <button class="rename-save" onclick="saveRename('{{ node['node_id'] }}')">Save</button>
+            <button class="rename-cancel" onclick="cancelRename('{{ node['node_id'] }}')">Cancel</button>
+          </div>
+
+          <div class="node-meta">
+            <span class="node-badge">{{ node['node_id'] }}</span>
+            <span class="node-url">{{ node['node_url'] }}</span>
+          </div>
+        </div>
+
+        <div class="node-actions">
+          <a href="/launch?node={{ node['node_id'] }}" class="launch-btn">Launch →</a>
+        </div>
       </div>
-      <a href="/launch" class="launch-btn">Launch Portal →</a>
+      {% endfor %}
     </div>
 
-    <div class="info-row">
-      <div class="info-item">
-        <span class="info-label">Node</span>
-        <span class="info-value">{{ user['node_id'] }}</span>
-      </div>
-      <div class="info-item">
-        <span class="info-label">Mode</span>
-        <span class="info-value">Paper Trading</span>
-      </div>
-      <div class="info-item">
-        <span class="info-label">Account</span>
-        <span class="info-value">{{ user['email'] }}</span>
-      </div>
+    {% else %}
+    <div class="empty-state">
+      <p>No Pi nodes are attached to your account yet.<br>
+      Ask your administrator to add one using:<br><br>
+      <code>python3 create_user.py --add-node --email {{ user['email'] }} --node-url https://app.synth-cloud.com --node-id retail_1</code>
+      </p>
     </div>
+    {% endif %}
   </main>
+
+  <script>
+    function showRename(nodeId, current) {
+      document.getElementById('view-' + nodeId).style.display = 'none';
+      var form = document.getElementById('rename-' + nodeId);
+      form.classList.add('visible');
+      var input = document.getElementById('rename-input-' + nodeId);
+      input.value = current;
+      input.focus();
+      input.select();
+    }
+
+    function cancelRename(nodeId) {
+      document.getElementById('rename-' + nodeId).classList.remove('visible');
+      document.getElementById('view-' + nodeId).style.display = 'flex';
+    }
+
+    function saveRename(nodeId) {
+      var nickname = document.getElementById('rename-input-' + nodeId).value.trim();
+      var form = new FormData();
+      form.append('node_id', nodeId);
+      form.append('nickname', nickname);
+
+      fetch('/rename', { method: 'POST', body: form })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          if (data.ok) {
+            var display = nickname || nodeId;
+            var nameEl = document.querySelector('#view-' + nodeId + ' .node-name');
+            nameEl.textContent = display;
+            cancelRename(nodeId);
+          }
+        });
+    }
+  </script>
 </body>
 </html>

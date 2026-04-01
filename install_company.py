@@ -79,7 +79,6 @@ REQUIRED_PACKAGES = [
     "requests",
     "python-dotenv",
     "anthropic",
-    "sendgrid",
 ]
 
 REQUIRED_AGENT_FILES = [
@@ -373,8 +372,8 @@ def verify_installation() -> tuple[bool, list[str]]:
     else:
         required_keys = [
             "COMPANY_MODE",
-            "SENDGRID_API_KEY",
-            "SENDGRID_FROM",
+            "RESEND_API_KEY",
+            "ALERT_FROM",
             "OPERATOR_EMAIL",
             "KEY_SIGNING_SECRET",
             "DATABASE_PATH",
@@ -422,7 +421,6 @@ def verify_installation() -> tuple[bool, list[str]]:
         "requests": "requests",
         "python-dotenv": "dotenv",
         "anthropic": "anthropic",
-        "sendgrid": "sendgrid",
     }
     for pip_name, import_name in pkg_map.items():
         try:
@@ -490,9 +488,9 @@ def collect_config() -> dict[str, str]:
 
     config: dict[str, str] = {}
 
-    print("  — SendGrid (Scoop delivery) —")
-    config["sendgrid_key"]   = _prompt("  SendGrid API Key", secret=True)
-    config["sendgrid_from"]  = _prompt("  From address (verified sender)", "alerts@synthos.com")
+    print("  — Resend (Scoop delivery) —")
+    config["resend_key"]  = _prompt("  Resend API Key", secret=True)
+    config["alert_from"]  = _prompt("  From address (verified sender)", "alerts@synthos.com")
     config["operator_email"] = _prompt("  Operator email (internal alert recipient)")
 
     print()
@@ -753,7 +751,7 @@ def main() -> int:
     print("─" * 50)
     print("  Configuration collected. Review:")
     print(f"  Operator email : {config.get('operator_email','—')}")
-    print(f"  SendGrid from  : {config.get('sendgrid_from','—')}")
+    print(f"  Resend from    : {config.get('alert_from','—')}")
     print(f"  Command port   : {config.get('command_port','—')}")
     print(f"  Heartbeat port : {config.get('heartbeat_port','—')}")
     print(f"  KEY_SIGNING_SECRET : {'set' if config.get('key_signing_secret') else '⚠ NOT SET'}")

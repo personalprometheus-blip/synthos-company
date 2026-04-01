@@ -25,7 +25,7 @@ Role:
     P3 = background   (DAILY_REPORT, MORNING_DIGEST, ...)
 
   Transport:
-    Primary:  SendGrid API
+    Primary:  Resend API
     Fallback: Gmail SMTP (uncomment .env keys + code block below when ready)
     Toggle:   Command portal controls active transport (future)
 
@@ -68,9 +68,9 @@ ET = ZoneInfo("America/New_York")
 
 load_dotenv(BASE_DIR / "company.env", override=True)
 
-SENDGRID_API_KEY   = os.environ.get("SENDGRID_API_KEY", "")
-SENDGRID_FROM      = os.environ.get("SENDGRID_FROM", "alerts@synthos.app")
-SENDGRID_FROM_NAME = os.environ.get("SENDGRID_FROM_NAME", "Synthos")
+RESEND_API_KEY     = os.environ.get("RESEND_API_KEY", "")
+ALERT_FROM         = os.environ.get("ALERT_FROM", "alerts@synthos.app")
+ALERT_FROM_NAME    = os.environ.get("ALERT_FROM_NAME", "Synthos")
 PROJECT_LEAD_EMAIL = os.environ.get("OPERATOR_EMAIL", "")
 
 # Gmail SMTP config -- uncomment when command portal transport toggle is ready
@@ -219,41 +219,44 @@ def db_queue_stats() -> dict:
 
 # -- TRANSPORT ----------------------------------------------------------------
 
-def send_via_sendgrid(to_email: str, subject: str, body_text: str,
-                      body_html: str = None) -> bool:
-    if not SENDGRID_API_KEY:
-        log.warning("SENDGRID_API_KEY not configured")
+def send_via_resend(to_email: str, subject: str, body_text: str,
+                    body_html: str = None) -> bool:
+    if not RESEND_API_KEY:
+        log.warning("RESEND_API_KEY not configured")
         return False
     if not to_email:
         log.warning(f"No recipient for: {subject[:60]}")
         return False
 
     import urllib.request
-    payload = json.dumps({
-        "personalizations": [{"to": [{"email": to_email}]}],
-        "from":    {"email": SENDGRID_FROM, "name": SENDGRID_FROM_NAME},
+    from_field = f"{ALERT_FROM_NAME} <{ALERT_FROM}>" if ALERT_FROM_NAME else ALERT_FROM
+    payload_dict = {
+        "from":    from_field,
+        "to":      [to_email],
         "subject": subject,
-        "content": [{"type": "text/plain", "value": body_text}]
-        + ([{"type": "text/html", "value": body_html}] if body_html else []),
-    }).encode()
+        "text":    body_text,
+    }
+    if body_html:
+        payload_dict["html"] = body_html
+    payload = json.dumps(payload_dict).encode()
 
     req = urllib.request.Request(
-        "https://api.sendgrid.com/v3/mail/send",
+        "https://api.resend.com/emails",
         data=payload,
         headers={
-            "Authorization": f"Bearer {SENDGRID_API_KEY}",
+            "Authorization": f"Bearer {RESEND_API_KEY}",
             "Content-Type":  "application/json",
         }
     )
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
-            if resp.status in (200, 202):
-                log.info(f"[SENDGRID] Sent: {subject[:60]} -> {to_email}")
+            if resp.status in (200, 201):
+                log.info(f"[RESEND] Sent: {subject[:60]} -> {to_email}")
                 return True
-            log.warning(f"[SENDGRID] Returned {resp.status}")
+            log.warning(f"[RESEND] Returned {resp.status}")
             return False
     except Exception as e:
-        log.error(f"[SENDGRID] Error: {e}")
+        log.error(f"[RESEND] Error: {e}")
         return False
 
 
@@ -280,8 +283,8 @@ def send_via_sendgrid(to_email: str, subject: str, body_text: str,
 
 def send_email(to_email: str, subject: str, body_text: str,
                body_html: str = None) -> bool:
-    """Unified send. SendGrid primary. Gmail secondary (uncomment above)."""
-    if send_via_sendgrid(to_email, subject, body_text, body_html):
+    """Unified send. Resend primary. Gmail secondary (uncomment above)."""
+    if send_via_resend(to_email, subject, body_text, body_html):
         return True
     # if send_via_gmail(to_email, subject, body_text):
     #     return True
@@ -509,8 +512,8 @@ def run_loop() -> None:
 
     if not PROJECT_LEAD_EMAIL:
         log.warning("PROJECT_LEAD_EMAIL not set -- internal alerts will not be delivered")
-    if not SENDGRID_API_KEY:
-        log.warning("SENDGRID_API_KEY not set -- no emails will be sent")
+    if not RESEND_API_KEY:
+        log.warning("RESEND_API_KEY not set -- no emails will be sent")
 
     # One-time legacy drain
     drain_legacy_trigger_file()
@@ -568,7 +571,7 @@ def show_status() -> None:
     print(f"{'='*50}")
     for status, count in sorted(stats.items()):
         print(f"  {status:<20} {count}")
-    print(f"  {'SendGrid':<20} {'configured' if SENDGRID_API_KEY else 'NOT CONFIGURED'}")
+    print(f"  {'Resend':<20} {'configured' if RESEND_API_KEY else 'NOT CONFIGURED'}")
     print(f"  {'Lead email':<20} {PROJECT_LEAD_EMAIL or 'NOT SET'}")
     print(f"{'='*50}\n")
 

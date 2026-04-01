@@ -69,7 +69,7 @@ TRACEABILITY_MIN_RECORDS     = 1     # minimum decision_log records required per
 # ============================================================
 
 try:
-    from agents.dispatcher_agent import run_agent as run_dispatcher
+    from agents.company_dispatcher_agent import run_agent as run_dispatcher
     _dispatcher_available = True
 except Exception as _e:
     log.warning("dispatcher_agent import failed: %s", _e)
@@ -77,7 +77,7 @@ except Exception as _e:
     _dispatcher_available = False
 
 try:
-    from agents.news_agent import run_agent as run_news
+    from agents.process_news_agent import run_agent as run_news
     _news_available = True
 except Exception as _e:
     log.warning("news_agent import failed: %s", _e)
@@ -85,7 +85,7 @@ except Exception as _e:
     _news_available = False
 
 try:
-    from agents.social_rumor_agent import run_agent as run_social_rumor
+    from agents.company_social_rumor_agent import run_agent as run_social_rumor
     _social_rumor_available = True
 except Exception as _e:
     log.warning("social_rumor_agent import failed: %s", _e)
@@ -93,7 +93,7 @@ except Exception as _e:
     _social_rumor_available = False
 
 try:
-    from agents.market_sentiment_agent import run_agent as run_sentiment
+    from agents.process_market_sentiment_agent import run_agent as run_sentiment
     _sentiment_available = True
 except Exception as _e:
     log.warning("market_sentiment_agent import failed: %s", _e)
@@ -101,7 +101,7 @@ except Exception as _e:
     _sentiment_available = False
 
 try:
-    from agents.macro_regime_agent import run_agent as run_macro
+    from agents.company_macro_regime_agent import run_agent as run_macro
     _macro_available = True
 except Exception as _e:
     log.warning("macro_regime_agent import failed: %s", _e)
@@ -109,7 +109,7 @@ except Exception as _e:
     _macro_available = False
 
 try:
-    from agents.flow_positioning_agent import run_agent as run_flow
+    from agents.company_flow_positioning_agent import run_agent as run_flow
     _flow_available = True
 except Exception as _e:
     log.warning("flow_positioning_agent import failed: %s", _e)
@@ -117,7 +117,7 @@ except Exception as _e:
     _flow_available = False
 
 try:
-    from agents.market_state_aggregator import run_agent as run_aggregator
+    from agents.company_market_state_aggregator import run_agent as run_aggregator
     _aggregator_available = True
 except Exception as _e:
     log.warning("market_state_aggregator import failed: %s", _e)
@@ -125,7 +125,7 @@ except Exception as _e:
     _aggregator_available = False
 
 try:
-    from agents.trade_logic_agent import run_agent as run_trade
+    from agents.process_trade_logic_agent import run_agent as run_trade
     _trade_available = True
 except Exception as _e:
     log.warning("trade_logic_agent import failed: %s", _e)
@@ -133,7 +133,7 @@ except Exception as _e:
     _trade_available = False
 
 try:
-    from agents.result_audit_agent import run_agent as run_fault
+    from agents.company_result_audit_agent import run_agent as run_fault
     _fault_available = True
 except Exception as _e:
     log.warning("result_audit_agent import failed: %s", _e)
@@ -141,7 +141,7 @@ except Exception as _e:
     _fault_available = False
 
 try:
-    from agents.bias_audit_agent import run_agent as run_bias
+    from agents.company_bias_audit_agent import run_agent as run_bias
     _bias_available = True
 except Exception as _e:
     log.warning("bias_audit_agent import failed: %s", _e)
@@ -149,7 +149,7 @@ except Exception as _e:
     _bias_available = False
 
 try:
-    from agents.audit_stack_agent import run_agent as run_validator
+    from agents.company_audit_stack_agent import run_agent as run_validator
     _validator_available = True
 except Exception as _e:
     log.warning("audit_stack_agent import failed: %s", _e)

@@ -778,7 +778,7 @@ class TimekeeperClient:
     Lightweight client for other agents to request and release work slots.
 
     Usage:
-        from agents.timekeeper import TimekeeperClient
+        from agents.company_timekeeper import TimekeeperClient
 
         tk = TimekeeperClient(agent_name="Blueprint", task_type="nightly_run")
         with tk.slot(priority=4, duration_sec=7200, access_type="WRITE"):

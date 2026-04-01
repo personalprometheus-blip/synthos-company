@@ -93,20 +93,20 @@ REQUIRED_ENV_KEYS = [
 ]
 
 REQUIRED_PYTHON_FILES = [
-    "trade_logic_agent.py", "news_agent.py", "market_sentiment_agent.py",
-    "database.py", "heartbeat.py", "boot_sequence.py", "watchdog.py",
-    "cleanup.py", "portal.py", "health_check.py",
+    "retail_trade_logic_agent.py", "retail_news_agent.py", "retail_market_sentiment_agent.py",
+    "retail_database.py", "retail_heartbeat.py", "retail_boot_sequence.py", "retail_watchdog.py",
+    "retail_cleanup.py", "retail_portal.py", "retail_health_check.py",
 ]
 
 REQUIRED_CRON_PATTERNS = [
-    "trade_logic_agent.py", "news_agent.py", "market_sentiment_agent.py",
-    "heartbeat.py", "cleanup.py", "boot_sequence.py",
+    "retail_trade_logic_agent.py", "retail_news_agent.py", "retail_market_sentiment_agent.py",
+    "retail_heartbeat.py", "retail_cleanup.py", "retail_boot_sequence.py",
 ]
 
 MANAGED_PROCESSES = [
-    ("portal.py",          "Portal web UI"),
+    ("retail_portal.py",          "Portal web UI"),
     ("synthos_monitor.py", "Monitor server"),
-    ("watchdog.py",        "Watchdog"),
+    ("retail_watchdog.py",        "Watchdog"),
 ]
 
 AGENT_LOGS = [
@@ -282,7 +282,7 @@ def check_disk(findings: list) -> None:
         if free_mb < 200:
             findings.append(Finding("CRITICAL", "Disk",
                 f"Only {free_mb:.0f}MB free on retail Pi",
-                "Run cleanup.py or delete old log archives before next run"))
+                "Run retail_cleanup.py or delete old log archives before next run"))
         elif free_mb < 500:
             findings.append(Finding("WARN", "Disk",
                 f"{free_mb:.0f}MB free — getting low",
@@ -413,7 +413,7 @@ def check_heartbeat_age(findings: list) -> None:
         if last_sent is None:
             findings.append(Finding("WARN", "Heartbeat",
                 "No successful heartbeat in recent log",
-                "Check MONITOR_URL in .env and run: python3 heartbeat.py"))
+                "Check MONITOR_URL in .env and run: python3 retail_heartbeat.py"))
         else:
             age_hours = (datetime.now() - last_sent).total_seconds() / 3600
             if age_hours > 5:

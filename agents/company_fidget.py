@@ -131,7 +131,7 @@ def log_api_call(agent_name: str, provider: str, operation: str,
     Delegates to db_helpers.DB.log_api_call() — direct write, never blocks.
 
     Usage in any agent:
-        from agents.fidget import log_api_call
+        from agents.company_fidget import log_api_call
         log_api_call("Blueprint", "anthropic", "implement_suggestion",
                      tokens_input=2500, tokens_output=4000, model="sonnet")
     """

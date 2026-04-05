@@ -2,11 +2,11 @@
 
 > **REPO IDENTITY:** `personalprometheus-blip/synthos-company` — local: `/home/pi/synthos-company/`
 > **This repo owns:** company_node (Pi 4B) — blueprint, sentinel, vault, patches, librarian, scoop, etc.
-> **Companion:** `synthos` owns retail_node (Pi 2W) + master PROJECT_STATUS.md — do NOT put retail code here
+> **Companion:** `synthos` owns retail_node (Pi 5, incoming) + master PROJECT_STATUS.md — do NOT put retail code here
 > **Separate:** `Sentinel` repo is unrelated to Synthos
 
-**Last Updated:** 2026-03-30
-**Current Phase:** Phase 5 — Deployment Pipeline
+**Last Updated:** 2026-04-05
+**Current Phase:** Phase 5 complete — Pi 5 retail build pending
 **Repo:** synthos-company (this repo)
 **Companion:** synthos (retail node) — https://github.com/personalprometheus-blip/synthos
 
@@ -47,7 +47,46 @@ Full boot-time enforcement is tracked in PROJECT_STATUS.md (retail repo) under P
 ---
 
 ## Notes for AI Agents
-- patches.py was killed for the current work session — restart at end: `nohup python3 /home/pi/synthos-company/agents/patches.py --mode continuous >> logs/bug_finder.log 2>&1 &`
 - company.env contains secrets — never commit it (gitignored)
-- Hardware: this node runs on Pi 4B locally but is not hardware-specific
+- Hardware: Pi 4B. Pi 2W is fully retired and no longer part of this system.
 - See CLAUDE.md for full session context
+
+---
+
+## Addendum — v3 Portal Architecture Decision (2026-04-05)
+
+The following architectural decisions were made and locked on 2026-04-05:
+
+### What changed
+- **login_server/ retired.** The node-picker SSO model (customer picks their Pi → SSO redirect) was
+  the wrong design for v3. Customers do not have their own nodes. `synthos-login.service` is stopped
+  and disabled. `login_server/` code is kept for reference but is no longer active.
+
+- **company_server.py is internal API only.** Port 5010 on the Pi 4B is no longer publicly exposed.
+  `admin.synth-cloud.com` DNS and Cloudflare Access app have been removed. The company server is
+  a private backend API called by the Pi 5 retail portal over the local network.
+
+- **Single portal model.** All web access — customers and admin — goes through the Pi 5 retail portal
+  at `app.synth-cloud.com`. The Pi 4B exposes only SSH externally (`ssh.synth-cloud.com`).
+
+### Correct v3 portal flow
+```
+portal.synth-cloud.com  →  redirect  →  app.synth-cloud.com (Pi 5, port 5001)
+                                              │
+                                   ┌──────────┴──────────┐
+                                   │                     │
+                              Customer login         Admin login (Patrick)
+                              → their trading        → trading dashboard
+                                dashboard             + Company Admin link
+                                                      → calls Pi 4B API
+                                                        (company_server :5010)
+```
+
+### Domain map (final)
+| Domain | Destination | Auth |
+|--------|-------------|------|
+| `app.synth-cloud.com` | Pi 5 port 5001 | Portal login (auth.py) |
+| `portal.synth-cloud.com` | redirect → app.synth-cloud.com | none |
+| `ssh.synth-cloud.com` | Pi 4B port 22 | Cloudflare Access |
+| `ssh2.synth-cloud.com` | Pi 5 port 22 | Cloudflare Access |
+| ~~`admin.synth-cloud.com`~~ | ~~Pi 4B port 5010~~ | REMOVED |

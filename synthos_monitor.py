@@ -75,7 +75,8 @@ DB_PATH  = os.getenv("COMPANY_DB_PATH", os.path.join(DATA_DIR, "company.db"))
 LOG_DIR  = os.path.join(os.path.dirname(_HERE), "logs")   # synthos_build/logs/
 
 # ── Sentinel Display Bridge ───────────────────────────────────────────────────
-SENTINEL_URL = os.getenv("SENTINEL_URL", "").rstrip("/")
+SENTINEL_URL   = os.getenv("SENTINEL_URL", "").rstrip("/")
+SENTINEL_TOKEN = os.getenv("SENTINEL_TOKEN", "")
 
 _display_bridge = None
 try:
@@ -3765,8 +3766,10 @@ def api_display_status():
     if SENTINEL_URL:
         try:
             import urllib.request as _ur
-            req = _ur.Request(f"{SENTINEL_URL}/api/status",
-                              headers={"Accept": "application/json"})
+            headers = {"Accept": "application/json"}
+            if SENTINEL_TOKEN:
+                headers["X-Token"] = SENTINEL_TOKEN
+            req = _ur.Request(f"{SENTINEL_URL}/api/status", headers=headers)
             with _ur.urlopen(req, timeout=4) as resp:
                 data = json.loads(resp.read())
             data.setdefault("display_detected", True)

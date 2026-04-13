@@ -40,7 +40,8 @@ from flask import Flask, request, jsonify, render_template_string, redirect, ses
 from dotenv import load_dotenv
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
-load_dotenv()
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(_script_dir, "company.env"))
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024  # 8 MB upload limit
@@ -53,12 +54,14 @@ ALERT_TO             = os.getenv("ALERT_TO", "you@example.com")
 # MONITOR_TOKEN is the client-side env var name — accept both so
 # operators who set only one side don't get silent 401s.
 SECRET_TOKEN         = os.getenv("SECRET_TOKEN") or os.getenv("MONITOR_TOKEN", "")
+RETAIL_PORTAL_URL    = os.getenv("RETAIL_PORTAL_URL", "http://10.0.0.11:5000")
 PORT                 = int(os.getenv("PORT", 5050))
 CF_ADMIN_EMAIL = os.getenv("OPERATOR_EMAIL", "").lower().strip()
 ADMIN_EMAIL    = os.getenv("ADMIN_EMAIL", CF_ADMIN_EMAIL).lower().strip()
 ADMIN_PW_HASH  = os.getenv("ADMIN_PASSWORD_HASH", "")
 app.secret_key = os.getenv("FLASK_SECRET_KEY", SECRET_TOKEN or __import__('os').urandom(24).hex())
 COMPANY_URL          = os.getenv("COMPANY_URL", "").rstrip("/")
+PORTAL_TOKEN         = os.getenv('PORTAL_TOKEN', '')
 SILENCE_WINDOW_HOURS = 4
 ALERT_START_HOUR     = 8
 ALERT_END_HOUR       = 20
@@ -149,6 +152,37 @@ def init_db():
             );
             CREATE INDEX IF NOT EXISTS idx_pi_events_pi   ON pi_events(pi_id, recorded_at);
             CREATE INDEX IF NOT EXISTS idx_pi_events_type ON pi_events(event_type, recorded_at);
+
+            CREATE TABLE IF NOT EXISTS company_expenses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category TEXT NOT NULL,
+                description TEXT NOT NULL,
+                amount REAL NOT NULL,
+                date TEXT NOT NULL,
+                recurring INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS beta_tests (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL,
+                required_confirmations INTEGER NOT NULL DEFAULT 2,
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT NOT NULL,
+                cleared_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS api_key_metadata (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                node TEXT NOT NULL,
+                key_name TEXT NOT NULL,
+                expires_at TEXT,
+                backup_value TEXT,
+                notes TEXT,
+                updated_at TEXT NOT NULL,
+                UNIQUE(node, key_name)
+            );
         """)
         # Migration: add columns to scoop_queue that may be missing from older schemas
         existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(scoop_queue)").fetchall()}
@@ -388,13 +422,14 @@ def heartbeat():
             "net_bytes_sent": data.get("net_bytes_sent", existing.get("net_bytes_sent")),
             "net_bytes_recv": data.get("net_bytes_recv", existing.get("net_bytes_recv")),
             "cpu_temp":       data.get("cpu_temp",       existing.get("cpu_temp")),
+            "pi_ip":          data.get("pi_ip",          existing.get("pi_ip", request.remote_addr)),
             # History — keep last 48 heartbeat samples for time-series graphs
             "history":           (existing.get("history", []) + [{
                 "t":   now_utc().isoformat(),
                 "v":   data.get("portfolio_value", data.get("portfolio", 0.0)),
                 "cpu": data.get("cpu_percent"),
                 "ram": data.get("ram_percent"),
-            }])[-48:],
+            }])[-1440:],
         }
         save_registry()
 
@@ -672,13 +707,93 @@ def cmd_pending():
         return jsonify(dict(pending_commands)), 200
 
 
+
+
+# ── Command Center — Manual Agent Triggers ────────────────────────────────────
+import subprocess as _sp
+
+_AGENT_DIR = "/home/pi516gb/synthos/synthos_build/agents"
+_SRC_DIR   = "/home/pi516gb/synthos/synthos_build/src"
+_LOG_FILE  = "/home/pi516gb/synthos/synthos_build/logs/manual_run.log"
+
+_COMMAND_WHITELIST = {
+    "news_overnight":  {"cmd": f"cd {_AGENT_DIR} && python3 retail_news_agent.py --session=overnight",
+                        "label": "News Agent (Overnight)"},
+    "news_market":     {"cmd": f"cd {_AGENT_DIR} && python3 retail_news_agent.py --session=open",
+                        "label": "News Agent (Market)"},
+    "sentiment":       {"cmd": f"cd {_AGENT_DIR} && python3 retail_market_sentiment_agent.py",
+                        "label": "Sentiment Agent"},
+    "trade":           {"cmd": f"cd {_SRC_DIR} && python3 retail_scheduler.py --session=trade",
+                        "label": "Trade Logic"},
+    "screener":        {"cmd": f"cd {_AGENT_DIR} && python3 retail_sector_screener.py",
+                        "label": "Sector Screener"},
+    "prep_session":    {"cmd": f"cd {_SRC_DIR} && python3 retail_scheduler.py --session=prep",
+                        "label": "Prep Session"},
+    "open_session":    {"cmd": f"cd {_SRC_DIR} && python3 retail_scheduler.py --session=open",
+                        "label": "Open Session"},
+    "midday_session":  {"cmd": f"cd {_SRC_DIR} && python3 retail_scheduler.py --session=midday",
+                        "label": "Midday Session"},
+    "close_session":   {"cmd": f"cd {_SRC_DIR} && python3 retail_scheduler.py --session=close",
+                        "label": "Close Session"},
+}
+
+
+@app.route("/api/command/run-agent", methods=["POST"])
+def cmd_run_agent():
+    """Fire-and-forget: launch a whitelisted agent on SentinelRetail via SSH."""
+    if not _check_token():
+        return jsonify({"error": "unauthorized"}), 401
+    data = request.get_json(silent=True) or {}
+    action = data.get("action", "")
+    if action not in _COMMAND_WHITELIST:
+        return jsonify({"error": f"unknown action: {action}",
+                        "allowed": list(_COMMAND_WHITELIST.keys())}), 400
+    entry = _COMMAND_WHITELIST[action]
+    ssh_cmd = f"nohup bash -c '{entry['cmd']}' >> {_LOG_FILE} 2>&1 &"
+    try:
+        _sp.Popen(
+            ["ssh", "-o", "ConnectTimeout=5", "SentinelRetail", ssh_cmd],
+            stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+        )
+        return jsonify({"ok": True, "action": action,
+                        "message": f"{entry['label']} started"}), 200
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/command/agent-status", methods=["GET"])
+def cmd_agent_status():
+    """Return recent AGENT_START / AGENT_COMPLETE events from pi5."""
+    if not _check_token():
+        return jsonify({"error": "unauthorized"}), 401
+    try:
+        cid = "30eff008-c27a-4c71-a788-05f883e4e3a0"
+        db_path = f"/home/pi516gb/synthos/synthos_build/data/customers/{cid}/signals.db"
+        sql = (
+            "SELECT event, agent, timestamp FROM system_log "
+            "WHERE event IN ('AGENT_START','AGENT_COMPLETE') "
+            "ORDER BY timestamp DESC LIMIT 10"
+        )
+        result = _sp.run(
+            ["ssh", "-o", "ConnectTimeout=5", "SentinelRetail",
+             f"sqlite3 -json '{db_path}' \"{sql}\""],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            import json as _json
+            events = _json.loads(result.stdout)
+            return jsonify({"ok": True, "events": events}), 200
+        return jsonify({"ok": True, "events": []}), 200
+    except Exception as e:
+        return jsonify({"ok": True, "events": [], "error": str(e)}), 200
+
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 DASHBOARD = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Synthos Command Console</title>
+<title>Synthos Monitor</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 <style>
@@ -983,10 +1098,10 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 .cmd-panel{margin-top:14px}
 
 .node-table-wrap{overflow-x:auto;border-radius:14px;border:1px solid var(--border);background:var(--surface);margin-bottom:0}
-.node-thead{display:grid;grid-template-columns:180px 88px 58px 58px 62px 58px 58px 80px 72px;
+.node-thead{display:grid;grid-template-columns:180px 88px 58px 58px 62px 58px 58px 80px 72px 70px;
             padding:8px 14px;background:rgba(255,255,255,0.025);min-width:680px;border-bottom:1px solid var(--border)}
 .node-th{font-size:9px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:var(--muted)}
-.node-row{display:grid;grid-template-columns:180px 88px 58px 58px 62px 58px 58px 80px 72px;
+.node-row{display:grid;grid-template-columns:180px 88px 58px 58px 62px 58px 58px 80px 72px 70px;
           padding:10px 14px;border-top:1px solid var(--border);align-items:center;
           cursor:pointer;transition:background 0.15s;min-width:680px}
 .node-row:hover{background:rgba(255,255,255,0.025)}
@@ -998,12 +1113,21 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 .node-lbl{font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:116px}
 .node-id-tag{font-size:9px;color:var(--dim);font-family:var(--mono)}
 .mc-ok{color:var(--teal)}.mc-warn{color:var(--amber)}.mc-crit{color:var(--pink)}.mc-na{color:var(--dim)}
+.node-power{display:flex;gap:4px;align-items:center}
+.pwr-btn{width:22px;height:22px;border-radius:6px;border:1px solid var(--border2);
+  background:var(--surface2);cursor:pointer;display:flex;align-items:center;
+  justify-content:center;transition:all .15s;padding:0}
+.pwr-btn:hover{border-color:var(--amber);background:rgba(245,166,35,0.08)}
+.pwr-btn svg{width:11px;height:11px;color:var(--muted);transition:color .15s}
+.pwr-btn:hover svg{color:var(--amber)}
+.pwr-btn.danger:hover{border-color:var(--pink);background:rgba(255,75,110,0.08)}
+.pwr-btn.danger:hover svg{color:var(--pink)}
 /* GRAPH CARDS */
 .graph-card{border-radius:14px;border:1px solid var(--border);background:var(--surface);
             padding:16px 16px 10px;margin-bottom:14px}
 .graph-card-title{font-size:10px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;
                   color:var(--muted);margin-bottom:10px;display:flex;align-items:center;gap:6px}
-.graph-canvas-wrap{height:85px;position:relative}
+.graph-canvas-wrap{height:170px;position:relative}
 
 /* Toast */
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(60px);
@@ -1029,6 +1153,13 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 .cbtn-cancel:hover{color:var(--text)}
 .cbtn-confirm{background:var(--pink2);border:1px solid rgba(255,75,110,0.3);color:var(--pink)}
 .cbtn-confirm:hover{background:rgba(255,75,110,0.2)}
+.appr-filter{
+  padding:3px 10px;border-radius:6px;font-size:10px;font-weight:600;
+  background:transparent;border:1px solid var(--border);color:var(--muted);
+  cursor:pointer;font-family:var(--sans,Inter,system-ui,sans-serif);transition:all 0.15s;
+}
+.appr-filter:hover{background:rgba(255,255,255,0.04);color:var(--text)}
+.appr-filter.active{background:rgba(245,166,35,0.08);border-color:rgba(245,166,35,0.25);color:var(--amber)}
 .hamburger-wrap{position:relative}
 .hamburger-btn{display:flex;flex-direction:column;justify-content:center;align-items:center;gap:4px;width:32px;height:32px;background:transparent;border:1px solid var(--border);border-radius:8px;cursor:pointer;padding:0}
 .hamburger-btn span{display:block;width:14px;height:1.5px;background:var(--muted);border-radius:2px;transition:all .2s}
@@ -1038,6 +1169,69 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 .hamburger-menu.open{display:flex;flex-direction:column}
 .hmenu-item{padding:8px 14px;border-radius:8px;font-size:12px;font-weight:500;color:var(--muted);text-decoration:none;transition:all .15s;letter-spacing:0.03em}
 .hmenu-item:hover{background:rgba(255,255,255,0.05);color:var(--text)}
+
+/* COMMAND PANEL */
+.cmd-trigger{padding:4px 10px;border-radius:99px;background:rgba(123,97,255,0.08);
+  border:1px solid rgba(123,97,255,0.25);color:#a78bfa;font-size:10px;font-weight:600;
+  cursor:pointer;font-family:var(--sans);letter-spacing:0.05em;transition:all .15s}
+.cmd-trigger:hover{background:rgba(123,97,255,0.15);border-color:rgba(123,97,255,0.4);color:#c4b5fd}
+.cmd-overlay{position:fixed;top:0;right:0;bottom:0;left:0;background:rgba(0,0,0,0.4);
+  z-index:500;opacity:0;pointer-events:none;transition:opacity .2s}
+.cmd-overlay.open{opacity:1;pointer-events:all}
+.cc-slideout{position:fixed;top:0;right:0;bottom:0;width:320px;background:var(--surface);
+  border-left:1px solid var(--border2);z-index:501;
+  transform:translateX(100%);transition:transform .25s ease;
+  display:flex;flex-direction:column;overflow-y:auto}
+.cc-slideout.open{transform:translateX(0)}
+.cc-slideout-header{padding:16px 18px 12px;display:flex;align-items:center;gap:8px;
+  border-bottom:1px solid var(--border);flex-shrink:0}
+.cc-slideout-title{font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;
+  color:var(--text);flex:1}
+.cc-slideout-close{background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;
+  padding:4px 8px;border-radius:6px;transition:all .15s}
+.cc-slideout-close:hover{color:var(--text);background:rgba(255,255,255,0.05)}
+.cc-section{padding:14px 18px 8px}
+.cc-section-title{font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;
+  color:var(--muted);margin-bottom:10px}
+.cc-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.cc-btn{padding:10px 12px;border-radius:10px;border:1px solid var(--border);
+  background:var(--surface2);cursor:pointer;text-align:left;transition:all .15s;
+  font-family:var(--sans);display:flex;flex-direction:column;gap:3px}
+.cc-btn:hover{border-color:var(--border2);background:rgba(255,255,255,0.04)}
+.cc-btn:active{transform:scale(0.97)}
+.cc-btn-label{font-size:11px;font-weight:600;color:var(--text)}
+.cc-btn-sub{font-size:9px;color:var(--muted)}
+.cc-btn.running{border-color:rgba(123,97,255,0.3);background:rgba(123,97,255,0.06)}
+.cc-btn.running .cc-btn-label{color:#a78bfa}
+.cc-btn.full{grid-column:1/-1}
+.cc-status{padding:14px 18px;border-top:1px solid var(--border);flex-shrink:0}
+.cc-status-title{font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;
+  color:var(--muted);margin-bottom:8px}
+.cc-event{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:10px;font-family:var(--mono)}
+.cc-event-time{color:var(--dim);min-width:42px}
+.cc-event-icon{font-size:10px}
+.cc-event-name{color:var(--muted);flex:1}
+
+/* MARKET ACTIVITY CHART */
+.mkt-section{margin-bottom:20px}
+.mkt-card{border-radius:14px;border:1px solid var(--border);background:var(--surface);padding:16px}
+.mkt-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.mkt-title{font-size:10px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:var(--muted)}
+.mkt-toggles{display:flex;gap:5px}
+.mkt-tog{padding:4px 10px;font-size:9px;font-weight:700;font-family:var(--mono);
+  border:1px solid var(--border);border-radius:6px;background:transparent;
+  color:var(--dim);cursor:pointer;transition:all .15s;letter-spacing:0.04em}
+.mkt-tog:hover{border-color:rgba(255,255,255,0.15);color:var(--muted)}
+.mkt-tog.on{color:var(--teal);border-color:rgba(0,245,212,0.25);background:rgba(0,245,212,0.06)}
+.mkt-tog.on-pink{color:var(--pink);border-color:rgba(255,75,110,0.25);background:rgba(255,75,110,0.06)}
+.mkt-tog.on-amber{color:var(--amber);border-color:rgba(255,179,71,0.25);background:rgba(255,179,71,0.06)}
+.mkt-tog.on-purple{color:var(--purple);border-color:rgba(123,97,255,0.25);background:rgba(123,97,255,0.06)}
+.mkt-canvas{height:220px;position:relative}
+.mkt-summary{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:12px}
+@media(max-width:800px){.mkt-summary{grid-template-columns:repeat(3,1fr)}}
+.mkt-stat{padding:10px;border-radius:10px;border:1px solid var(--border);background:rgba(255,255,255,0.02);text-align:center}
+.mkt-stat-label{font-size:8px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--dim);margin-bottom:4px}
+.mkt-stat-val{font-size:16px;font-weight:700;font-family:var(--mono);letter-spacing:-0.3px}
 </style>
 </head>
 <body>
@@ -1057,27 +1251,113 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
 <!-- HEADER -->
 <header class="header">
   <div class="wordmark">SYNTHOS</div>
-  <div class="header-sub">Command Console</div>
+  <div class="header-sub">Monitor</div>
   <div class="header-right">
     <div class="clock" id="clock">--:--:-- ET</div>
     <div class="live-pill"><div class="live-dot"></div><span id="pi-count">No Nodes</span></div>
-    <div class="hamburger-wrap">
+    <button class="cc-trigger" onclick="toggleCmdPanel()">Commands</button>
+    <div class="hamburger-wrap">    <div class="hamburger-wrap">
       <button class="hamburger-btn" onclick="toggleMenu()" id="hbtn" aria-label="Menu">
         <span></span><span></span><span></span>
       </button>
       <div class="hamburger-menu" id="hmenu">
+        <a href="/monitor" class="hmenu-item">Monitor</a>
         <a href="/console" class="hmenu-item">Scoop Queue</a>
+        <a href="/maintenance" class="hmenu-item">Maintenance</a>
         <a href="/project-status" class="hmenu-item">Project Status</a>
+        <a href="/system-architecture" class="hmenu-item">System Architecture</a>
         <a href="/display" class="hmenu-item">Sentinel Display</a>
         <a href="/audit" class="hmenu-item">Auditor</a>
         <a href="/logs" class="hmenu-item">Logs</a>
+        <a href="/support-queue" class="hmenu-item">Customer Support</a>
+        <a href="/customer-billing" class="hmenu-item">Customer Billing</a>
+        <a href="/company-finances" class="hmenu-item">Company Finances</a>
+        <a href="/reports" class="hmenu-item">Reports</a>
+        <div style="height:1px;background:rgba(255,255,255,0.07);margin:4px 0"></div>
+        <a href="/logout" class="hmenu-item" style="color:var(--pink)">Sign Out</a>
+        <a href="/approvals" class="hmenu-item">Approvals <span id="appr-badge" style="display:none;background:var(--amber);color:#000;font-size:9px;font-weight:800;padding:1px 5px;border-radius:99px;margin-left:3px"></span></a>
       </div>
     </div>
   </div>
 </header>
 
+
+<!-- COMMAND PANEL -->
+<div class="cc-overlay" id="cc-overlay" onclick="closeCmdPanel()"></div>
+<div class="cc-slideout" id="cc-slideout">
+  <div class="cc-slideout-header">
+    <div class="cc-slideout-title">Command Center</div>
+    <button class="cc-slideout-close" onclick="closeCmdPanel()">&#x2715;</button>
+  </div>
+  <div class="cc-section">
+    <div class="cc-section-title">Agents</div>
+    <div class="cc-grid">
+      <button class="cc-btn" data-action="news_overnight" onclick="runCommand(this)">
+        <span class="cc-btn-label">News</span><span class="cc-btn-sub">Overnight scan</span>
+      </button>
+      <button class="cc-btn" data-action="news_market" onclick="runCommand(this)">
+        <span class="cc-btn-label">News</span><span class="cc-btn-sub">Market hours</span>
+      </button>
+      <button class="cc-btn" data-action="sentiment" onclick="runCommand(this)">
+        <span class="cc-btn-label">Sentiment</span><span class="cc-btn-sub">The Pulse</span>
+      </button>
+      <button class="cc-btn" data-action="screener" onclick="runCommand(this)">
+        <span class="cc-btn-label">Screener</span><span class="cc-btn-sub">Sector scan</span>
+      </button>
+      <button class="cc-btn full" data-action="trade" onclick="runCommand(this)">
+        <span class="cc-btn-label">Trade Logic</span><span class="cc-btn-sub">Run trade evaluation for all customers</span>
+      </button>
+    </div>
+  </div>
+  <div class="cc-section">
+    <div class="cc-section-title">Sessions</div>
+    <div class="cc-grid">
+      <button class="cc-btn" data-action="prep_session" onclick="runCommand(this)">
+        <span class="cc-btn-label">Prep</span><span class="cc-btn-sub">Screener + News + Sentiment</span>
+      </button>
+      <button class="cc-btn" data-action="open_session" onclick="runCommand(this)">
+        <span class="cc-btn-label">Open</span><span class="cc-btn-sub">Full market open</span>
+      </button>
+      <button class="cc-btn" data-action="midday_session" onclick="runCommand(this)">
+        <span class="cc-btn-label">Midday</span><span class="cc-btn-sub">Sentiment + Trade</span>
+      </button>
+      <button class="cc-btn" data-action="close_session" onclick="runCommand(this)">
+        <span class="cc-btn-label">Close</span><span class="cc-btn-sub">End-of-day wrap</span>
+      </button>
+    </div>
+  </div>
+  <div class="cc-status" id="cc-status">
+    <div class="cc-status-title">Recent Activity</div>
+    <div id="cc-events" style="color:var(--dim);font-size:10px">Loading...</div>
+  </div>
+</div>
+
+  <!-- MARKET ACTIVITY CHART -->
+  <div class="mkt-section">
+    <div class="sec-title">Market Activity <span style="font-size:9px;color:var(--dim);font-weight:400;margin-left:6px">24h</span></div>
+    <div class="mkt-card">
+      <div class="mkt-header">
+        <div class="mkt-toggles">
+          <button class="mkt-tog on" id="mt-buys" onclick="mktToggle('buys',this,'on')">Buys</button>
+          <button class="mkt-tog on-pink" id="mt-sells" onclick="mktToggle('sells',this,'on-pink')">Sells</button>
+          <button class="mkt-tog on-amber" id="mt-sessions" onclick="mktToggle('sessions',this,'on-amber')">Sessions</button>
+          <button class="mkt-tog" id="mt-net" onclick="mktToggle('net',this,'on-purple')">Net Flow</button>
+        </div>
+      </div>
+      <div class="mkt-canvas"><canvas id="mkt-chart"></canvas></div>
+      <div class="mkt-summary">
+        <div class="mkt-stat"><div class="mkt-stat-label">Total Buys</div><div class="mkt-stat-val" id="ms-buys" style="color:var(--teal)">$0</div></div>
+        <div class="mkt-stat"><div class="mkt-stat-label">Total Sells</div><div class="mkt-stat-val" id="ms-sells" style="color:var(--pink)">$0</div></div>
+        <div class="mkt-stat"><div class="mkt-stat-label">Net Flow</div><div class="mkt-stat-val" id="ms-net" style="color:var(--muted)">$0</div></div>
+        <div class="mkt-stat"><div class="mkt-stat-label">Active Now</div><div class="mkt-stat-val" id="ms-active" style="color:var(--teal)">0</div></div>
+        <div class="mkt-stat"><div class="mkt-stat-label">Peak Sessions</div><div class="mkt-stat-val" id="ms-peak" style="color:var(--amber)">0</div></div>
+      </div>
+    </div>
+  </div>
+
 <!-- TOAST -->
 <div class="toast" id="toast"></div>
+
 
 <!-- CONFIRM -->
 <div class="confirm-overlay" id="confirm-overlay">
@@ -1174,6 +1454,34 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
   <!-- ROSTER + COMMANDS ROW -->
   <div class="roster-cmd-row">
 
+    <!-- ACCOUNT APPROVALS -->
+    <div id="approvals-section" style="display:none;margin-bottom:20px">
+      <div class="sec-title" style="display:flex;align-items:center;justify-content:space-between">
+        Account Approval Queue
+        <div style="display:flex;gap:6px">
+          <button class="appr-filter active" id="af-PENDING" onclick="filterAppr('PENDING')">Pending</button>
+          <button class="appr-filter" id="af-APPROVED" onclick="filterAppr('APPROVED')">Approved</button>
+          <button class="appr-filter" id="af-REJECTED" onclick="filterAppr('REJECTED')">Rejected</button>
+          <button class="appr-filter" id="af-ALL" onclick="filterAppr(null)">All</button>
+        </div>
+      </div>
+      <div style="border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--surface)">
+        <table style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead><tr style="border-bottom:1px solid var(--border)">
+            <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted)">Name</th>
+            <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted)">Email</th>
+            <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted)">Phone</th>
+            <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted)">Submitted</th>
+            <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted)">Status</th>
+            <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted)">Actions</th>
+          </tr></thead>
+          <tbody id="approvals-tbody">
+            <tr><td colspan="6" style="padding:20px;text-align:center;color:var(--muted)">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- NODE ROSTER -->
     <div class="roster-col">
       <div class="sec-title">Node Roster <span id="sync-label" style="font-size:9px;color:var(--dim);font-weight:400;letter-spacing:0;text-transform:none">syncing...</span></div>
@@ -1195,22 +1503,22 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
         <div class="cmd-section">
           <div class="cmd-label">Trading Mode Gate</div>
           <div class="cmd-row">
-            <button class="cmd-btn" id="cmd-paper" onclick="sendGlobalCmd('trading-mode','PAPER')">Paper</button>
-            <button class="cmd-btn" id="cmd-live" onclick="confirmCmd('trading-mode','LIVE','Switch ALL nodes to LIVE trading?')">Live</button>
+            <button class="cc-btn" id="cmd-paper" onclick="sendGlobalCmd('trading-mode','PAPER')">Paper</button>
+            <button class="cc-btn" id="cmd-live" onclick="confirmCmd('trading-mode','LIVE','Switch ALL nodes to LIVE trading?')">Live</button>
           </div>
         </div>
         <div class="cmd-section">
           <div class="cmd-label">Operating Mode</div>
           <div class="cmd-row">
-            <button class="cmd-btn" id="cmd-supervised" onclick="sendGlobalCmd('operating-mode','SUPERVISED')">Supervised</button>
-            <button class="cmd-btn" id="cmd-autonomous" onclick="confirmCmd('operating-mode','AUTONOMOUS','Grant AUTONOMOUS mode to ALL nodes?')">Autonomous</button>
+            <button class="cc-btn" id="cmd-supervised" onclick="sendGlobalCmd('operating-mode','SUPERVISED')">Supervised</button>
+            <button class="cc-btn" id="cmd-autonomous" onclick="confirmCmd('operating-mode','AUTONOMOUS','Grant AUTONOMOUS mode to ALL nodes?')">Autonomous</button>
           </div>
         </div>
         <div class="cmd-section">
           <div class="cmd-label">Emergency</div>
           <div class="cmd-row">
             <button class="cmd-btn danger" id="cmd-kill-on" onclick="confirmCmd('kill-switch',true,'ACTIVATE kill switch on ALL nodes?')">Kill Switch ON</button>
-            <button class="cmd-btn" id="cmd-kill-off" onclick="sendGlobalCmd('kill-switch',false)">Kill Switch OFF</button>
+            <button class="cc-btn" id="cmd-kill-off" onclick="sendGlobalCmd('kill-switch',false)">Kill Switch OFF</button>
           </div>
         </div>
       </div>
@@ -1266,6 +1574,128 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
 /* DBG */ try { document.getElementById('dbg-fetch').textContent = 'MAIN SCRIPT STARTED'; } catch(e){}
 const SECRET_TOKEN = '{{ secret_token }}';
 let piData = {};
+let _approvalFilter = 'PENDING';
+let _approvalsOpen = false;
+
+function toggleApprovals() {
+  _approvalsOpen = !_approvalsOpen;
+  document.getElementById('approvals-section').style.display = _approvalsOpen ? '' : 'none';
+  if (_approvalsOpen) loadApprovals();
+}
+
+async function generateInvite(){
+  const r=await fetch('/api/proxy/generate-invite',{method:'POST',headers:{'X-Token':SECRET_TOKEN,'Content-Type':'application/json'}});
+  const d=await r.json();
+  if(d.ok){
+    document.getElementById('gen-code').textContent=d.code;
+    var gb=document.getElementById('gen-box');if(gb)gb.style.display='block';
+    toast('Invite code generated: '+d.code,'ok');
+    loadInvites();
+  } else toast('Error: '+(d.error||'Unknown'),'err');
+}
+
+function copyCode(){
+  const code=document.getElementById('gen-code').textContent;
+  if(code) navigator.clipboard.writeText(code).then(()=>toast('Copied to clipboard','ok'));
+}
+
+async function loadInvites(){
+  try{
+    const r=await fetch('/api/proxy/invite-codes',{headers:{'X-Token':SECRET_TOKEN}});
+    const d=await r.json();
+    const el=document.getElementById('invite-list');
+    if(!el) return;
+    if(!d.codes||!d.codes.length){el.innerHTML='<div style="text-align:center;padding:20px;color:rgba(255,255,255,0.3)">No invite codes yet</div>';return}
+    el.innerHTML=d.codes.map(function(c){
+      var ts=c.created_at?new Date(c.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'\u2014';
+      var used=c.is_used;
+      var sc=used?'rgba(255,255,255,0.3)':'#00f5d4';
+      var bg=used?'rgba(255,255,255,0.02)':'rgba(0,245,212,0.04)';
+      var stClr=used?'rgba(255,75,110,0.7)':'rgba(0,245,212,0.7)';
+      var stTxt=used?'Used'+(c.used_by?' by '+c.used_by:''):'Available';
+      return '<div style="display:flex;align-items:center;gap:14px;padding:10px 16px;border:1px solid rgba(255,255,255,0.05);border-radius:10px;margin-bottom:6px;background:'+bg+'">'
+        +'<span style="font-family:monospace;font-size:13px;font-weight:700;color:'+sc+';letter-spacing:0.04em;min-width:120px">'+c.code+'</span>'
+        +'<span style="font-size:10px;color:rgba(255,255,255,0.3)">'+ts+'</span>'
+        +'<span style="font-size:10px;color:'+stClr+'">'+stTxt+'</span>'
+        +'</div>';
+    }).join('');
+  }catch(e){
+    console.error('loadApprovals error:',e);
+    var list=document.getElementById('appr-list');
+    if(list) list.innerHTML='<div class="appr-empty">Failed to load signups</div>';
+  }
+}
+
+async function loadApprovals() {
+  try {
+    let url = '/api/proxy/pending-signups';
+    if (_approvalFilter) url += '?status=' + _approvalFilter;
+    const r = await fetch(url, {headers:{'X-Token':SECRET_TOKEN}});
+    const d = await r.json();
+    const tbody = document.getElementById('approvals-tbody');
+    if (!d.signups || !d.signups.length) {
+      tbody.innerHTML = '<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--muted)">No signups found</td></tr>';
+      return;
+    }
+    tbody.innerHTML = d.signups.map(s => {
+      const ts = s.created_at ? new Date(s.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '\u2014';
+      const sc = s.status==='PENDING'?'var(--amber)':s.status==='APPROVED'?'var(--teal)':'var(--pink)';
+      const sbg = s.status==='PENDING'?'rgba(245,166,35,0.08)':s.status==='APPROVED'?'rgba(0,245,212,0.08)':'rgba(255,75,110,0.08)';
+      let actions = '';
+      if (s.status==='PENDING') {
+        actions = '<button onclick="approveSignup('+s.id+')" style="padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600;background:rgba(0,245,212,0.08);border:1px solid rgba(0,245,212,0.2);color:var(--teal);cursor:pointer;margin-right:4px">Approve</button>'
+                + '<button onclick="rejectSignup('+s.id+')" style="padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600;background:rgba(255,75,110,0.08);border:1px solid rgba(255,75,110,0.2);color:var(--pink);cursor:pointer">Reject</button>';
+      } else if (s.status==='APPROVED' && s.customer_id) {
+        actions = '<span style="font-size:10px;color:var(--muted);font-family:monospace">'+s.customer_id.slice(0,8)+'...</span>';
+      } else { actions = '<span style="font-size:10px;color:var(--dim)">\u2014</span>'; }
+      return '<tr style="border-bottom:1px solid var(--border)">'
+        +'<td style="padding:10px 14px;font-weight:600">'+(s.name||'\u2014')+'</td>'
+        +'<td style="padding:10px 14px;font-family:monospace;font-size:11px">'+(s.email||'\u2014')+'</td>'
+        +'<td style="padding:10px 14px;font-size:11px">'+(s.phone||'\u2014')+'</td>'
+        +'<td style="padding:10px 14px;font-size:11px;color:var(--muted)">'+ts+'</td>'
+        +'<td style="padding:10px 14px"><span style="background:'+sbg+';color:'+sc+';padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700">'+s.status+'</span></td>'
+        +'<td style="padding:10px 14px">'+actions+'</td></tr>';
+    }).join('');
+  } catch(e) { console.error('loadApprovals', e); }
+}
+
+function filterAppr(status) {
+  _approvalFilter = status;
+  document.querySelectorAll('.appr-filter').forEach(b=>b.classList.remove('active'));
+  document.getElementById(status?'af-'+status:'af-ALL')?.classList.add('active');
+  loadApprovals();
+}
+
+async function approveSignup(id) {
+  if (!confirm('Approve this signup? Creates their account and database.')) return;
+  const r = await fetch('/api/proxy/approve-signup',{method:'POST',headers:{'Content-Type':'application/json','X-Token':SECRET_TOKEN},body:JSON.stringify({signup_id:id})});
+  const d = await r.json();
+  if (d.ok) { toast('Account approved: '+(d.email||''),'ok'); loadApprovals(); checkPendingBadge();
+// Auto-open approvals if ?approvals=1 in URL
+if (new URLSearchParams(window.location.search).get("approvals") === "1") {
+  toggleApprovals();
+} }
+  else toast('Error: '+(d.error||'Unknown'),'err');
+}
+
+async function rejectSignup(id) {
+  if (!confirm('Reject this signup request?')) return;
+  const r = await fetch('/api/proxy/reject-signup',{method:'POST',headers:{'Content-Type':'application/json','X-Token':SECRET_TOKEN},body:JSON.stringify({signup_id:id})});
+  const d = await r.json();
+  if (d.ok) { toast('Signup rejected','ok'); loadApprovals(); checkPendingBadge(); }
+  else toast('Error: '+(d.error||'Unknown'),'err');
+}
+
+async function checkPendingBadge() {
+  try {
+    const r = await fetch('/api/proxy/pending-signups?status=PENDING',{headers:{'X-Token':SECRET_TOKEN}});
+    const d = await r.json();
+    const badge = document.getElementById('appr-badge');
+    if (badge && d.signups && d.signups.length>0) { badge.textContent=d.signups.length; badge.style.display='inline'; }
+    else if (badge) { badge.style.display='none'; }
+  } catch(e) {}
+}
+checkPendingBadge();
 let allTodos = [];
 let pendingDelete = null;
 let modalPiId = null;
@@ -1471,18 +1901,26 @@ function renderNodeRoster() {
           + '<div class="sdot ' + dc + '"></div>'
           + '<span class="status-text st-' + sc + '">' + pi.status + '</span>'
       + '</div></div>'
-      + '<div class="node-cell ' + metricClass(pi.cpu_percent, 70, 90) + '">'
-          + fmtMetric(pi.cpu_percent, '%') + '</div>'
-      + '<div class="node-cell ' + metricClass(pi.ram_percent, 75, 90) + '">'
-          + fmtMetric(pi.ram_percent, '%') + '</div>'
-      + '<div class="node-cell ' + metricClass(load1, 1.5, 3.0) + '">'
-          + fmtMetric(load1, '', 2) + '</div>'
-      + '<div class="node-cell ' + metricClass(pi.cpu_temp, 65, 80) + '">'
-          + fmtMetric(pi.cpu_temp, '\u00b0', 1) + '</div>'
-      + '<div class="node-cell ' + metricClass(pi.disk_percent, 75, 90) + '">'
-          + fmtMetric(pi.disk_percent, '%') + '</div>'
+      + '<div class="node-cell ' + (sc==='offline'?'mc-na':metricClass(pi.cpu_percent, 70, 90)) + '">'
+          + (sc==='offline'?'\u2014':fmtMetric(pi.cpu_percent, '%')) + '</div>'
+      + '<div class="node-cell ' + (sc==='offline'?'mc-na':metricClass(pi.ram_percent, 75, 90)) + '">'
+          + (sc==='offline'?'\u2014':fmtMetric(pi.ram_percent, '%')) + '</div>'
+      + '<div class="node-cell ' + (sc==='offline'?'mc-na':metricClass(load1, 1.5, 3.0)) + '">'
+          + (sc==='offline'?'\u2014':fmtMetric(load1, '', 2)) + '</div>'
+      + '<div class="node-cell ' + (sc==='offline'?'mc-na':metricClass(pi.cpu_temp, 65, 80)) + '">'
+          + (sc==='offline'?'\u2014':fmtMetric(pi.cpu_temp, '\u00b0', 1)) + '</div>'
+      + '<div class="node-cell ' + (sc==='offline'?'mc-na':metricClass(pi.disk_percent, 75, 90)) + '">'
+          + (sc==='offline'?'\u2014':fmtMetric(pi.disk_percent, '%')) + '</div>'
       + '<div class="node-cell mc-na">' + (pi.uptime || '\u2014') + '</div>'
       + '<div class="node-cell mc-na">' + ageSince(pi.last_seen) + '</div>'
+    + '<div class="node-power">'
+      + '<button class="pwr-btn" title="Reboot" data-piid="' + pi.pi_id + '" data-act="reboot" onclick="nodePower(this.dataset.piid,this.dataset.act,event)">'
+        + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>'
+      + '</button>'
+      + '<button class="pwr-btn danger" title="Shutdown" data-piid="' + pi.pi_id + '" data-act="shutdown" onclick="nodePower(this.dataset.piid,this.dataset.act,event)">'
+        + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>'
+      + '</button>'
+    + '</div>'
     + '</div>';
   }).join('');
 
@@ -1498,6 +1936,7 @@ function renderNodeRoster() {
         + '<div class="node-th">Disk</div>'
         + '<div class="node-th">Uptime</div>'
         + '<div class="node-th">Last Seen</div>'
+        + '<div class="node-th">Actions</div>'
     + '</div>'
     + rows
     + '</div>';
@@ -1989,7 +2428,7 @@ function confirmCmd(type, value, msg) {
 }
 
 async function sendGlobalCmd(type, value) {
-  const statusEl = document.getElementById('cmd-status');
+  const statusEl = document.getElementById('cc-status');
   try {
     statusEl.textContent = 'sending...';
     statusEl.style.color = 'var(--amber)';
@@ -2075,9 +2514,19 @@ async function confirmDelete() {
 // ── TODOS ──
 async function fetchTodos() {
   try {
-    const r = await fetch('/api/todos');
+    const r = await fetch('/api/auditor/findings');
     if (!r.ok) return;
-    allTodos = await r.json();
+    const data = await r.json();
+    allTodos = (data.issues || []).map(function(i) {
+      return {
+        id: i.id, title: i.context ? i.context.substring(0, 120) : 'Unknown',
+        severity: (i.severity || 'low').toUpperCase(),
+        category: i.source_file || '', pi_id: '',
+        date: i.last_seen ? i.last_seen.substring(0,10) : '',
+        action: 'Hits: ' + (i.hit_count || 1),
+        resolved: false
+      };
+    });
     allTodos.sort((a,b) => (SEV_ORDER[a.severity]??9) - (SEV_ORDER[b.severity]??9));
     renderTodos();
     updateFleetStats();
@@ -2103,6 +2552,27 @@ function renderTodos() {
       + '<button class="resolve-btn" data-todoid="' + CSS.escape(t.id) + '" onclick="resolveTodo(this.dataset.todoid,event)">Done</button>'
     + '</div>'
   ).join('');
+}
+
+async function nodePower(piId, action, e) {
+  e.stopPropagation();
+  var verb = action === "shutdown" ? "shut down" : "reboot";
+  if (!confirm("Are you sure you want to " + verb + " " + piId + "?")) return;
+  try {
+    var r = await fetch("/api/node/" + encodeURIComponent(piId) + "/power", {
+      method: "POST",
+      headers: {"X-Token": SECRET_TOKEN, "Content-Type": "application/json"},
+      body: JSON.stringify({action: action})
+    });
+    var d = await r.json();
+    if (d.ok) {
+      alert(piId + " " + verb + " command sent.");
+    } else {
+      alert("Error: " + (d.error || "Unknown"));
+    }
+  } catch(err) {
+    alert("Request failed: " + err.message);
+  }
 }
 
 // ── PUSH KEYS TO PI ──
@@ -2155,7 +2625,7 @@ async function pushKeysToPi(piId) {
 
 async function resolveTodo(id, e) {
   e.stopPropagation();
-  await fetch('/api/todos/' + encodeURIComponent(id) + '/resolve', {
+  await fetch('/api/auditor/resolve/' + encodeURIComponent(id) + '', {
     method:'POST', headers:{'X-Token':SECRET_TOKEN}
   });
   await fetchTodos();
@@ -2221,18 +2691,229 @@ function buildFleetCharts() {
 }
 
 // ── COUNTDOWN ──
-let countdown = 30;
+let countdown = 10;
 function tickCountdown() {
   countdown--;
-  if (countdown <= 0) { countdown = 30; fetchStatus(); }
+  if (countdown <= 0) { countdown = 10; fetchStatus(); }
+}
+
+
+// ── COMMAND PANEL ──
+function toggleCmdPanel() {
+  var p = document.getElementById('cc-slideout');
+  var o = document.getElementById('cc-overlay');
+  var isOpen = p.classList.contains('open');
+  if (isOpen) { closeCmdPanel(); }
+  else { p.classList.add('open'); o.classList.add('open'); loadCmdStatus(); }
+}
+function closeCmdPanel() {
+  document.getElementById('cc-slideout').classList.remove('open');
+  document.getElementById('cc-overlay').classList.remove('open');
+  if (window._cmdInterval) { clearInterval(window._cmdInterval); window._cmdInterval = null; }
+}
+async function runCommand(btn) {
+  var action = btn.dataset.action;
+  btn.classList.add('running');
+  var origLabel = btn.querySelector('.cc-btn-label').textContent;
+  btn.querySelector('.cc-btn-label').textContent = 'Starting...';
+  try {
+    var r = await fetch('/api/command/run-agent', {
+      method: 'POST',
+      headers: {'X-Token': SECRET_TOKEN, 'Content-Type': 'application/json'},
+      body: JSON.stringify({action: action})
+    });
+    var d = await r.json();
+    if (d.ok) {
+      toast(d.message, 'ok');
+      btn.querySelector('.cc-btn-label').textContent = 'Running...';
+      setTimeout(function() {
+        btn.classList.remove('running');
+        btn.querySelector('.cc-btn-label').textContent = origLabel;
+      }, 15000);
+    } else {
+      toast(d.error || 'Command failed', 'err');
+      btn.classList.remove('running');
+      btn.querySelector('.cc-btn-label').textContent = origLabel;
+    }
+  } catch(e) {
+    toast('Could not reach server', 'err');
+    btn.classList.remove('running');
+    btn.querySelector('.cc-btn-label').textContent = origLabel;
+  }
+  // Refresh status after short delay
+  setTimeout(loadCmdStatus, 3000);
+  // Start auto-refresh while panel is open
+  if (!window._cmdInterval) {
+    window._cmdInterval = setInterval(loadCmdStatus, 10000);
+  }
+}
+async function loadCmdStatus() {
+  try {
+    var r = await fetch('/api/command/agent-status', {
+      headers: {'X-Token': SECRET_TOKEN}
+    });
+    var d = await r.json();
+    var el = document.getElementById('cc-events');
+    if (!d.events || !d.events.length) {
+      el.innerHTML = '<div style="color:var(--dim);font-size:10px;padding:4px 0">No recent activity</div>';
+      return;
+    }
+    el.innerHTML = d.events.map(function(ev) {
+      var time = (ev.timestamp || '').slice(11, 16);
+      var isComplete = ev.event === 'AGENT_COMPLETE';
+      var icon = isComplete ? '<span style="color:var(--teal)">&#x2713;</span>' : '<span style="color:var(--amber)">&#x25B6;</span>';
+      var label = (isComplete ? '' : '') + (ev.agent || 'Agent') + (isComplete ? ' complete' : ' started');
+      return '<div class="cmd-event">'
+        + '<span class="cmd-event-time">' + time + '</span>'
+        + '<span class="cmd-event-icon">' + icon + '</span>'
+        + '<span class="cmd-event-name">' + label + '</span>'
+        + '</div>';
+    }).join('');
+  } catch(e) {
+    document.getElementById('cc-events').innerHTML = '<div style="color:var(--pink);font-size:10px">Status unavailable</div>';
+  }
+}
+
+
+// ── MARKET ACTIVITY CHART ──
+let _mktChart = null;
+let _mktData = null;
+let _mktVis = {buys:true, sells:true, sessions:true, net:false};
+
+function mktToggle(key, btn, cls) {
+  _mktVis[key] = !_mktVis[key];
+  if (_mktVis[key]) btn.classList.add(cls);
+  else btn.classList.remove(cls);
+  buildMktChart();
+}
+
+async function fetchMktActivity() {
+  try {
+    var r = await fetch('/api/proxy/market-activity?hours=24', {headers:{'X-Token':SECRET_TOKEN}});
+    if (!r.ok) return;
+    _mktData = await r.json();
+    buildMktChart();
+    updateMktSummary();
+  } catch(e) { console.error('fetchMktActivity:', e); }
+}
+
+function buildMktChart() {
+  if (!_mktData || !_mktData.hours) return;
+  var ctx = document.getElementById('mkt-chart');
+  if (!ctx) return;
+
+  var labels = _mktData.hours.map(function(h) {
+    var d = new Date(h + ':00');
+    var hr = d.getHours();
+    var ampm = hr >= 12 ? 'pm' : 'am';
+    hr = hr % 12 || 12;
+    return hr + ampm;
+  });
+
+  var datasets = [];
+
+  if (_mktVis.buys) {
+    datasets.push({
+      type:'bar', label:'Buys', data:_mktData.buys,
+      backgroundColor:colorWithAlpha('#00f5d4',0.65), borderColor:'#00f5d4',
+      borderWidth:1, borderRadius:3, yAxisID:'y', order:2
+    });
+  }
+  if (_mktVis.sells) {
+    datasets.push({
+      type:'bar', label:'Sells', data:_mktData.sells.map(function(v){return -v;}),
+      backgroundColor:colorWithAlpha('#ff4b6e',0.65), borderColor:'#ff4b6e',
+      borderWidth:1, borderRadius:3, yAxisID:'y', order:2
+    });
+  }
+  if (_mktVis.net) {
+    var netD = _mktData.buys.map(function(b,i){return b - (_mktData.sells[i]||0);});
+    datasets.push({
+      type:'bar', label:'Net Flow', data:netD,
+      backgroundColor:netD.map(function(v){return v>=0?colorWithAlpha('#7b61ff',0.6):colorWithAlpha('#ff4b6e',0.6);}),
+      borderColor:netD.map(function(v){return v>=0?'#7b61ff':'#ff4b6e';}),
+      borderWidth:1, borderRadius:3, yAxisID:'y', order:2
+    });
+  }
+  if (_mktVis.sessions && _mktData.sessions) {
+    datasets.push({
+      type:'line', label:'Active Sessions', data:_mktData.sessions,
+      borderWidth:3, tension:0.35, pointRadius:2, pointHitRadius:8,
+      pointBackgroundColor:_mktData.sessions.map(function(v){
+        if(v>=10)return '#ff4b6e'; if(v>=3)return '#ffb347'; return '#00f5d4';
+      }),
+      fill:false, yAxisID:'y1', order:1,
+      segment:{
+        borderColor:function(c){
+          var v=c.p0.parsed.y;
+          if(v>=10)return '#ff4b6e';
+          if(v>=3)return '#ffb347';
+          return '#00f5d4';
+        }
+      },
+      borderColor:'#00f5d4'
+    });
+  }
+
+  if (_mktChart) _mktChart.destroy();
+  _mktChart = new Chart(ctx, {
+    type:'bar',
+    data:{labels:labels, datasets:datasets},
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{display:true,position:'bottom',labels:{color:'rgba(255,255,255,0.35)',font:{size:9},boxWidth:8,padding:8}},
+        tooltip:{
+          backgroundColor:'rgba(13,17,32,0.95)',borderColor:'rgba(255,255,255,0.1)',borderWidth:1,
+          titleColor:'rgba(255,255,255,0.5)',bodyColor:'rgba(255,255,255,0.85)',
+          callbacks:{label:function(c){
+            if(c.dataset.yAxisID==='y1')return c.dataset.label+': '+c.parsed.y;
+            var v=Math.abs(c.parsed.y);
+            return c.dataset.label+': $'+v.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+          }}
+        }
+      },
+      scales:{
+        x:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'rgba(255,255,255,0.3)',font:{size:9},maxTicksLimit:12}},
+        y:{
+          position:'left',grid:{color:'rgba(255,255,255,0.04)'},
+          ticks:{color:'rgba(255,255,255,0.3)',font:{size:9},callback:function(v){return(v<0?'-':'')+'$'+Math.abs(v).toLocaleString();}},
+          title:{display:true,text:'Dollars',color:'rgba(255,255,255,0.15)',font:{size:8}}
+        },
+        y1:{
+          position:'right',grid:{drawOnChartArea:false},
+          ticks:{color:'rgba(255,255,255,0.25)',font:{size:9}},
+          title:{display:true,text:'Sessions',color:'rgba(255,255,255,0.15)',font:{size:8}},
+          min:0
+        }
+      }
+    }
+  });
+}
+
+function updateMktSummary() {
+  if (!_mktData || !_mktData.summary) return;
+  var s = _mktData.summary;
+  var fmt = function(v){return '$'+Math.abs(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});};
+  var el = function(id){return document.getElementById(id);};
+  el('ms-buys').textContent = fmt(s.total_buys);
+  el('ms-sells').textContent = fmt(s.total_sells);
+  var netEl = el('ms-net');
+  netEl.textContent = (s.net_flow>=0?'+':'-') + fmt(s.net_flow);
+  netEl.style.color = s.net_flow>=0?'var(--teal)':'var(--pink)';
+  el('ms-active').textContent = s.active_now;
+  el('ms-peak').textContent = s.peak_sessions;
 }
 
 // ── INIT ──
 /* DBG */ try { document.getElementById('dbg-keys').textContent = 'INIT REACHED'; } catch(e){}
 fetchStatus();
 fetchTodos();
+fetchMktActivity();
 setInterval(tickCountdown, 1000);
-setInterval(fetchTodos, 120000);
+setInterval(fetchTodos, 30000);
+setInterval(fetchMktActivity, 60000);
 function toggleMenu(){const m=document.getElementById('hmenu');m.classList.toggle('open')}
 document.addEventListener('click',function(e){if(!document.getElementById('hbtn').contains(e.target)&&!document.getElementById('hmenu').contains(e.target)){document.getElementById('hmenu').classList.remove('open')}});
 </script>
@@ -2473,17 +3154,8 @@ td.mono{font-family:var(--mono);font-size:11px}
 </head>
 <body>
 
-<div class="header">
-  <span class="wordmark">SYNTHOS</span>
-  <span class="header-badge">Company Node</span>
-  <div class="header-right">
-    <a href="/display" style="font-size:0.72rem;letter-spacing:0.08em;color:#556;text-decoration:none;margin-right:1rem" title="Display control">Display</a>
-    <a href="/project-status" style="font-size:0.72rem;letter-spacing:0.08em;color:#556;text-decoration:none;margin-right:1rem" title="Project status">Status</a>
-    <a href="/logs" style="font-size:0.72rem;letter-spacing:0.08em;color:#556;text-decoration:none;margin-right:1rem" title="View logs">Logs</a>
-    <span class="clock" id="clock">--:--:-- ET</span>
-    <div class="live-pill"><div class="live-dot"></div>LIVE</div>
-  </div>
-</div>
+{{ subpage_hdr|safe }}
+
 
 <div class="page">
 
@@ -2558,11 +3230,14 @@ td.mono{font-family:var(--mono);font-size:11px}
 
 <script>
 const TOKEN = document.cookie.split(';').map(c=>c.trim()).find(c=>c.startsWith('company_token='))?.split('=')[1] || '';
+const SECRET_TOKEN = '{{ secret_token }}';
 let currentStatus = 'pending';
 
 function clock(){
   const now = new Date();
-  document.getElementById('clock').textContent =
+  var _ck = document.getElementById('clock') || document.getElementById('syn-clk');
+  if(!_ck) return;
+  _ck.textContent =
     now.toLocaleTimeString('en-US',{timeZone:'America/New_York',hour12:false}) + ' ET';
 }
 clock(); setInterval(clock,1000);
@@ -2605,9 +3280,7 @@ function actionBtns(item){
 }
 
 async function fetchQueue(status){
-  const r = await fetch(`/api/queue?status=${status}&limit=100`,{
-    headers:{'X-Token': TOKEN}
-  });
+  const r = await fetch(`/api/queue?status=${status}&limit=100`,{headers:{'X-Token':SECRET_TOKEN}});
   return r.json();
 }
 
@@ -2660,14 +3333,14 @@ async function refresh(){
 }
 
 async function skipItem(id){
-  const r = await fetch(`/api/queue/${id}/skip`,{method:'POST',headers:{'X-Token':TOKEN}});
+  const r = await fetch(`/api/queue/${id}/skip`,{method:'POST',headers:{'X-Token':SECRET_TOKEN}});
   const j = await r.json();
   if(j.ok){ toast('Item skipped'); refresh(); }
   else toast(j.error||'Skip failed','err');
 }
 
 async function retryItem(id){
-  const r = await fetch(`/api/queue/${id}/retry`,{method:'POST',headers:{'X-Token':TOKEN}});
+  const r = await fetch(`/api/queue/${id}/retry`,{method:'POST',headers:{'X-Token':SECRET_TOKEN}});
   const j = await r.json();
   if(j.ok){ toast('Item queued for retry'); refresh(); }
   else toast(j.error||'Retry failed','err');
@@ -2719,9 +3392,14 @@ _COMPANY_LOGS_CSS = (
 
 _COMPANY_LOG_FILES = {
     'scoop':       'scoop.log',
-    'server':      'company_server.log',
-    'monitor':     'monitor.log',
-    'node_health': 'node_health.log',
+    'sentinel':    'sentinel.log',
+    'heartbeat':   'heartbeat.log',
+    'scheduler':   'scheduler.log',
+    'vault':       'vault.log',
+    'librarian':   'librarian.log',
+    'fidget':      'fidget.log',
+    'patches':     'patches.log',
+    'engineer':    'engineer.log',
 }
 
 
@@ -2759,6 +3437,61 @@ def receive_backup():
     size_kb = os.path.getsize(fpath) / 1024
     print(f"[Company] Staged backup: {fname} ({size_kb:.1f} KB) from pi_id={pi_id}")
     return jsonify({"ok": True, "staged": fname, "size_kb": round(size_kb, 1)}), 200
+
+
+
+def _subpage_header(page_name):
+    """Return a complete sub-page header HTML block. Works in Jinja, f-strings, and plain strings."""
+    return (
+        '<style>'
+        '.syn-hdr{position:sticky;top:0;z-index:200;background:rgba(8,11,18,0.9);backdrop-filter:blur(20px);border-bottom:1px solid rgba(255,255,255,0.07);padding:0 24px;height:52px;display:flex;align-items:center;gap:12px}'
+        '.syn-wm{font-family:var(--mono,"JetBrains Mono",monospace);font-size:1rem;font-weight:600;letter-spacing:0.15em;color:#00f5d4;text-shadow:0 0 20px rgba(0,245,212,0.4);flex-shrink:0}'
+        '.syn-sub{font-size:11px;color:rgba(255,255,255,0.4);font-family:var(--mono,"JetBrains Mono",monospace)}'
+        '.syn-right{margin-left:auto;display:flex;align-items:center;gap:8px}'
+        '.syn-clk{font-family:var(--mono,"JetBrains Mono",monospace);font-size:11px;color:rgba(255,255,255,0.4)}'
+        '.syn-back{padding:5px 12px;border-radius:8px;font-size:11px;font-weight:600;background:rgba(0,245,212,0.06);border:1px solid rgba(0,245,212,0.15);color:#00f5d4;text-decoration:none;letter-spacing:0.04em}'
+        '.syn-back:hover{background:rgba(0,245,212,0.12)}'
+        '.syn-hb-wrap{position:relative}'
+        '.syn-hb-btn{display:flex;flex-direction:column;justify-content:center;align-items:center;gap:4px;width:32px;height:32px;background:transparent;border:1px solid rgba(255,255,255,0.07);border-radius:8px;cursor:pointer;padding:0}'
+        '.syn-hb-btn:hover{border-color:rgba(255,255,255,0.13)}'
+        '.syn-hb-btn span{display:block;width:14px;height:1.5px;background:rgba(255,255,255,0.4);border-radius:2px}'
+        '.syn-hm{display:none;position:absolute;top:calc(100% + 8px);right:0;min-width:180px;background:#111520;border:1px solid rgba(255,255,255,0.13);border-radius:12px;padding:6px;z-index:999;box-shadow:0 12px 40px rgba(0,0,0,0.5);flex-direction:column}'
+        '.syn-hm.open{display:flex}'
+        '.syn-hm a{display:block;padding:8px 14px;border-radius:8px;font-size:12px;font-weight:500;color:rgba(255,255,255,0.4);text-decoration:none;letter-spacing:0.03em;transition:all .15s}'
+        '.syn-hm a:hover{background:rgba(255,255,255,0.05);color:rgba(255,255,255,0.88)}'
+        '</style>'
+        '<header class="syn-hdr">'
+        '<div class="syn-wm">SYNTHOS</div>'
+        '<div class="syn-sub">' + page_name + '</div>'
+        '<div class="syn-right">'
+        '<div class="syn-clk" id="syn-clk">--:--:-- ET</div>'
+        '<a href="/monitor" class="syn-back">&#8592; Monitor</a>'
+        '<div class="syn-hb-wrap" id="_synwrap">'
+        '<button class="syn-hb-btn" onclick="document.getElementById(\'_synhm\').classList.toggle(\'open\')" aria-label="Menu">'
+        '<span></span><span></span><span></span></button>'
+        '<div class="syn-hm" id="_synhm">'
+        '<a href="/monitor">Monitor</a>'
+        '<a href="/console">Scoop Queue</a>'
+        '<a href="/maintenance">Maintenance</a>'
+        '<a href="/project-status">Project Status</a>'
+        '<a href="/display">Sentinel Display</a>'
+        '<a href="/audit">Auditor</a>'
+        '<a href="/logs">Logs</a>'
+        '<a href="/approvals">Approvals</a>'
+        '<a href="/support-queue">Customer Support</a>'
+        '<a href="/customer-billing">Customer Billing</a>'
+        '<a href="/company-finances">Company Finances</a>'
+        '<a href="/reports">Reports</a>'
+        '<div style="height:1px;background:rgba(255,255,255,0.07);margin:4px 0"></div>'
+        '<a href="/logout" style="color:#ff4b6e">Sign Out</a>'
+        '</div></div></div></header>'
+        '<script>'
+        'document.addEventListener("click",function(e){var w=document.getElementById("_synwrap");var m=document.getElementById("_synhm");if(w&&m&&!w.contains(e.target))m.classList.remove("open")});'
+        'function _synClk(){var t=new Date().toLocaleTimeString("en-US",{timeZone:"America/New_York",hour12:false});var c=document.getElementById("syn-clk");if(c)c.textContent=t+" ET"}_synClk();setInterval(_synClk,1000);'
+        '</script>'
+    )
+
+_LOGS_HEADER = _subpage_header('Logs')
 
 
 @app.route("/logs")
@@ -2816,13 +3549,8 @@ def company_logs():
 {_COMPANY_LOGS_CSS}
 </head>
 <body>
-<header>
-  <div class="wordmark">SYNTHOS · COMPANY LOGS</div>
-  <div class="nav">
-    <a href="/monitor">&#8592; Monitor</a>
-    <a href="/logs?file={selected}&lines={lines}" onclick="location.reload();return false">&#8635; Refresh</a>
-  </div>
-</header>
+{_LOGS_HEADER}
+<div style="padding:4px 24px 0"><a href="/logs?file={selected}&lines={lines}" onclick="location.reload();return false" style="font-size:11px;color:rgba(255,255,255,0.4);text-decoration:none">&#8635; Refresh</a></div>
 <div class="tabs">{tabs}</div>
 <div class="controls">
   <label>Lines</label>
@@ -2889,7 +3617,7 @@ input::placeholder{color:var(--dim)}
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if _authorized():
-        return redirect(url_for("console"))
+        return redirect(url_for("monitor_dashboard"))
     if request.method == "POST":
         email = request.form.get("email", "").lower().strip()
         password = request.form.get("password", "")
@@ -2902,7 +3630,7 @@ def login():
             session["logged_in"] = True
             session["email"] = email
             session.permanent = True
-            return redirect(url_for("console"))
+            return redirect(url_for("monitor_dashboard"))
         return render_template_string(_LOGIN_HTML, error="Incorrect email or password")
     return render_template_string(_LOGIN_HTML, error=None)
 
@@ -2920,6 +3648,163 @@ def index():
 
 
 @app.route("/scoop")
+def scoop_redirect():
+    return redirect("/monitor")
+
+
+# ── SIGNUP APPROVAL PROXY (forward to retail portal on pi5) ─────────────────
+
+@app.route("/api/proxy/pending-signups")
+def proxy_pending_signups():
+    """Proxy pending signups request to retail portal on pi5."""
+    token = request.headers.get('X-Token', '')
+    if token != SECRET_TOKEN and not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    import requests as _req
+    try:
+        status_q = request.args.get('status', '')
+        url = f"{RETAIL_PORTAL_URL}/api/pending-signups"
+        if status_q:
+            url += f"?status={status_q}"
+        r = _req.get(url, timeout=8, cookies={'synthos_s': _get_admin_session_cookie()})
+        return jsonify(r.json()), r.status_code
+    except Exception as e:
+        return jsonify({"error": str(e)}), 502
+
+
+@app.route("/api/proxy/approve-signup", methods=["POST"])
+def proxy_approve_signup():
+    """Proxy signup approval to retail portal on pi5."""
+    token = request.headers.get('X-Token', '')
+    if token != SECRET_TOKEN and not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    import requests as _req
+    try:
+        r = _req.post(
+            f"{RETAIL_PORTAL_URL}/api/approve-signup",
+            json=request.get_json(force=True),
+            timeout=15,
+            cookies={'synthos_s': _get_admin_session_cookie()},
+            headers={'Content-Type': 'application/json'}
+        )
+        return jsonify(r.json()), r.status_code
+    except Exception as e:
+        return jsonify({"error": str(e)}), 502
+
+
+@app.route("/api/proxy/reject-signup", methods=["POST"])
+def proxy_reject_signup():
+    """Proxy signup rejection to retail portal on pi5."""
+    token = request.headers.get('X-Token', '')
+    if token != SECRET_TOKEN and not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    import requests as _req
+    try:
+        r = _req.post(
+            f"{RETAIL_PORTAL_URL}/api/reject-signup",
+            json=request.get_json(force=True),
+            timeout=10,
+            cookies={'synthos_s': _get_admin_session_cookie()},
+            headers={'Content-Type': 'application/json'}
+        )
+        return jsonify(r.json()), r.status_code
+    except Exception as e:
+        return jsonify({"error": str(e)}), 502
+
+
+@app.route("/api/proxy/generate-invite", methods=["POST"])
+def proxy_generate_invite():
+    """Proxy invite code generation to retail portal on pi5."""
+    token = request.headers.get('X-Token', '')
+    if token != SECRET_TOKEN and not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    import requests as _req
+    try:
+        r = _req.post(
+            f"{RETAIL_PORTAL_URL}/api/generate-invite",
+            json={},
+            timeout=10,
+            cookies={'synthos_s': _get_admin_session_cookie()},
+            headers={'Content-Type': 'application/json'}
+        )
+        return jsonify(r.json()), r.status_code
+    except Exception as e:
+        return jsonify({"error": str(e)}), 502
+
+
+@app.route("/api/proxy/invite-codes")
+def proxy_invite_codes():
+    """Proxy invite code listing to retail portal on pi5."""
+    token = request.headers.get('X-Token', '')
+    if token != SECRET_TOKEN and not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    import requests as _req
+    try:
+        r = _req.get(
+            f"{RETAIL_PORTAL_URL}/api/invite-codes",
+            timeout=8,
+            cookies={'synthos_s': _get_admin_session_cookie()},
+        )
+        return jsonify(r.json()), r.status_code
+    except Exception as e:
+        return jsonify({"error": str(e)}), 502
+
+
+
+@app.route("/api/proxy/market-activity")
+def proxy_market_activity():
+    """Proxy market activity data from retail portal for the dashboard chart."""
+    token = request.headers.get("X-Token", "")
+    if token != SECRET_TOKEN and not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    import requests as _req
+    try:
+        hours = request.args.get('hours', '24')
+        cookie = _get_admin_session_cookie()
+        r = _req.get(
+            f"{RETAIL_PORTAL_URL}/api/admin/market-activity",
+            params={"hours": hours},
+            cookies={"synthos_s": cookie},
+            timeout=15,
+        )
+        return jsonify(r.json()), r.status_code
+    except Exception as e:
+        print(f"[Monitor] market-activity proxy error: {e}")
+        return jsonify({"error": str(e), "hours": [], "buys": [], "sells": [], "sessions": [],
+                        "summary": {"total_buys":0,"total_sells":0,"net_flow":0,"active_now":0,"peak_sessions":0}}), 502
+
+
+def _get_admin_session_cookie():
+    """
+    Get a valid admin session cookie from the retail portal.
+    Caches the session to avoid re-authenticating on every request.
+    """
+    if not hasattr(_get_admin_session_cookie, '_cache'):
+        _get_admin_session_cookie._cache = {'session': None, 'expires': 0}
+
+    import time, requests as _req
+    cache = _get_admin_session_cookie._cache
+    now = time.time()
+    if cache['session'] and now < cache['expires']:
+        return cache['session']
+
+    admin_email = os.getenv('ADMIN_EMAIL', '')
+    admin_pw    = os.getenv('ADMIN_PASSWORD', '')
+    if not admin_email or not admin_pw:
+        raise RuntimeError("ADMIN_EMAIL / ADMIN_PASSWORD not set in env")
+
+    s = _req.Session()
+    r = s.post(f"{RETAIL_PORTAL_URL}/login",
+               data={'email': admin_email, 'password': admin_pw},
+               allow_redirects=False, timeout=10)
+    cookie = s.cookies.get('synthos_s') or s.cookies.get('session')
+    if not cookie:
+        raise RuntimeError("Failed to authenticate with retail portal")
+
+    cache['session'] = cookie
+    cache['expires'] = now + 3500  # ~1 hour
+    return cookie
+
 @app.route("/console")
 def console():
     """Ops dashboard — requires login, Cloudflare Access, or SECRET_TOKEN."""
@@ -2930,7 +3815,7 @@ def console():
         return resp
     if not _authorized():
         return redirect(url_for("login"))
-    return render_template_string(DASHBOARD_HTML)
+    return render_template_string(DASHBOARD_HTML, subpage_hdr=_subpage_header('Scoop Queue'), secret_token=SECRET_TOKEN)
 
 
 # ── Project Status ────────────────────────────────────────────────────────────
@@ -3178,16 +4063,8 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--muted)}
 </head>
 <body>
 
-<div class="header">
-  <span class="wordmark">SYNTHOS</span>
-  <span class="header-badge">Project Status</span>
-  <div class="header-right">
-    <a href="/monitor" class="nav-link">&#8592; Monitor</a>
-    <a href="/logs" class="nav-link">Logs</a>
-    <span class="clock" id="clock">--:--:-- ET</span>
-    <div class="live-pill"><div class="live-dot"></div>LIVE</div>
-  </div>
-</div>
+{{ subpage_hdr|safe }}
+
 
 <div class="page" id="root">
   <p style="color:var(--muted);font-size:12px;padding:40px;text-align:center">Loading…</p>
@@ -3198,7 +4075,8 @@ const ET_ZONE = 'America/New_York';
 
 function fmtClock(){
   const s=new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit',timeZone:ET_ZONE,hour12:false});
-  document.getElementById('clock').textContent=s+' ET';
+  var _el=document.getElementById('clock')||document.getElementById('syn-clk');
+  if(_el)_el.textContent=s+' ET';
 }
 setInterval(fmtClock,1000); fmtClock();
 
@@ -3262,7 +4140,7 @@ async function refreshFromGitHub(){
   const btn=document.getElementById('gh-refresh-btn');
   if(btn){btn.disabled=true;btn.textContent='Refreshing…'}
   try{
-    const r=await fetch('/api/project-status/refresh',{method:'POST',headers:{'X-Token':window._token||''}});
+    const r=await fetch('/api/project-status/refresh',{method:'POST',headers:{}});
     const d=await r.json();
     if(d.ok) await render();
     else console.warn('Refresh failed:',d.error);
@@ -3271,10 +4149,10 @@ async function refreshFromGitHub(){
 }
 
 // Pull token from cookie for XHR auth
-window._token=(document.cookie.split(';').find(c=>c.trim().startsWith('company_token='))||'').split('=')[1]||'';
+window._token='';
 
 async function render(){
-  const d=await fetch('/api/project-status',{headers:{'X-Token':window._token}}).then(r=>r.json());
+  const d=await fetch('/api/project-status',{headers:{}}).then(r=>r.json());
   const m=d.meta;
   const phases=d.phases;
   const phasesComplete=phases.filter(p=>p.status==='complete').length;
@@ -3395,6 +4273,239 @@ setInterval(render, 60000);
 </html>"""
 
 
+
+_SYSARCH_HTML = """<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Synthos — System Architecture</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#080b12;--surface:#0d1120;--surface2:#111827;
+  --border:rgba(255,255,255,0.07);--border2:rgba(255,255,255,0.12);
+  --text:rgba(255,255,255,0.88);--muted:rgba(255,255,255,0.35);--dim:rgba(255,255,255,0.15);
+  --teal:#00f5d4;--pink:#ff4b6e;--purple:#7b61ff;--amber:#ffb347;
+  --mono:'JetBrains Mono',monospace;--sans:'Inter',sans-serif;
+}
+html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px}
+::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.1);border-radius:99px}
+.page{max-width:1200px;margin:0 auto;padding:20px 24px}
+.sec{margin-bottom:24px}
+.sec-title{font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:12px}
+
+/* NODE CARDS */
+.node-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
+.node{border-radius:14px;border:1px solid var(--border);background:var(--surface);overflow:hidden}
+.node-hdr{padding:14px 16px 10px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border)}
+.node-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.node-dot.live{background:var(--teal);box-shadow:0 0 6px var(--teal)}
+.node-dot.warn{background:var(--amber);box-shadow:0 0 6px var(--amber)}
+.node-dot.dead{background:var(--pink);box-shadow:0 0 6px var(--pink)}
+.node-name{font-size:13px;font-weight:700;color:var(--text)}
+.node-role{font-size:10px;color:var(--muted);margin-left:auto;font-family:var(--mono)}
+.node-body{padding:10px 16px 14px}
+
+/* AGENT ROWS */
+.ag{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.03)}
+.ag:last-child{border-bottom:none}
+.ag-status{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.ag-status.live{background:var(--teal)}.ag-status.cron{background:var(--purple)}.ag-status.tool{background:var(--amber)}
+.ag-status.dead{background:var(--pink)}.ag-status.boot{background:var(--muted)}
+.ag-name{font-size:11px;font-weight:600;color:var(--text);min-width:140px}
+.ag-desc{font-size:10px;color:var(--muted);flex:1}
+.ag-how{font-size:9px;color:var(--dim);font-family:var(--mono);min-width:70px;text-align:right}
+
+/* DATA FLOW */
+.flow{border-radius:14px;border:1px solid var(--border);background:var(--surface);padding:16px;font-family:var(--mono);font-size:11px;color:var(--muted);line-height:1.8;white-space:pre;overflow-x:auto}
+.flow .teal{color:var(--teal)}.flow .pink{color:var(--pink)}.flow .purple{color:var(--purple)}.flow .amber{color:var(--amber)}.flow .text{color:var(--text)}
+
+/* LEGEND */
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px}
+.leg-item{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--muted)}
+.leg-dot{width:6px;height:6px;border-radius:50%}
+
+/* ISSUES */
+.issue{padding:8px 12px;border-radius:8px;border:1px solid rgba(255,75,110,0.15);background:rgba(255,75,110,0.04);margin-bottom:6px;font-size:11px}
+.issue-title{font-weight:700;color:var(--pink);margin-bottom:2px}
+.issue-desc{color:var(--muted)}
+.issue-ok{border-color:rgba(0,245,212,0.15);background:rgba(0,245,212,0.04)}
+.issue-ok .issue-title{color:var(--teal)}
+</style>
+{{ subpage_hdr|safe }}
+<div class="page">
+
+<!-- LEGEND -->
+<div class="legend">
+  <div class="leg-item"><div class="leg-dot" style="background:var(--teal)"></div>Live daemon</div>
+  <div class="leg-item"><div class="leg-dot" style="background:var(--purple)"></div>Cron scheduled</div>
+  <div class="leg-item"><div class="leg-dot" style="background:var(--amber)"></div>Manual tool</div>
+  <div class="leg-item"><div class="leg-dot" style="background:var(--muted)"></div>Boot-only</div>
+  <div class="leg-item"><div class="leg-dot" style="background:var(--pink)"></div>Dead / broken</div>
+</div>
+
+<!-- NODES -->
+<div class="sec"><div class="sec-title">Nodes</div>
+<div class="node-grid">
+
+  <!-- PI4B -->
+  <div class="node">
+    <div class="node-hdr"><div class="node-dot live"></div><div class="node-name">pi4b</div><div class="node-role">Company Server</div></div>
+    <div class="node-body">
+      <div style="font-size:9px;color:var(--dim);margin-bottom:8px;font-family:var(--mono)">Pi 4B 8GB · 10.0.0.10 · eth0 static</div>
+      <div class="ag"><div class="ag-status live"></div><div class="ag-name">synthos_monitor.py</div><div class="ag-desc">Admin portal + dashboard</div><div class="ag-how">systemd</div></div>
+      <div class="ag"><div class="ag-status live"></div><div class="ag-name">company_server.py</div><div class="ag-desc">Event queue API, /receive_backup</div><div class="ag-how">@reboot</div></div>
+      <div class="ag"><div class="ag-status live"></div><div class="ag-name">company_auditor.py</div><div class="ag-desc">Cross-node log scanner (SSH to pi5, pi2w)</div><div class="ag-how">daemon</div></div>
+      <div class="ag"><div class="ag-status live"></div><div class="ag-name">company_archivist.py</div><div class="ag-desc">DB row archival to compressed JSON</div><div class="ag-how">daemon</div></div>
+      <div class="ag"><div class="ag-status live"></div><div class="ag-name">company_scoop.py</div><div class="ag-desc">Email queue drain, Resend dispatch</div><div class="ag-how">@reboot</div></div>
+      <div class="ag"><div class="ag-status live"></div><div class="ag-name">company_sentinel.py</div><div class="ag-desc">Heartbeat receiver, silence alerts</div><div class="ag-how">cron 15m</div></div>
+      <div class="ag"><div class="ag-status cron"></div><div class="ag-name">company_vault.py</div><div class="ag-desc">License keys, compliance, secrets</div><div class="ag-how">cron 1h</div></div>
+      <div class="ag"><div class="ag-status cron"></div><div class="ag-name">company_fidget.py</div><div class="ag-desc">Keep-alive, usage anomaly detection</div><div class="ag-how">cron 8am</div></div>
+      <div class="ag"><div class="ag-status cron"></div><div class="ag-name">company_librarian.py</div><div class="ag-desc">Package audit, CVE scan, all nodes</div><div class="ag-how">cron Sun</div></div>
+      <div class="ag"><div class="ag-status tool"></div><div class="ag-name">company_strongbox.py</div><div class="ag-desc">Encrypt + R2 upload (needs boto3 + R2 creds)</div><div class="ag-how">pending</div></div>
+      <div class="ag"><div class="ag-status cron"></div><div class="ag-name">node_heartbeat.py</div><div class="ag-desc">System metrics → monitor</div><div class="ag-how">cron 5m</div></div>
+      <div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border)">
+        <div style="font-size:9px;font-weight:700;color:var(--dim);letter-spacing:0.06em;margin-bottom:4px">DATABASES</div>
+        <div style="font-size:10px;color:var(--muted);font-family:var(--mono)">company.db · auditor.db · login.db</div>
+      </div>
+      <div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border)">
+        <div style="font-size:9px;font-weight:700;color:var(--dim);letter-spacing:0.06em;margin-bottom:4px">SERVICES</div>
+        <div style="font-size:10px;color:var(--muted);font-family:var(--mono)">Cloudflare tunnel · command.synth-cloud.com</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PI5 -->
+  <div class="node">
+    <div class="node-hdr"><div class="node-dot live"></div><div class="node-name">retail_node (pi5)</div><div class="node-role">Trading Stack</div></div>
+    <div class="node-body">
+      <div style="font-size:9px;color:var(--dim);margin-bottom:8px;font-family:var(--mono)">Pi 5 16GB · 10.0.0.11 · eth0 static</div>
+      <div class="ag"><div class="ag-status live"></div><div class="ag-name">retail_portal.py</div><div class="ag-desc">Customer dashboard + API</div><div class="ag-how">watchdog</div></div>
+      <div class="ag"><div class="ag-status live"></div><div class="ag-name">retail_watchdog.py</div><div class="ag-desc">Crash monitor, auto-restart ×3</div><div class="ag-how">@reboot</div></div>
+      <div class="ag"><div class="ag-status live"></div><div class="ag-name">retail_scheduler.py</div><div class="ag-desc">Session orchestrator + DB locks</div><div class="ag-how">cron</div></div>
+      <div class="ag"><div class="ag-status live"></div><div class="ag-name">retail_interrogation_listener.py</div><div class="ag-desc">UDP cross-validation, port 5556</div><div class="ag-how">boot seq</div></div>
+      <div class="ag"><div class="ag-status cron"></div><div class="ag-name">retail_trade_logic_agent.py</div><div class="ag-desc">14-gate trade execution</div><div class="ag-how">scheduler</div></div>
+      <div class="ag"><div class="ag-status cron"></div><div class="ag-name">retail_news_agent.py</div><div class="ag-desc">22-gate news classification</div><div class="ag-how">scheduler</div></div>
+      <div class="ag"><div class="ag-status cron"></div><div class="ag-name">retail_market_sentiment_agent.py</div><div class="ag-desc">27-gate deterioration detection</div><div class="ag-how">scheduler</div></div>
+      <div class="ag"><div class="ag-status cron"></div><div class="ag-name">retail_sector_screener.py</div><div class="ag-desc">Sector momentum scoring</div><div class="ag-how">scheduler</div></div>
+      <div class="ag"><div class="ag-status cron"></div><div class="ag-name">retail_price_poller.py</div><div class="ag-desc">Shared live_prices for all customers</div><div class="ag-how">cron 1m</div></div>
+      <div class="ag"><div class="ag-status cron"></div><div class="ag-name">retail_heartbeat.py</div><div class="ag-desc">POST agent status to pi4b</div><div class="ag-how">per agent</div></div>
+      <div class="ag"><div class="ag-status cron"></div><div class="ag-name">node_heartbeat.py</div><div class="ag-desc">System metrics → monitor</div><div class="ag-how">cron 1m</div></div>
+      <div class="ag"><div class="ag-status boot"></div><div class="ag-name">retail_boot_sequence.py</div><div class="ag-desc">Network wait, integrity check</div><div class="ag-how">@reboot</div></div>
+      <div class="ag"><div class="ag-status boot"></div><div class="ag-name">retail_health_check.py</div><div class="ag-desc">Post-reboot DB + Alpaca verify</div><div class="ag-how">boot only</div></div>
+      <div class="ag"><div class="ag-status tool"></div><div class="ag-name">retail_patch.py</div><div class="ag-desc">Safe file updater, rollback</div><div class="ag-how">manual</div></div>
+      <div class="ag"><div class="ag-status cron"></div><div class="ag-name">retail_backup.py</div><div class="ag-desc">Nightly archive → pi4b staging</div><div class="ag-how">cron 1:30am</div></div>
+      <div class="ag"><div class="ag-status cron"></div><div class="ag-name">retail_shutdown.py</div><div class="ag-desc">Graceful pre-maintenance shutdown</div><div class="ag-how">Sat 3:55</div></div>
+      <div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border)">
+        <div style="font-size:9px;font-weight:700;color:var(--dim);letter-spacing:0.06em;margin-bottom:4px">DATABASES</div>
+        <div style="font-size:10px;color:var(--muted);font-family:var(--mono)">auth.db · customers/*/signals.db · live_prices (shared)</div>
+      </div>
+      <div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border)">
+        <div style="font-size:9px;font-weight:700;color:var(--dim);letter-spacing:0.06em;margin-bottom:4px">SERVICES</div>
+        <div style="font-size:10px;color:var(--muted);font-family:var(--mono)">Cloudflare tunnel · portal.synth-cloud.com</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PI2W MONITOR -->
+  <div class="node">
+    <div class="node-hdr"><div class="node-dot live"></div><div class="node-name">pi2w_monitor_node</div><div class="node-role">Heartbeat Receiver</div></div>
+    <div class="node-body">
+      <div style="font-size:9px;color:var(--dim);margin-bottom:8px;font-family:var(--mono)">Pi Zero 2W · 10.0.0.12 · eth0 static</div>
+      <div class="ag"><div class="ag-status cron"></div><div class="ag-name">node_heartbeat.py</div><div class="ag-desc">System metrics → monitor</div><div class="ag-how">cron 5m</div></div>
+      <div style="font-size:10px;color:var(--muted);margin-top:6px">Legacy monitor server · being consolidated to pi4b</div>
+    </div>
+  </div>
+
+  <!-- PI2W SENTINEL -->
+  <div class="node">
+    <div class="node-hdr"><div class="node-dot live"></div><div class="node-name">pi2w_sentinel</div><div class="node-role">Display Node</div></div>
+    <div class="node-body">
+      <div style="font-size:9px;color:var(--dim);margin-bottom:8px;font-family:var(--mono)">Pi Zero 2W · 192.168.201.146 · WiFi</div>
+      <div class="ag"><div class="ag-status live"></div><div class="ag-name">sentinel_display.py</div><div class="ag-desc">GeeekPi 3.5" TFT dashboard</div><div class="ag-how">systemd</div></div>
+      <div style="font-size:10px;color:var(--muted);margin-top:6px">Sidecar HTTP on port 5100</div>
+    </div>
+  </div>
+
+</div></div>
+
+<!-- DATA FLOW DIAGRAM -->
+<div class="sec"><div class="sec-title">Data Flow</div>
+<div class="flow"><span class="text">TRADING PIPELINE (pi5)</span>
+<span class="teal">News Agent</span> → 22 gates → signals to shared DB
+      ↓
+<span class="purple">Sentiment Agent</span> → 27 gates → enriches signals (Finviz, EDGAR)
+      ↓
+<span class="teal">Trade Logic Agent</span> → 14 gates → BUY / SKIP / WATCH
+      ↓
+<span class="amber">Alpaca API</span> → paper or live orders
+
+<span class="text">SHARED DATA (pi5 master customer DB)</span>
+<span class="teal">Price Poller</span> → live_prices table → portal reads (no Alpaca per-request)
+<span class="purple">News/Sentiment</span> → shared signals → all customers read same intel
+
+<span class="text">MONITORING (pi4b → all nodes via SSH)</span>
+<span class="amber">Auditor</span> → scans logs on pi4b, pi5, pi2w → company.db suggestions
+<span class="teal">Sentinel</span> ← heartbeats from pi5 agents → silence alerts → Scoop
+<span class="purple">Librarian</span> → SSH package audit on all nodes → CVE alerts
+<span class="pink">Strongbox</span> → encrypts backups from pi5 → R2 cloud (30-day retention)
+
+<span class="text">BACKUP CHAIN</span>
+pi5: <span class="pink">retail_backup.py</span> → tar.gz → POST to pi4b
+pi4b: <span class="pink">Strongbox</span> → AES-256 encrypt → Cloudflare R2
+      ↓
+<span class="amber">Archivist</span> → prunes old rows from company.db</div>
+</div>
+
+<!-- KNOWN ISSUES -->
+<div class="sec"><div class="sec-title">Known Issues</div>
+  <div class="issue"><div class="issue-title">Strongbox → R2 not configured</div><div class="issue-desc">boto3 not installed, no R2 credentials. Backups stage on pi4b but don't reach cloud. Local copy only.</div></div>
+  <div class="issue"><div class="issue-title">pi2w_monitor SSH unreachable from auditor</div><div class="issue-desc">SSH to pi0-2monitor failing. May need key setup or the node is on a different network segment.</div></div>
+  <div class="issue issue-ok"><div class="issue-title">RESOLVED — Backup chain (pi5 → pi4b)</div><div class="issue-desc">retail_backup.py now runs nightly at 1:30am. Archives stage to pi4b.</div></div>
+  <div class="issue issue-ok"><div class="issue-title">RESOLVED — Ghost cron entries</div><div class="issue-desc">6 entries removed (5 ghost paths + patches @reboot). Clean crontab.</div></div>
+  <div class="issue issue-ok"><div class="issue-title">RESOLVED — Write-access protection</div><div class="issue-desc">company_lock.py provides fcntl-based locking. db_helpers.slot() now uses real locks.</div></div>
+  <div class="issue issue-ok"><div class="issue-title">RESOLVED — Auditor cross-node scanning</div><div class="issue-desc">company_auditor.py now SSH-scans pi5 logs + checks process/service/disk health.</div></div>
+  <div class="issue issue-ok"><div class="issue-title">RESOLVED — Timekeeper + Patches</div><div class="issue-desc">Timekeeper deleted. Patches deleted (replaced by auditor). Blueprint archived to reference/.</div></div>
+</div>
+
+<!-- SSH MAP -->
+<div class="sec"><div class="sec-title">SSH Access Map</div>
+<div class="flow"><span class="text">From pi4b (~/.ssh/config):</span>
+  <span class="teal">SentinelRetail</span>  → 10.0.0.11 (pi5, user: pi516gb)
+  <span class="purple">pi0-2monitor</span>    → 10.0.0.12 (pi2w_monitor, user: pi-02w)
+  <span class="amber">Sentineldisplay</span> → 192.168.201.146 (pi2w_sentinel, user: pi-02w)
+
+<span class="text">Agents with SSH capability:</span>
+  <span class="teal">Auditor</span>    — needs: pi5 + pi2w (log scanning, process checks)
+  <span class="purple">Librarian</span>  — has: pi5 + pi2w (package auditing)
+  <span class="amber">Strongbox</span>  — needs: R2 only (cloud upload, no SSH to nodes)
+  <span class="pink">Watchdog</span>   — future: pi4b → pi5 remote restart capability</div>
+</div>
+
+<div style="text-align:center;padding:20px 0;font-size:10px;color:var(--dim)">
+  Last updated: 2026-04-13 16:20 ET · Synthos System Architecture Reference
+</div>
+
+</div>
+<script>
+function updateClk(){var n=new Date();var e=n.toLocaleTimeString('en-US',{hour12:false,timeZone:'America/New_York'});var el=document.getElementById('syn-clk');if(el)el.textContent=e+' ET';}
+updateClk();setInterval(updateClk,1000);
+document.addEventListener('click',function(e){var w=document.getElementById('_synwrap');var m=document.getElementById('_synhm');if(w&&m&&!w.contains(e.target))m.classList.remove('open');});
+</script>
+</html>"""
+
+
+@app.route("/system-architecture")
+def system_architecture_page():
+    """System architecture reference — interactive map of all nodes and agents."""
+    if not _authorized():
+        return ("<html><body style='font-family:monospace;background:#080b12;color:#fff;padding:40px'>"
+                "<h2>Synthos — System Architecture</h2>"
+                "<p style='color:rgba(255,255,255,0.5)'>Pass <code>?token=SECRET_TOKEN</code> to access.</p>"
+                "</body></html>"), 401
+    return render_template_string(_SYSARCH_HTML, subpage_hdr=_subpage_header('System Architecture'))
+
+
 @app.route("/project-status")
 def project_status_dashboard():
     """Project build progress dashboard — requires token auth."""
@@ -3409,7 +4520,7 @@ def project_status_dashboard():
             "<p style='color:rgba(255,255,255,0.5)'>Pass <code>?token=SECRET_TOKEN</code> to access.</p>"
             "</body></html>"
         ), 401
-    return render_template_string(_STATUS_HTML)
+    return render_template_string(_STATUS_HTML, subpage_hdr=_subpage_header('Project Status'))
 
 
 @app.route("/api/project-status")
@@ -3525,12 +4636,8 @@ select{background:var(--bg);color:var(--text);border:1px solid var(--border);bor
 </style>
 </head>
 <body>
-<div class="topbar">
-  <strong style="font-size:0.9rem;letter-spacing:0.06em">SYNTHOS</strong>
-  <a href="/monitor">&#8592; Monitor</a>
-  <a href="/project-status">Project Status</a>
-  <a href="/display" class="active">Display</a>
-</div>
+{{ subpage_hdr|safe }}
+
 
 <h1>Sentinel Display Control</h1>
 
@@ -3743,7 +4850,7 @@ setInterval(loadStatus,10000);
 # Inject the token into DISPLAY_HTML at render time
 def _render_display_html():
     token = request.args.get("token", "") or request.cookies.get("company_token", "")
-    return DISPLAY_HTML.replace("{{TOKEN}}", token)
+    return DISPLAY_HTML.replace("{{TOKEN}}", token).replace("{{ subpage_hdr|safe }}", _subpage_header("Sentinel Display"))
 
 
 @app.route("/display")
@@ -3950,7 +5057,7 @@ def api_display_logs():
 
 
 # ── Auditor Findings ──────────────────────────────────────────────────────────
-_AUDITOR_DB_PATH = os.getenv('AUDITOR_DB_PATH', '/home/pi/synthos/synthos_build/data/auditor.db')
+_AUDITOR_DB_PATH = os.getenv('AUDITOR_DB_PATH', '/home/pi/synthos-company/data/auditor.db')
 
 @app.route("/api/auditor/findings")
 def api_auditor_findings():
@@ -4026,6 +5133,547 @@ def trim_pi_events():
     except Exception as e:
         print(f"[Company] Warning: pi_events trim failed: {e}")
 
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MONITOR SETTINGS PAGE
+# ─────────────────────────────────────────────────────────────────────────────
+import re as _re
+
+_ENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'company.env')
+
+def _read_env():
+    """Read company.env and return a dict of current values (strips quotes)."""
+    vals = {}
+    try:
+        for line in open(_ENV_PATH).read().splitlines():
+            line = line.strip()
+            if not line or line.startswith('#') or '=' not in line:
+                continue
+            k, _, v = line.partition('=')
+            vals[k.strip()] = v.strip().strip('"').strip("'")
+    except Exception:
+        pass
+    return vals
+
+def _write_env_key(key, value):
+    """
+    Write or update a single key in company.env.
+    If the key exists (even commented), updates it in-place.
+    Otherwise appends it.
+    """
+    try:
+        content = open(_ENV_PATH).read()
+    except FileNotFoundError:
+        content = ''
+
+    pattern = rf'^({_re.escape(key)}\s*=).*$'
+    replacement = rf'\g<1>{value}'
+    new_content, n = _re.subn(pattern, replacement, content, flags=_re.MULTILINE)
+    if n == 0:
+        # Key not found — append
+        if new_content and not new_content.endswith('\n'):
+            new_content += '\n'
+        new_content += f'{key}={value}\n'
+    with open(_ENV_PATH, 'w') as f:
+        f.write(new_content)
+
+
+_SETTINGS_ALLOWED_KEYS = {
+    'ANTHROPIC_API_KEY', 'RESEND_API_KEY', 'ALERT_FROM',
+    'COMPANY_URL', 'SECRET_TOKEN', 'LIVE_TRADING_ENABLED',
+}
+
+SETTINGS_PAGE_HTML = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Monitor Settings · Synthos</title>
+<style>
+  :root{--bg:#0b0f17;--card:#131929;--border:#1e2d42;--text:#c8d6e5;--muted:#4a6280;--teal:#00f5d4;--pink:#ff4b6e;--amber:#f5a623;--green:#00c896}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:'SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh}
+  .header{background:var(--card);border-bottom:1px solid var(--border);padding:0 2rem;display:flex;align-items:center;justify-content:space-between;height:52px;position:sticky;top:0;z-index:100}
+  .header-left{display:flex;align-items:center;gap:12px}
+  .logo{font-size:1rem;font-weight:700;letter-spacing:0.06em;color:var(--teal)}
+  .header-badge{font-size:0.62rem;letter-spacing:0.1em;text-transform:uppercase;background:#1e2d42;color:var(--muted);padding:2px 7px;border-radius:4px}
+  .nav-back{font-size:0.72rem;letter-spacing:0.06em;color:var(--muted);text-decoration:none}
+  .nav-back:hover{color:var(--teal)}
+  .page{max-width:760px;margin:0 auto;padding:2.5rem 1.5rem}
+  h1{font-size:1.3rem;font-weight:700;letter-spacing:0.04em;margin-bottom:2rem;color:var(--text)}
+  .section{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:1.5rem;margin-bottom:1.5rem}
+  .section-title{font-size:0.7rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:1.25rem;padding-bottom:0.6rem;border-bottom:1px solid var(--border)}
+  .field-row{display:grid;grid-template-columns:180px 1fr auto;align-items:center;gap:10px;margin-bottom:10px}
+  .field-label{font-size:0.75rem;font-weight:600;color:var(--text)}
+  .field-hint{font-size:0.65rem;color:var(--muted);margin-top:2px}
+  .field-current{font-size:0.68rem;color:var(--muted);font-family:monospace;margin-top:3px;letter-spacing:0.03em}
+  input.s-input{width:100%;background:#0b0f17;border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.8rem;padding:7px 10px;outline:none;transition:border 0.15s}
+  input.s-input:focus{border-color:var(--teal)}
+  .btn-save{background:var(--teal);color:#0b0f17;border:none;border-radius:6px;font-size:0.75rem;font-weight:700;padding:7px 14px;cursor:pointer;white-space:nowrap;transition:opacity 0.15s}
+  .btn-save:hover{opacity:0.85}
+  .btn-danger{background:transparent;color:var(--pink);border:1px solid var(--pink);border-radius:6px;font-size:0.75rem;font-weight:700;padding:7px 14px;cursor:pointer;transition:all 0.15s}
+  .btn-danger:hover{background:var(--pink);color:#fff}
+  .gate-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:10px 0}
+  .gate-label{flex:1}
+  .gate-title{font-size:0.85rem;font-weight:600}
+  .gate-desc{font-size:0.72rem;color:var(--muted);margin-top:3px}
+  .toggle-wrap{display:flex;align-items:center;gap:10px}
+  .toggle{position:relative;display:inline-block;width:44px;height:24px}
+  .toggle input{opacity:0;width:0;height:0}
+  .slider{position:absolute;inset:0;background:#1e2d42;border-radius:12px;cursor:pointer;transition:background 0.2s}
+  .slider:before{content:'';position:absolute;height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:transform 0.2s}
+  input:checked + .slider{background:var(--teal)}
+  input:checked + .slider:before{transform:translateX(20px)}
+  .toggle-state{font-size:0.75rem;font-weight:700;min-width:40px}
+  .on{color:var(--teal)} .off{color:var(--muted)}
+  .push-result{font-size:0.72rem;color:var(--muted);margin-top:6px;min-height:16px}
+  .toast{position:fixed;bottom:20px;right:20px;background:var(--card);border:1px solid var(--border);color:var(--text);padding:10px 18px;border-radius:8px;font-size:0.8rem;opacity:0;pointer-events:none;transition:opacity 0.2s;z-index:9999}
+  .toast.show{opacity:1}
+  .divider{border:none;border-top:1px solid var(--border);margin:12px 0}
+  @media(max-width:600px){.field-row{grid-template-columns:1fr;}.btn-save{width:100%;}}
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="header-left">
+    <div class="logo">SYNTHOS</div>
+    <div class="header-badge">Monitor Settings</div>
+  </div>
+  <a href="/monitor" class="nav-back">&#8592; Monitor</a>
+</div>
+
+<div class="page">
+  <h1>Monitor Settings</h1>
+
+  <!-- LIVE TRADING GATE -->
+  <div class="section">
+    <div class="section-title">Live Trading Gate</div>
+    <div class="gate-row">
+      <div class="gate-label">
+        <div class="gate-title">Enable Live Trading</div>
+        <div class="gate-desc">When ON, the Live option becomes available in all customer portals. Toggle OFF at any time to lock everyone to Paper mode. New users always start on Paper.</div>
+      </div>
+      <div class="toggle-wrap">
+        <span class="toggle-state" id="gate-state">—</span>
+        <label class="toggle">
+          <input type="checkbox" id="live-gate-toggle" onchange="handleGateToggle()">
+          <span class="slider"></span>
+        </label>
+      </div>
+    </div>
+    <div class="push-result" id="gate-result"></div>
+  </div>
+
+  <!-- OPERATOR API KEYS -->
+  <div class="section">
+    <div class="section-title">Operator API Keys</div>
+    <p style="font-size:0.72rem;color:var(--muted);margin-bottom:1rem">Changes are written to company.env and take effect on next restart. Keys marked ● have a current value.</p>
+
+    <div class="field-row">
+      <div>
+        <div class="field-label">Anthropic API Key</div>
+        <div class="field-current" id="cur-ANTHROPIC_API_KEY">—</div>
+      </div>
+      <input class="s-input" id="val-ANTHROPIC_API_KEY" type="password" placeholder="sk-ant-…" autocomplete="off">
+      <button class="btn-save" onclick="saveKey('ANTHROPIC_API_KEY')">Update</button>
+    </div>
+
+    <div class="field-row">
+      <div>
+        <div class="field-label">Resend API Key</div>
+        <div class="field-current" id="cur-RESEND_API_KEY">—</div>
+      </div>
+      <input class="s-input" id="val-RESEND_API_KEY" type="password" placeholder="re_…" autocomplete="off">
+      <button class="btn-save" onclick="saveKey('RESEND_API_KEY')">Update</button>
+    </div>
+
+    <div class="field-row">
+      <div>
+        <div class="field-label">Alert From</div>
+        <div class="field-current" id="cur-ALERT_FROM">—</div>
+      </div>
+      <input class="s-input" id="val-ALERT_FROM" type="email" placeholder="alerts@synth-cloud.com">
+      <button class="btn-save" onclick="saveKey('ALERT_FROM')">Update</button>
+    </div>
+
+    <div class="field-row">
+      <div>
+        <div class="field-label">Company URL</div>
+        <div class="field-current" id="cur-COMPANY_URL">—</div>
+      </div>
+      <input class="s-input" id="val-COMPANY_URL" type="url" placeholder="https://…">
+      <button class="btn-save" onclick="saveKey('COMPANY_URL')">Update</button>
+    </div>
+
+    <hr class="divider">
+
+    <div class="field-row">
+      <div>
+        <div class="field-label">Monitor Token</div>
+        <div class="field-current" id="cur-SECRET_TOKEN">—</div>
+      </div>
+      <input class="s-input" id="val-SECRET_TOKEN" type="password" placeholder="used by retail portals to authenticate" autocomplete="off">
+      <button class="btn-save" onclick="saveKey('SECRET_TOKEN')">Update</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const TOKEN = '{{ secret_token }}';
+
+function toast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.borderColor = type === 'ok' ? 'var(--teal)' : type === 'err' ? 'var(--pink)' : 'var(--border)';
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+function obfuscate(v) {
+  if (!v) return '—';
+  if (v.length <= 8) return '●●●●●●●●';
+  return v.slice(0,4) + '●●●●●●●●' + v.slice(-4);
+}
+
+async function loadCurrentValues() {
+  try {
+    const r = await fetch('/api/monitor-settings/current', {headers:{}});
+    if (!r.ok) return;
+    const d = await r.json();
+    ['ANTHROPIC_API_KEY','RESEND_API_KEY','ALERT_FROM','COMPANY_URL','SECRET_TOKEN'].forEach(k => {
+      const el = document.getElementById('cur-' + k);
+      if (el) el.textContent = d[k] ? obfuscate(d[k]) : '— not set';
+    });
+    // Gate
+    const live = d['LIVE_TRADING_ENABLED'] === 'true';
+    document.getElementById('live-gate-toggle').checked = live;
+    const gs = document.getElementById('gate-state');
+    gs.textContent = live ? 'ON' : 'OFF';
+    gs.className = 'toggle-state ' + (live ? 'on' : 'off');
+  } catch(e) { console.warn('Could not load current settings', e); }
+}
+
+async function saveKey(key) {
+  const val = document.getElementById('val-' + key)?.value?.trim();
+  if (!val) { toast('Enter a value first', 'err'); return; }
+  try {
+    const r = await fetch('/api/monitor-settings', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({[key]: val})
+    });
+    const d = await r.json();
+    if (d.ok) {
+      toast('✓ ' + key + ' updated (restart to apply)', 'ok');
+      document.getElementById('val-' + key).value = '';
+      loadCurrentValues();
+    } else {
+      toast('Error: ' + (d.error||'unknown'), 'err');
+    }
+  } catch(e) { toast('Save failed', 'err'); }
+}
+
+async function handleGateToggle() {
+  const enabled = document.getElementById('live-gate-toggle').checked;
+  const result  = document.getElementById('gate-result');
+  const gs      = document.getElementById('gate-state');
+  result.textContent = 'Saving & pushing to portals…';
+  gs.textContent = enabled ? 'ON' : 'OFF';
+  gs.className = 'toggle-state ' + (enabled ? 'on' : 'off');
+  try {
+    const r = await fetch('/api/monitor-settings', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({'LIVE_TRADING_ENABLED': enabled ? 'true' : 'false', '_push_to_portals': true})
+    });
+    const d = await r.json();
+    if (d.ok) {
+      const pushed = d.pushed || [];
+      const failed = d.push_failed || [];
+      let msg = '✓ Gate ' + (enabled ? 'opened' : 'locked') + '.';
+      if (pushed.length) msg += ' Pushed to: ' + pushed.join(', ');
+      if (failed.length) msg += '  Could not reach: ' + failed.join(', ');
+      result.style.color = failed.length ? 'var(--amber)' : 'var(--teal)';
+      result.textContent = msg;
+      toast(msg, failed.length ? 'warn' : 'ok');
+    } else {
+      result.style.color = 'var(--pink)';
+      result.textContent = '✗ ' + (d.error||'unknown');
+    }
+  } catch(e) {
+    result.style.color = 'var(--pink)';
+    result.textContent = '✗ Save failed';
+  }
+}
+
+loadCurrentValues();
+</script>
+</body>
+</html>"""
+
+
+@app.route("/settings")
+def monitor_settings():
+    if not _authorized():
+        return redirect(url_for("login"))
+    return render_template_string(SETTINGS_PAGE_HTML, secret_token=SECRET_TOKEN)
+
+
+@app.route("/api/monitor-settings/current", methods=["GET"])
+def api_monitor_settings_current():
+    """Return current values from company.env (requires session or token)."""
+    token = request.headers.get("X-Token", "")
+    if token != SECRET_TOKEN and not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    vals = _read_env()
+    safe = {}
+    for k in _SETTINGS_ALLOWED_KEYS:
+        safe[k] = vals.get(k, "")
+    return jsonify(safe)
+
+
+@app.route("/api/monitor-settings", methods=["POST"])
+def api_monitor_settings():
+    """
+    Write one or more operator keys to company.env.
+    If _push_to_portals is True and LIVE_TRADING_ENABLED is in the payload,
+    also push LIVE_TRADING_ENABLED to all registered retail portals.
+    """
+    token = request.headers.get("X-Token", "")
+    if token != SECRET_TOKEN and not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+
+    data = request.get_json(silent=True) or {}
+    push_to_portals = data.pop("_push_to_portals", False)
+
+    # Write allowed keys to company.env
+    written = []
+    for k, v in data.items():
+        if k not in _SETTINGS_ALLOWED_KEYS:
+            continue
+        _write_env_key(k, str(v))
+        written.append(k)
+
+    if not written:
+        return jsonify({"ok": False, "error": "No allowed keys in request"}), 400
+
+    pushed = []
+    push_failed = []
+
+    if push_to_portals and "LIVE_TRADING_ENABLED" in written:
+        live_val = data.get("LIVE_TRADING_ENABLED", "false")
+        import requests as _req
+        with registry_lock:
+            pis = list(pi_registry.values())
+        for pi in pis:
+            pi_ip = pi.get("pi_ip")
+            if not pi_ip:
+                continue
+            portal_url = f"http://{pi_ip}:5001/api/keys"
+            try:
+                r = _req.post(
+                    portal_url,
+                    json={"LIVE_TRADING_ENABLED": live_val},
+                    headers={"Authorization": f"Bearer {SECRET_TOKEN}"},
+                    timeout=5,
+                )
+                if r.ok and r.json().get("ok"):
+                    pushed.append(pi.get("label") or pi.get("pi_id") or pi_ip)
+                else:
+                    push_failed.append(pi.get("label") or pi_ip)
+            except Exception:
+                push_failed.append(pi.get("label") or pi_ip)
+
+    return jsonify({"ok": True, "written": written, "pushed": pushed, "push_failed": push_failed})
+
+
+# ── APPROVALS PAGE ────────────────────────────────────────────────────────────
+
+@app.route("/approvals")
+def approvals_page():
+    """Standalone account approval queue page."""
+    if not _authorized():
+        return redirect(url_for("login"))
+    return _subpage_header('Approvals') + _APPROVALS_BODY
+
+
+_APPROVALS_BODY = """
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0a0c14;color:rgba(255,255,255,0.88);font-family:'Inter',system-ui,sans-serif;font-size:14px;min-height:100vh}
+.appr-page{max-width:1000px;margin:0 auto;padding:20px 24px}
+.appr-title{font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.4);margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.appr-title::after{content:'';flex:1;height:1px;background:rgba(255,255,255,0.07)}
+.appr-filters{display:flex;gap:6px;margin-bottom:16px}
+.af{padding:5px 14px;border-radius:8px;font-size:11px;font-weight:600;background:transparent;border:1px solid rgba(255,255,255,0.07);color:rgba(255,255,255,0.4);cursor:pointer;font-family:inherit;transition:all .15s;letter-spacing:0.03em}
+.af:hover{background:rgba(255,255,255,0.04);color:rgba(255,255,255,0.88)}
+.af.active{background:rgba(245,166,35,0.08);border-color:rgba(245,166,35,0.25);color:#f5a623}
+.appr-card{background:rgba(17,21,32,0.8);border:1px solid rgba(255,255,255,0.07);border-radius:14px;overflow:hidden;margin-bottom:10px}
+.appr-card-hdr{display:flex;align-items:center;gap:14px;padding:14px 18px;border-bottom:1px solid rgba(255,255,255,0.05)}
+.appr-avatar{width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.appr-avatar svg{width:18px;height:18px;color:rgba(255,255,255,0.3)}
+.appr-name{font-size:14px;font-weight:600}
+.appr-email{font-size:12px;color:rgba(255,255,255,0.4);font-family:'JetBrains Mono',monospace}
+.appr-meta{display:flex;gap:16px;padding:10px 18px;font-size:11px;color:rgba(255,255,255,0.4)}
+.appr-meta span{display:flex;align-items:center;gap:4px}
+.appr-actions{display:flex;gap:8px;padding:10px 18px 14px}
+.appr-btn{padding:6px 18px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s;letter-spacing:0.03em}
+.appr-approve{background:rgba(0,245,212,0.08);border:1px solid rgba(0,245,212,0.2);color:#00f5d4}
+.appr-approve:hover{background:rgba(0,245,212,0.15)}
+.appr-reject{background:rgba(255,75,110,0.08);border:1px solid rgba(255,75,110,0.2);color:#ff4b6e}
+.appr-reject:hover{background:rgba(255,75,110,0.15)}
+.appr-status{padding:2px 10px;border-radius:99px;font-size:10px;font-weight:700;margin-left:auto}
+.appr-empty{text-align:center;padding:40px;color:rgba(255,255,255,0.3);font-size:13px}
+.toast{position:fixed;bottom:24px;right:24px;padding:10px 20px;border-radius:10px;font-size:12px;font-weight:600;opacity:0;transition:opacity .3s;z-index:999;pointer-events:none}
+.toast.show{opacity:1}
+.toast.ok{background:rgba(0,245,212,0.1);border:1px solid rgba(0,245,212,0.2);color:#00f5d4}
+.toast.err{background:rgba(255,75,110,0.1);border:1px solid rgba(255,75,110,0.2);color:#ff4b6e}
+</style>
+
+<div id="toast" class="toast"></div>
+<div class="appr-page">
+  <div class="appr-title">Account Approval Queue</div>
+  <div class="appr-filters">
+    <button class="af active" id="af-PENDING" onclick="filterAppr('PENDING')">Pending</button>
+    <button class="af" id="af-APPROVED" onclick="filterAppr('APPROVED')">Approved</button>
+    <button class="af" id="af-REJECTED" onclick="filterAppr('REJECTED')">Rejected</button>
+    <button class="af" id="af-ALL" onclick="filterAppr(null)">All</button>
+  </div>
+  <div id="appr-list"><div class="appr-empty">Loading...</div></div>
+
+  <div class="appr-title" style="margin-top:28px">Invite Codes</div>
+  <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px">
+    <button class="af" onclick="generateInvite()" style="background:rgba(0,245,212,0.06);border-color:rgba(0,245,212,0.15);color:#00f5d4">Generate New Code</button>
+  </div>
+  <div id="gen-box" style="display:none;margin-bottom:14px;padding:14px 18px;background:rgba(0,245,212,0.04);border:1px solid rgba(0,245,212,0.15);border-radius:10px">
+    <div style="font-size:9px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:rgba(255,255,255,0.35);margin-bottom:6px">Generated Invite Code</div>
+    <div style="display:flex;align-items:center;gap:12px">
+      <span id="gen-code" style="font-family:monospace;font-size:18px;font-weight:700;color:#00f5d4;letter-spacing:0.08em"></span>
+      <button id="copy-btn" style="padding:4px 12px;border-radius:6px;font-size:10px;font-weight:600;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.5);cursor:pointer" onclick="copyCode()">Copy</button>
+    </div>
+    <div style="font-size:10px;color:rgba(255,255,255,0.25);margin-top:6px">Share this code with the user to include on their signup form</div>
+  </div>
+  <div id="invite-list"></div>
+</div>
+
+<script>
+const TOKEN = '';
+let _filter = 'PENDING';
+
+function toast(msg,type){
+  const el=document.getElementById('toast');
+  el.textContent=msg;el.className='toast show '+type;
+  setTimeout(()=>el.classList.remove('show'),2800);
+}
+
+async function loadApprovals(){
+  try{
+    let url='/api/proxy/pending-signups';
+    if(_filter) url+='?status='+_filter;
+    const r=await fetch(url,{headers:{}});
+    const d=await r.json();
+    const list=document.getElementById('appr-list');
+    if(!d.signups||!d.signups.length){
+      list.innerHTML='<div class="appr-empty">No '+(_filter?_filter.toLowerCase()+' ':'')+'signups found</div>';
+      return;
+    }
+    list.innerHTML=d.signups.map(s=>{
+      const ts=s.created_at?new Date(s.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'}):'\u2014';
+      const sc=s.status==='PENDING'?'#f5a623':s.status==='APPROVED'?'#00f5d4':'#ff4b6e';
+      const sbg=s.status==='PENDING'?'rgba(245,166,35,0.08)':s.status==='APPROVED'?'rgba(0,245,212,0.08)':'rgba(255,75,110,0.08)';
+      let actions='';
+      if(s.status==='PENDING'){
+        actions='<button class="appr-btn appr-approve" onclick="approve('+s.id+')">Approve</button>'
+               +'<button class="appr-btn appr-reject" onclick="reject('+s.id+')">Reject</button>';
+      }
+      const custId=s.customer_id?'<span>ID: '+s.customer_id.slice(0,8)+'...</span>':'';
+      return '<div class="appr-card">'
+        +'<div class="appr-card-hdr">'
+        +'<div class="appr-avatar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg></div>'
+        +'<div><div class="appr-name">'+s.name+'</div><div class="appr-email">'+s.email+(s.email_verified?'<span style="margin-left:6px;font-size:9px;font-weight:700;color:#00f5d4;background:rgba(0,245,212,0.1);padding:1px 6px;border-radius:99px">&check; Verified</span>':'<span style="margin-left:6px;font-size:9px;font-weight:700;color:#ff4b6e;background:rgba(255,75,110,0.1);padding:1px 6px;border-radius:99px">&cross; Unverified</span>')+'</div></div>'
+        +'<span class="appr-status" style="background:'+sbg+';color:'+sc+'">'+s.status+'</span>'
+        +'</div>'
+        +'<div class="appr-meta"><span>\u260E '+s.phone+'</span><span>\u23F0 '+ts+'</span>'+custId+'</div>'
+        +(actions?'<div class="appr-actions">'+actions+'</div>':'')
+        +'</div>';
+    }).join('');
+  }catch(e){console.error(e)}
+}
+
+function filterAppr(s){
+  _filter=s;
+  document.querySelectorAll('.af').forEach(b=>b.classList.remove('active'));
+  document.getElementById(s?'af-'+s:'af-ALL').classList.add('active');
+  loadApprovals();
+}
+var allSignups=[];
+async function approve(id){
+  var _s=allSignups.find(function(x){return x.id===id});
+  if(_s && !_s.email_verified){
+    if(!confirm('WARNING: Email NOT verified. Approve anyway?'))return;
+  } else {
+    if(!confirm('Approve this signup? Creates customer account and database.'))return;
+  }
+  const r=await fetch('/api/proxy/approve-signup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({signup_id:id})});
+  const d=await r.json();
+  if(d.ok){toast('Account approved: '+(d.email||''),'ok');loadApprovals()}
+  else toast('Error: '+(d.error||'Unknown'),'err');
+}
+
+async function reject(id){
+  if(!confirm('Reject this signup request?'))return;
+  const r=await fetch('/api/proxy/reject-signup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({signup_id:id})});
+  const d=await r.json();
+  if(d.ok){toast('Signup rejected','ok');loadApprovals()}
+  else toast('Error: '+(d.error||'Unknown'),'err');
+}
+
+async function generateInvite(){
+  const r=await fetch('/api/proxy/generate-invite',{method:'POST',headers:{'Content-Type':'application/json'}});
+  const d=await r.json();
+  if(d.ok){
+    document.getElementById('gen-code').textContent=d.code;
+    document.getElementById('copy-btn').style.display='inline';
+    toast('Invite code generated: '+d.code,'ok');
+    loadInvites();
+  } else toast('Error: '+(d.error||'Unknown'),'err');
+}
+
+function copyCode(){
+  const code=document.getElementById('gen-code').textContent;
+  if(code) navigator.clipboard.writeText(code).then(function(){toast('Copied to clipboard','ok')});
+}
+
+async function loadInvites(){
+  try{
+    const r=await fetch('/api/proxy/invite-codes');
+    const d=await r.json();
+    const el=document.getElementById('invite-list');
+    if(!el) return;
+    if(!d.codes||!d.codes.length){el.innerHTML='<div style="text-align:center;padding:20px;color:rgba(255,255,255,0.3)">No invite codes yet</div>';return}
+    el.innerHTML=d.codes.map(function(c){
+      var ts=c.created_at?new Date(c.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'\u2014';
+      var used=c.is_used;
+      var sc=used?'rgba(255,255,255,0.3)':'#00f5d4';
+      var bg=used?'rgba(255,255,255,0.02)':'rgba(0,245,212,0.04)';
+      var stTxt=used?'Used':'Available';
+      var stClr=used?'rgba(255,75,110,0.7)':'rgba(0,245,212,0.7)';
+      return '<div style="display:flex;align-items:center;gap:14px;padding:10px 16px;border:1px solid rgba(255,255,255,0.05);border-radius:10px;margin-bottom:6px;background:'+bg+'">'
+        +'<span style="font-family:monospace;font-size:13px;font-weight:700;color:'+sc+';letter-spacing:0.04em;min-width:120px">'+c.code+'</span>'
+        +'<span style="font-size:10px;color:rgba(255,255,255,0.3)">'+ts+'</span>'
+        +'<span style="font-size:10px;color:'+stClr+'">'+stTxt+'</span>'
+        +'</div>';
+    }).join('');
+  }catch(e){}
+}
+
+loadApprovals();
+loadInvites();
+</script>
+"""
 
 @app.route("/monitor")
 def monitor_dashboard():
@@ -4120,27 +5768,28 @@ def api_auditor():
 @app.route("/api/audit/<pi_id>")
 def api_audit_for_pi(pi_id):
     """
-    Fetch audit data from a Pi's portal directly.
-    The Pi's portal exposes /api/audit which reads .audit_latest.json
+    Fetch log-scan audit data from a retail Pi portal.
+    Uses pi_ip stored in registry from heartbeat — no IP guessing.
     """
     with registry_lock:
         pi = pi_registry.get(pi_id)
     if not pi:
         return jsonify({"error": "Pi not found"}), 404
-
-    # Try to fetch from Pi portal
-    pi_ip = None
+    pi_ip = pi.get("pi_ip")
+    if not pi_ip:
+        return jsonify({"error": "Pi IP unknown — waiting for heartbeat", "pi_id": pi_id}), 503
     try:
-        # Extract IP from last_seen or use pi_id heuristic
         import requests as _req
-        portal_url = f"http://{pi_id.replace('synthos-','').replace('-','.')}:5001/api/audit"
-        r = _req.get(portal_url, timeout=5)
+        r = _req.get(
+            f"http://{pi_ip}:5001/api/logs-audit",
+            headers={"Authorization": f"Bearer {SECRET_TOKEN}"},
+            timeout=10,
+        )
         if r.status_code == 200:
             return jsonify(r.json())
-    except Exception:
-        pass
-
-    return jsonify({"error": "Could not reach Pi portal", "pi_id": pi_id}), 503
+        return jsonify({"error": f"Portal returned {r.status_code}", "pi_id": pi_id}), 503
+    except Exception as e:
+        return jsonify({"error": f"Could not reach {pi_ip}:5001 — {e}", "pi_id": pi_id}), 503
 
 
 @app.route("/api/backlog/<pi_id>")
@@ -4161,7 +5810,1513 @@ def api_backlog_for_pi(pi_id):
     return jsonify({"tasks": [], "error": "Could not reach Pi portal"}), 200
 
 
-AUDIT_PAGE_HTML = """<!DOCTYPE html>
+
+
+# ── Maintenance Alert Page ────────────────────────────────────────────────────
+
+MAINTENANCE_PAGE_HTML = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Synthos — Maintenance</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#080b12;--surface:#0d1120;--surface2:#111827;
+  --border:rgba(255,255,255,0.07);--border2:rgba(255,255,255,0.12);
+  --text:rgba(255,255,255,0.88);--muted:rgba(255,255,255,0.35);--dim:rgba(255,255,255,0.15);
+  --teal:#00f5d4;--pink:#ff4b6e;--purple:#7b61ff;--amber:#ffb347;--signal:#f5a623;
+  --mono:'JetBrains Mono',monospace;--sans:'Inter',sans-serif;
+}
+html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px}
+::-webkit-scrollbar{width:4px}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:99px}
+
+.header{position:sticky;top:0;z-index:100;background:rgba(8,11,18,0.9);backdrop-filter:blur(20px);
+        border-bottom:1px solid var(--border);padding:0 24px;height:56px;
+        display:flex;align-items:center;gap:12px}
+.wordmark{font-family:var(--mono);font-size:1rem;font-weight:600;letter-spacing:0.15em;color:var(--teal)}
+.nav-back{color:var(--muted);font-size:11px;text-decoration:none;padding:5px 12px;
+          border-radius:8px;border:1px solid var(--border);margin-left:auto;transition:all 0.15s}
+.nav-back:hover{color:var(--text);border-color:var(--border2)}
+
+.page{max-width:720px;margin:0 auto;padding:32px 24px}
+.title{font-size:20px;font-weight:700;letter-spacing:-0.3px;margin-bottom:4px}
+.title span{background:linear-gradient(90deg,var(--amber),var(--signal));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.subtitle{font-size:11px;color:var(--muted);margin-bottom:28px;font-family:var(--mono)}
+
+.card{background:var(--surface);border:1px solid var(--border2);border-radius:14px;padding:24px;margin-bottom:20px}
+.card-label{font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);margin-bottom:14px}
+
+.form-row{display:flex;gap:14px;margin-bottom:16px;flex-wrap:wrap}
+.form-group{display:flex;flex-direction:column;gap:5px;flex:1;min-width:140px}
+.form-group label{font-size:10px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:var(--muted)}
+.form-group select,.form-group input,.form-group textarea{
+  background:var(--surface2);border:1px solid var(--border2);border-radius:8px;
+  padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px;
+  outline:none;transition:border-color .15s;width:100%}
+.form-group select:focus,.form-group input:focus,.form-group textarea:focus{border-color:var(--amber)}
+.form-group textarea{min-height:90px;resize:vertical;font-family:var(--mono);font-size:12px;line-height:1.6}
+.tz-label{font-size:11px;color:var(--dim);align-self:flex-end;padding-bottom:10px}
+
+.preview{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:16px;margin-top:8px}
+.preview-cat{display:inline-block;font-size:8px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;
+  padding:2px 8px;border-radius:99px;background:rgba(123,97,255,0.1);color:var(--purple);margin-bottom:8px}
+.preview-title{font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px}
+.preview-time{font-size:10px;color:var(--dim);font-family:var(--mono);margin-bottom:10px}
+.preview-body{font-size:12px;color:var(--muted);line-height:1.7;white-space:pre-wrap}
+
+.btn-send{
+  display:block;width:100%;padding:13px;margin-top:20px;border:none;border-radius:10px;
+  background:linear-gradient(135deg,var(--amber),var(--signal));color:#000;
+  font-size:13px;font-weight:700;letter-spacing:0.04em;cursor:pointer;
+  transition:opacity .15s,transform .1s;font-family:var(--sans)}
+.btn-send:hover{opacity:0.9}
+.btn-send:active{transform:scale(0.98)}
+.btn-send:disabled{opacity:0.4;cursor:not-allowed;transform:none}
+
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
+  padding:10px 22px;border-radius:10px;font-size:12px;font-weight:600;
+  z-index:999;opacity:0;transition:opacity .3s;pointer-events:none;font-family:var(--sans)}
+.toast.show{opacity:1}
+.toast.ok{background:var(--teal);color:#000}
+.toast.err{background:var(--pink);color:#fff}
+
+.km-table{margin-bottom:10px}
+.km-loading{color:var(--dim);font-size:11px;padding:12px 0}
+.km-row{display:grid;grid-template-columns:1fr 160px 90px 70px;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)}
+.km-row:last-child{border-bottom:none}
+.km-name{font-family:var(--mono);font-size:10px;font-weight:600;color:var(--text);letter-spacing:0.02em}
+.km-val{font-family:var(--mono);font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.km-exp{font-size:10px;font-weight:600;text-align:center}
+.km-exp.green{color:var(--teal)}.km-exp.amber{color:var(--amber)}.km-exp.red{color:var(--pink)}
+.km-exp.blink{animation:blinker 1s linear infinite}
+@keyframes blinker{50%{opacity:0.3}}
+.km-noexp{color:var(--dim);font-size:10px;text-align:center}
+.km-actions{display:flex;gap:4px;justify-content:flex-end}
+.km-btn{font-size:9px;padding:3px 8px;border-radius:5px;border:1px solid var(--border2);background:var(--surface2);color:var(--muted);cursor:pointer;font-family:var(--sans);transition:all .15s}
+.km-btn:hover{color:var(--text);border-color:var(--amber)}
+.km-btn.rotate{border-color:var(--purple);color:var(--purple)}
+.km-btn.rotate:hover{background:rgba(123,97,255,0.1)}
+.km-edit-panel{padding:10px 0;display:grid;gap:8px}
+.km-edit-panel input{background:var(--surface2);border:1px solid var(--border2);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--mono);font-size:11px;width:100%;outline:none}
+.km-edit-panel input:focus{border-color:var(--amber)}
+.km-edit-row{display:flex;gap:8px;align-items:center}
+.km-edit-label{font-size:9px;color:var(--muted);min-width:60px;text-transform:uppercase;font-weight:600;letter-spacing:0.04em}
+.km-save-row{display:flex;gap:8px;justify-content:flex-end;margin-top:4px}
+.km-save{font-size:10px;padding:5px 14px;border-radius:6px;border:none;background:var(--teal);color:#000;font-weight:700;cursor:pointer;font-family:var(--sans)}
+.km-cancel{font-size:10px;padding:5px 14px;border-radius:6px;border:1px solid var(--border2);background:transparent;color:var(--muted);cursor:pointer;font-family:var(--sans)}
+.km-add-btn{font-size:10px;padding:5px 12px;border-radius:6px;border:1px dashed var(--border2);background:transparent;color:var(--dim);cursor:pointer;width:100%;margin-top:4px;font-family:var(--sans);transition:all .15s}
+.km-add-btn:hover{border-color:var(--amber);color:var(--amber)}
+</style>
+</head>
+<body>
+
+{{ subpage_hdr|safe }}
+
+<div class="page">
+  <div class="title"><span>Schedule Maintenance</span></div>
+  <div class="subtitle">Broadcast a maintenance alert to all customer accounts</div>
+
+  <div class="card">
+    <div class="card-label">Maintenance Window</div>
+
+    <div class="form-row">
+      <div class="form-group" style="flex:2">
+        <label>Type</label>
+        <select id="mtype" onchange="updatePreview()">
+          <option value="Scheduled Maintenance">Scheduled Maintenance</option>
+          <option value="Emergency Maintenance">Emergency Maintenance</option>
+          <option value="System Update">System Update</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Duration</label>
+        <select id="mduration" onchange="updatePreview()">
+          <option value="~15 minutes">~15 minutes</option>
+          <option value="~30 minutes">~30 minutes</option>
+          <option value="~1 hour">~1 hour</option>
+          <option value="~2 hours">~2 hours</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Date</label>
+        <input type="date" id="mdate" onchange="updatePreview()">
+      </div>
+      <div class="form-group">
+        <label>Time</label>
+        <input type="time" id="mtime" value="03:55" onchange="updatePreview()">
+      </div>
+      <span class="tz-label">ET</span>
+    </div>
+
+    <div class="form-group">
+      <label>Message</label>
+      <textarea id="mbody" oninput="updatePreview()"></textarea>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">Notification Preview</div>
+    <div class="preview">
+      <div class="preview-cat">system</div>
+      <div class="preview-title" id="prev-title">Scheduled Maintenance</div>
+      <div class="preview-time" id="prev-time">—</div>
+      <div class="preview-body" id="prev-body"></div>
+    </div>
+  </div>
+
+  <button class="btn-send" id="btn-send" onclick="sendMaintenance()">Broadcast to All Customers</button>
+
+  <div style="height:1px;background:var(--border);margin:32px 0"></div>
+
+  <div class="title" style="margin-top:8px"><span>Key Management</span></div>
+  <div class="subtitle">API keys across all nodes &mdash; update, track expiration, rotate</div>
+
+  <div id="km-pi4b" class="card"><div class="card-label">pi4b &middot; Company Server</div><div class="km-table" id="km-table-pi4b"><div class="km-loading">Loading&hellip;</div></div><button class="km-add-btn" onclick="kmAddRow('pi4b')">+ Add Key</button></div>
+  <div id="km-pi5" class="card"><div class="card-label">pi5 &middot; Retail Node</div><div class="km-table" id="km-table-pi5"><div class="km-loading">Loading&hellip;</div></div><button class="km-add-btn" onclick="kmAddRow('pi5')">+ Add Key</button></div>
+  <div id="km-pi2w" class="card"><div class="card-label">pi2w &middot; Monitor Node</div><div class="km-table" id="km-table-pi2w"><div class="km-loading">Loading&hellip;</div></div></div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const TOKEN = '{{ secret_token }}';
+
+function defaultDate() {
+  var d = new Date();
+  var day = d.getDay();
+  var diff = (6 - day + 7) % 7;
+  if (diff === 0) diff = 7;
+  d.setDate(d.getDate() + diff);
+  return d.toISOString().split('T')[0];
+}
+
+document.getElementById('mdate').value = defaultDate();
+
+function buildMessage() {
+  var type = document.getElementById('mtype').value;
+  var date = document.getElementById('mdate').value;
+  var time = document.getElementById('mtime').value;
+  var dur  = document.getElementById('mduration').value;
+
+  var dateStr = '\u2014';
+  if (date) {
+    var parts = date.split('-');
+    var dt = new Date(parts[0], parts[1]-1, parts[2]);
+    var days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    dateStr = days[dt.getDay()] + ', ' + months[dt.getMonth()] + ' ' + dt.getDate();
+  }
+
+  var timeStr = time || '03:55';
+  var h = parseInt(timeStr.split(':')[0]);
+  var m = timeStr.split(':')[1];
+  var ampm = h >= 12 ? 'PM' : 'AM';
+  var h12 = h % 12 || 12;
+  var timeFmt = h12 + ':' + m + ' ' + ampm;
+
+  return type + ' is scheduled for ' + dateStr + ' at ' + timeFmt + ' ET.\\n'
+       + 'All trading will be paused during this window.\\n'
+       + 'Expected duration: ' + dur + '.';
+}
+
+function updatePreview() {
+  var type = document.getElementById('mtype').value;
+  var body = document.getElementById('mbody');
+  if (!body._userEdited) {
+    body.value = buildMessage();
+  }
+  document.getElementById('prev-title').textContent = type;
+  document.getElementById('prev-body').textContent = body.value;
+  document.getElementById('prev-time').textContent = 'just now';
+}
+
+document.getElementById('mbody').addEventListener('input', function() {
+  this._userEdited = true;
+});
+document.getElementById('mbody').addEventListener('change', function() {
+  if (!this.value.trim()) { this._userEdited = false; updatePreview(); }
+});
+
+function showToast(msg, ok) {
+  var t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + (ok ? 'ok' : 'err');
+  setTimeout(function() { t.className = 'toast'; }, 4000);
+}
+
+async function sendMaintenance() {
+  var btn = document.getElementById('btn-send');
+  btn.disabled = true;
+  btn.textContent = 'Sending...';
+
+  var type = document.getElementById('mtype').value;
+  var body = document.getElementById('mbody').value;
+  var date = document.getElementById('mdate').value;
+  var time = document.getElementById('mtime').value;
+
+  if (!body.trim()) {
+    showToast('Message is required', false);
+    btn.disabled = false;
+    btn.textContent = 'Broadcast to All Customers';
+    return;
+  }
+
+  try {
+    var r = await fetch('/api/maintenance/notify', {
+      method: 'POST',
+      headers: {'X-Token': TOKEN, 'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        title: type,
+        body: body,
+        scheduled_at: date + 'T' + (time || '03:55')
+      })
+    });
+    var d = await r.json();
+    if (d.ok) {
+      showToast('Sent to ' + d.sent + ' customer' + (d.sent === 1 ? '' : 's'), true);
+    } else {
+      showToast(d.error || 'Failed to send', false);
+    }
+  } catch(e) {
+    showToast('Network error: ' + e.message, false);
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Broadcast to All Customers';
+}
+
+
+// ── KEY MANAGEMENT ──
+var kmData = {};
+
+async function kmLoadNode(node) {
+  try {
+    var r = await fetch('/api/node-keys/' + node);
+    if (!r.ok) return;
+    var d = await r.json();
+    kmData[node] = d.keys || [];
+    kmRender(node);
+  } catch(e) {
+    document.getElementById('km-table-' + node).innerHTML = '<div class="km-loading" style="color:var(--pink)">Failed to load</div>';
+  }
+}
+
+function kmRender(node) {
+  var el = document.getElementById('km-table-' + node);
+  var keys = kmData[node] || [];
+  if (!keys.length) { el.innerHTML = '<div class="km-loading">No keys configured</div>'; return; }
+  el.innerHTML = keys.map(function(k) {
+    var expHtml = '';
+    if (k.expires_at) {
+      var days = k.countdown_days;
+      var cls = days > 30 ? 'green' : days > 7 ? 'amber' : days > 0 ? 'red' : 'red blink';
+      var label = days > 0 ? days + 'd' : (days === 0 ? 'TODAY' : Math.abs(days) + 'd ago');
+      expHtml = '<div class="km-exp ' + cls + '">' + label + '</div>';
+    } else {
+      expHtml = '<div class="km-noexp">&mdash;</div>';
+    }
+    var btns = '<button class="km-btn" data-node="' + node + '" data-key="' + k.key_name + '" onclick="kmEdit(this.dataset.node,this.dataset.key)">Edit</button>';
+    if (k.has_backup) btns += '<button class="km-btn rotate" data-node="' + node + '" data-key="' + k.key_name + '" onclick="kmRotate(this.dataset.node,this.dataset.key)">Rotate</button>';
+    return '<div class="km-row">'
+      + '<div class="km-name">' + k.key_name + '</div>'
+      + '<div class="km-val">' + (k.has_value ? k.value_obfuscated : '<span style="color:var(--pink)">NOT SET</span>') + '</div>'
+      + expHtml + '<div class="km-actions">' + btns + '</div>'
+      + '</div>'
+      + '<div id="km-edit-' + node + '-' + k.key_name + '"></div>';
+  }).join('');
+}
+
+function kmEdit(node, keyName) {
+  var el = document.getElementById('km-edit-' + node + '-' + keyName);
+  if (el.innerHTML) { el.innerHTML = ''; return; }
+  el.innerHTML = '<div class="km-edit-panel">'
+    + '<div class="km-edit-row"><span class="km-edit-label">New Key</span><input type="password" id="km-val-' + node + '-' + keyName + '" placeholder="Paste new key value"></div>'
+    + '<div class="km-edit-row"><span class="km-edit-label">Expires</span><input type="date" id="km-exp-' + node + '-' + keyName + '"></div>'
+    + '<div class="km-edit-row"><span class="km-edit-label">Backup</span><input type="password" id="km-bak-' + node + '-' + keyName + '" placeholder="Optional backup key for rotation"></div>'
+    + '<div class="km-save-row"><button class="km-cancel" data-target="km-edit-' + node + '-' + keyName + '" onclick="kmCancel(this.dataset.target)">Cancel</button>'
+    + '<button class="km-save" data-node="' + node + '" data-key="' + keyName + '" onclick="kmSave(this.dataset.node,this.dataset.key)">Save</button></div>'
+    + '</div>';
+}
+
+async function kmSave(node, keyName) {
+  var val = document.getElementById('km-val-' + node + '-' + keyName).value;
+  var exp = document.getElementById('km-exp-' + node + '-' + keyName).value;
+  var bak = document.getElementById('km-bak-' + node + '-' + keyName).value;
+  if (!val && !exp && !bak) { showToast('Nothing to save', false); return; }
+  try {
+    var body = {key_name: keyName};
+    if (val) body.value = val;
+    if (exp) body.expires_at = exp;
+    if (bak) body.backup_value = bak;
+    var r = await fetch('/api/node-keys/' + node, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)
+    });
+    var d = await r.json();
+    if (d.ok) {
+      showToast(keyName + ' updated on ' + node, true);
+      kmLoadNode(node);
+    } else {
+      showToast(d.error || 'Failed', false);
+    }
+  } catch(e) { showToast('Error: ' + e.message, false); }
+}
+
+async function kmRotate(node, keyName) {
+  if (!confirm('Rotate ' + keyName + ' on ' + node + '? Primary and backup will swap.')) return;
+  try {
+    var r = await fetch('/api/node-keys/' + node + '/rotate', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({key_name: keyName})
+    });
+    var d = await r.json();
+    if (d.ok) {
+      showToast(keyName + ' rotated on ' + node, true);
+      kmLoadNode(node);
+    } else { showToast(d.error || 'Rotate failed', false); }
+  } catch(e) { showToast('Error: ' + e.message, false); }
+}
+
+function kmCancel(id) { document.getElementById(id).innerHTML = ""; }
+
+function kmAddRow(node) {
+  var name = prompt('Enter the env var name (e.g. NEW_API_KEY):');
+  if (!name) return;
+  name = name.trim().toUpperCase();
+  kmEdit(node, name);
+}
+
+// Load all nodes on page init
+kmLoadNode('pi4b');
+kmLoadNode('pi5');
+kmLoadNode('pi2w');
+
+updatePreview();
+</script>
+</body>
+</html>
+"""
+
+
+@app.route("/maintenance")
+def maintenance_page():
+    if not _authorized():
+        return redirect(url_for("login"))
+    return render_template_string(MAINTENANCE_PAGE_HTML, secret_token=SECRET_TOKEN, subpage_hdr=_subpage_header('Maintenance'))
+
+
+@app.route("/api/maintenance/notify", methods=["POST"])
+def api_maintenance_notify():
+    """Broadcast a maintenance notification to all retail portal customers."""
+    token = request.headers.get("X-Token", "")
+    if token != SECRET_TOKEN and not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+
+    if not RETAIL_PORTAL_URL:
+        return jsonify({"error": "RETAIL_PORTAL_URL not configured on monitor"}), 500
+
+    data  = request.get_json(force=True)
+    title = data.get("title", "Scheduled Maintenance")
+    body  = data.get("body", "")
+    sched = data.get("scheduled_at", "")
+
+    if not body.strip():
+        return jsonify({"error": "body is required"}), 400
+
+    payload = {
+        "category": "system",
+        "title":    title,
+        "body":     body,
+        "meta":     {"source": "monitor", "type": "maintenance", "scheduled_at": sched},
+    }
+
+    import requests as _req
+    try:
+        session_cookie = _get_admin_session_cookie()
+    except Exception as e:
+        return jsonify({"error": f"Portal auth failed: {str(e)[:200]}"}), 502
+
+    try:
+        r = _req.post(
+            f"{RETAIL_PORTAL_URL}/api/notifications/broadcast",
+            headers={"Content-Type": "application/json"},
+            cookies={"synthos_s": session_cookie},
+            json=payload,
+            timeout=15,
+        )
+        if r.status_code in (200, 201):
+            resp = r.json()
+            sent = resp.get("sent", 0)
+            print(f"[Synthos Monitor] Maintenance broadcast -> {sent} customers: {title}")
+            return jsonify({"ok": True, "sent": sent})
+        try:
+            err = r.json().get("error", r.text[:200])
+        except Exception:
+            err = r.text[:200]
+        return jsonify({"error": f"Portal returned {r.status_code}: {err}"}), 502
+    except _req.Timeout:
+        return jsonify({"error": "Portal request timed out"}), 504
+    except Exception as e:
+        return jsonify({"error": f"Portal unreachable: {str(e)[:200]}"}), 502
+
+
+
+
+# ── NODE POWER MANAGEMENT ─────────────────────────────────────────────────────
+
+# SSH alias map: pi_id → (ssh_host, user)
+_NODE_SSH_MAP = {
+    "pi4b-company":      ("localhost", "pi"),
+    "synthos-pi-retail":  ("10.0.0.11", "pi516gb"),
+    "pi2w-monitor":       ("10.0.0.12", "pi-02w"),
+}
+
+@app.route("/api/node/<pi_id>/power", methods=["POST"])
+def api_node_power(pi_id):
+    """Reboot or shutdown a node via SSH."""
+    token = request.headers.get("X-Token", "")
+    if token != SECRET_TOKEN and not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+
+    data = request.get_json(force=True)
+    action = data.get("action", "")
+    if action not in ("reboot", "shutdown"):
+        return jsonify({"error": "action must be reboot or shutdown"}), 400
+
+    # Look up SSH target
+    ssh_info = _NODE_SSH_MAP.get(pi_id)
+    if not ssh_info:
+        # Try to find from registry
+        with registry_lock:
+            pi = pi_registry.get(pi_id)
+        if pi and pi.get("pi_ip"):
+            ssh_info = (pi["pi_ip"], "pi")
+        else:
+            return jsonify({"error": f"Unknown node: {pi_id}"}), 404
+
+    host, user = ssh_info
+    cmd = "sudo reboot" if action == "reboot" else "sudo poweroff"
+
+    import subprocess
+    try:
+        if host == "localhost":
+            result = subprocess.run(
+                cmd.split(), capture_output=True, text=True, timeout=10
+            )
+        else:
+            result = subprocess.run(
+                ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=5",
+                 f"{user}@{host}", cmd],
+                capture_output=True, text=True, timeout=15
+            )
+        print(f"[Synthos Monitor] Power {action} sent to {pi_id} ({host})")
+        return jsonify({"ok": True, "action": action, "pi_id": pi_id})
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": True, "action": action, "pi_id": pi_id,
+                        "note": "Command sent (timeout expected during shutdown)"})
+    except Exception as e:
+        return jsonify({"error": f"SSH failed: {str(e)[:200]}"}), 502
+
+
+# ── AUDITOR RESOLVE API ──────────────────────────────────────────────────────
+
+@app.route("/api/auditor/resolve/<int:issue_id>", methods=["POST"])
+def api_auditor_resolve(issue_id):
+    """Mark an auditor issue as resolved."""
+    token = request.headers.get("X-Token", "")
+    if token != SECRET_TOKEN and not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+
+    import sqlite3 as _sq
+    try:
+        db = _sq.connect(str(_AUDITOR_DB_PATH), timeout=5)
+        db.execute("UPDATE detected_issues SET resolved=1 WHERE id=?", (issue_id,))
+        db.commit()
+        db.close()
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)[:200]}), 500
+
+
+
+
+# ── KEY MANAGEMENT API ────────────────────────────────────────────────────────
+
+_KEY_FILTER = {
+    'pi4b': {'ANTHROPIC_API_KEY','RESEND_API_KEY','GITHUB_TOKEN','SECRET_TOKEN','SSO_SECRET','PORTAL_TOKEN'},
+    'pi5':  {'ANTHROPIC_API_KEY','ALPACA_API_KEY','ALPACA_SECRET_KEY','RESEND_API_KEY','GITHUB_TOKEN',
+             'PORTAL_SECRET_KEY','ENCRYPTION_KEY'},
+    'pi2w': {'SECRET_TOKEN'},
+}
+
+def _obfuscate(val):
+    if not val or len(val) < 8:
+        return val or ''
+    return val[:4] + '\u2022' * min(len(val)-8, 12) + val[-4:]
+
+
+def _read_pi5_keys():
+    """Read keys from pi5 via portal API using admin session."""
+    try:
+        import requests as _req
+        cookie = _get_admin_session_cookie()
+        r = _req.get(f"{RETAIL_PORTAL_URL}/api/get-keys",
+                     cookies={"synthos_s": cookie}, timeout=10)
+        if r.status_code == 200:
+            return r.json()
+    except Exception as e:
+        print(f"[Monitor] pi5 key read failed: {e}")
+    return {}
+
+
+def _read_pi2w_keys():
+    """Read keys from pi2w via SSH."""
+    import subprocess
+    try:
+        r = subprocess.run(
+            ["ssh", "-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=no",
+             "pi-02w@10.0.0.12", "cat /home/pi-02w/synthos/.env"],
+            capture_output=True, text=True, timeout=10)
+        if r.returncode == 0:
+            vals = {}
+            for line in r.stdout.splitlines():
+                line = line.strip()
+                if not line or line.startswith('#') or '=' not in line:
+                    continue
+                k, _, v = line.partition('=')
+                vals[k.strip()] = v.strip().strip('"').strip("'")
+            return vals
+    except Exception as e:
+        print(f"[Monitor] pi2w key read failed: {e}")
+    return {}
+
+
+def _get_key_metadata():
+    """Get all expiration metadata from DB."""
+    try:
+        with _db_conn() as conn:
+            rows = conn.execute(
+                "SELECT node, key_name, expires_at, backup_value, notes, updated_at "
+                "FROM api_key_metadata"
+            ).fetchall()
+            return {(r['node'], r['key_name']): dict(r) for r in rows}
+    except Exception:
+        return {}
+
+
+@app.route("/api/node-keys/<node>", methods=["GET"])
+def api_node_keys(node):
+    """Fetch API keys for a node with obfuscated values and expiration metadata.
+    No auth required — values are obfuscated. Page-level auth gates access to /maintenance."""
+
+    allowed = _KEY_FILTER.get(node)
+    if allowed is None:
+        return jsonify({"error": f"Unknown node: {node}"}), 404
+
+    # Read raw keys from node
+    if node == 'pi4b':
+        raw = _read_env()
+    elif node == 'pi5':
+        raw = _read_pi5_keys()
+    elif node == 'pi2w':
+        raw = _read_pi2w_keys()
+    else:
+        raw = {}
+
+    metadata = _get_key_metadata()
+    from datetime import datetime as _dt, timezone as _tz
+
+    keys = []
+    for kname in sorted(allowed):
+        val = raw.get(kname, '')
+        meta = metadata.get((node, kname), {})
+        exp = meta.get('expires_at')
+        countdown = None
+        if exp:
+            try:
+                exp_date = _dt.fromisoformat(exp)
+                diff = (exp_date - _dt.now(_tz.utc).replace(tzinfo=None)).days
+                countdown = diff
+            except Exception:
+                pass
+        keys.append({
+            'key_name': kname,
+            'value_obfuscated': _obfuscate(val),
+            'has_value': bool(val),
+            'expires_at': exp,
+            'countdown_days': countdown,
+            'has_backup': bool(meta.get('backup_value')),
+            'notes': meta.get('notes', ''),
+        })
+
+    return jsonify({"node": node, "keys": keys})
+
+
+@app.route("/api/node-keys/<node>", methods=["POST"])
+def api_node_keys_update(node):
+    """Write a key to a node's .env and update metadata."""
+    token = request.headers.get("X-Token", "")
+    if token != SECRET_TOKEN and not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+
+    data = request.get_json(force=True)
+    key_name = data.get('key_name', '')
+    value = data.get('value', '')
+    expires_at = data.get('expires_at')
+    backup_value = data.get('backup_value')
+    notes = data.get('notes')
+
+    allowed = _KEY_FILTER.get(node)
+    if allowed is None:
+        return jsonify({"error": f"Unknown node: {node}"}), 404
+    if key_name not in allowed:
+        return jsonify({"error": f"Key {key_name} not allowed for {node}"}), 400
+
+    # Write key value to the node's .env
+    write_ok = False
+    if value:
+        if node == 'pi4b':
+            _write_env_key(key_name, value)
+            write_ok = True
+        elif node == 'pi5':
+            try:
+                import requests as _req
+                cookie = _get_admin_session_cookie()
+                r = _req.post(f"{RETAIL_PORTAL_URL}/api/keys",
+                              json={key_name: value},
+                              cookies={"synthos_s": cookie}, timeout=10)
+                write_ok = r.ok
+            except Exception as e:
+                return jsonify({"error": f"pi5 write failed: {e}"}), 502
+        elif node == 'pi2w':
+            import subprocess
+            try:
+                # Use sed to update in-place on remote
+                cmd = f"sed -i 's|^{key_name}=.*|{key_name}={value}|' /home/pi-02w/synthos/.env"
+                r = subprocess.run(
+                    ["ssh", "-o", "ConnectTimeout=5", "pi-02w@10.0.0.12", cmd],
+                    capture_output=True, text=True, timeout=10)
+                write_ok = (r.returncode == 0)
+            except Exception as e:
+                return jsonify({"error": f"pi2w write failed: {e}"}), 502
+
+    # Update metadata in DB
+    from datetime import datetime as _dt, timezone as _tz
+    now_iso = _dt.now(_tz.utc).isoformat()
+    try:
+        with _db_conn() as conn:
+            conn.execute("""
+                INSERT INTO api_key_metadata (node, key_name, expires_at, backup_value, notes, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(node, key_name) DO UPDATE SET
+                    expires_at=COALESCE(excluded.expires_at, expires_at),
+                    backup_value=COALESCE(excluded.backup_value, backup_value),
+                    notes=COALESCE(excluded.notes, notes),
+                    updated_at=excluded.updated_at
+            """, (node, key_name, expires_at, backup_value, notes, now_iso))
+    except Exception as e:
+        return jsonify({"error": f"Metadata save failed: {e}"}), 500
+
+    return jsonify({"ok": True, "written": write_ok, "key_name": key_name, "node": node})
+
+
+@app.route("/api/node-keys/<node>/rotate", methods=["POST"])
+def api_node_keys_rotate(node):
+    """Swap primary key with backup."""
+    token = request.headers.get("X-Token", "")
+    if token != SECRET_TOKEN and not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+
+    data = request.get_json(force=True)
+    key_name = data.get('key_name', '')
+
+    # Get current value
+    if node == 'pi4b':
+        raw = _read_env()
+    elif node == 'pi5':
+        raw = _read_pi5_keys()
+    elif node == 'pi2w':
+        raw = _read_pi2w_keys()
+    else:
+        return jsonify({"error": f"Unknown node: {node}"}), 404
+
+    current_val = raw.get(key_name, '')
+
+    # Get backup from metadata
+    try:
+        with _db_conn() as conn:
+            row = conn.execute(
+                "SELECT backup_value FROM api_key_metadata WHERE node=? AND key_name=?",
+                (node, key_name)).fetchone()
+    except Exception:
+        row = None
+
+    if not row or not row['backup_value']:
+        return jsonify({"error": "No backup key to rotate"}), 400
+
+    backup_val = row['backup_value']
+
+    # Write backup as new primary
+    if node == 'pi4b':
+        _write_env_key(key_name, backup_val)
+    elif node == 'pi5':
+        try:
+            import requests as _req
+            cookie = _get_admin_session_cookie()
+            _req.post(f"{RETAIL_PORTAL_URL}/api/keys",
+                      json={key_name: backup_val},
+                      cookies={"synthos_s": cookie}, timeout=10)
+        except Exception as e:
+            return jsonify({"error": f"Rotate write failed: {e}"}), 502
+    elif node == 'pi2w':
+        import subprocess
+        cmd = f"sed -i 's|^{key_name}=.*|{key_name}={backup_val}|' /home/pi-02w/synthos/.env"
+        subprocess.run(["ssh", "-o", "ConnectTimeout=5", "pi-02w@10.0.0.12", cmd],
+                       capture_output=True, text=True, timeout=10)
+
+    # Move old primary to backup
+    from datetime import datetime as _dt, timezone as _tz
+    with _db_conn() as conn:
+        conn.execute(
+            "UPDATE api_key_metadata SET backup_value=?, updated_at=? WHERE node=? AND key_name=?",
+            (current_val, _dt.now(_tz.utc).isoformat(), node, key_name))
+
+    print(f"[Monitor] Rotated {key_name} on {node}")
+    return jsonify({"ok": True, "key_name": key_name, "node": node})
+
+
+
+
+
+
+@app.route("/api/proxy/billing/all-customers")
+def proxy_billing_all():
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    import requests as _req
+    try:
+        cookie = _get_admin_session_cookie()
+        r = _req.get(f"{RETAIL_PORTAL_URL}/api/billing/all-customers",
+                     cookies={'synthos_s': cookie}, timeout=15)
+        return jsonify(r.json()), r.status_code
+    except Exception as e:
+        return jsonify({"error": str(e)}), 502
+
+
+@app.route("/api/company-expenses", methods=["GET"])
+def api_company_expenses():
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    try:
+        with _db_conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM company_expenses ORDER BY date DESC LIMIT 100"
+            ).fetchall()
+            return jsonify({"expenses": [dict(r) for r in rows]})
+    except Exception as e:
+        return jsonify({"expenses": [], "error": str(e)})
+
+
+@app.route("/api/company-expenses", methods=["POST"])
+def api_company_expenses_add():
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    data = request.get_json(force=True)
+    cat = data.get('category', '').strip()
+    desc = data.get('description', '').strip()
+    amount = float(data.get('amount', 0))
+    date = data.get('date', '')
+    recurring = int(data.get('recurring', 0))
+    if not cat or not desc or not amount or not date:
+        return jsonify({"error": "All fields required"}), 400
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        with _db_conn() as conn:
+            conn.execute(
+                "INSERT INTO company_expenses (category, description, amount, date, recurring, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (cat, desc, amount, date, recurring, now))
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+
+@app.route("/api/proxy/send-notification", methods=["POST"])
+def proxy_send_notification():
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    import requests as _req
+    try:
+        data = request.get_json(force=True)
+        cookie = _get_admin_session_cookie()
+        r = _req.post(f"{RETAIL_PORTAL_URL}/api/notifications/send",
+                      json=data, cookies={'synthos_s': cookie}, timeout=10)
+        return jsonify(r.json()), r.status_code
+    except Exception as e:
+        return jsonify({"error": str(e)}), 502
+
+# ── CUSTOMER SUPPORT QUEUE ────────────────────────────────────────────────────
+
+@app.route("/api/proxy/support/all-tickets")
+def proxy_support_all_tickets():
+    token = request.headers.get('X-Token', '')
+    if token != SECRET_TOKEN and not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    import requests as _req
+    try:
+        params = {}
+        if request.args.get('status'): params['status'] = request.args['status']
+        if request.args.get('category'): params['category'] = request.args['category']
+        cookie = _get_admin_session_cookie()
+        r = _req.get(f"{RETAIL_PORTAL_URL}/api/support/all-tickets",
+                     params=params, cookies={'synthos_s': cookie}, timeout=15)
+        return jsonify(r.json()), r.status_code
+    except Exception as e:
+        return jsonify({"error": str(e)}), 502
+
+
+@app.route("/api/proxy/support/ticket/<ticket_id>")
+def proxy_support_ticket_detail(ticket_id):
+    token = request.headers.get('X-Token', '')
+    if token != SECRET_TOKEN and not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    import requests as _req
+    try:
+        cookie = _get_admin_session_cookie()
+        params = {}
+        if request.args.get('customer_id'):
+            params['customer_id'] = request.args['customer_id']
+        r = _req.get(f"{RETAIL_PORTAL_URL}/api/support/tickets/{ticket_id}",
+                     params=params, cookies={'synthos_s': cookie}, timeout=10)
+        return jsonify(r.json()), r.status_code
+    except Exception as e:
+        return jsonify({"error": str(e)}), 502
+
+
+@app.route("/api/proxy/support/reply/<ticket_id>", methods=["POST"])
+def proxy_support_reply(ticket_id):
+    token = request.headers.get('X-Token', '')
+    if token != SECRET_TOKEN and not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    import requests as _req
+    try:
+        cookie = _get_admin_session_cookie()
+        data = request.get_json(force=True)
+        data['sender'] = 'admin'
+        r = _req.post(f"{RETAIL_PORTAL_URL}/api/support/tickets/{ticket_id}/reply",
+                      json=data, cookies={'synthos_s': cookie}, timeout=10)
+        return jsonify(r.json()), r.status_code
+    except Exception as e:
+        return jsonify({"error": str(e)}), 502
+
+
+@app.route("/api/proxy/support/status/<ticket_id>", methods=["POST"])
+def proxy_support_status(ticket_id):
+    token = request.headers.get('X-Token', '')
+    if token != SECRET_TOKEN and not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    import requests as _req
+    try:
+        cookie = _get_admin_session_cookie()
+        data = request.get_json(force=True)
+        r = _req.post(f"{RETAIL_PORTAL_URL}/api/support/tickets/{ticket_id}/status",
+                      json=data, cookies={'synthos_s': cookie}, timeout=10)
+        return jsonify(r.json()), r.status_code
+    except Exception as e:
+        return jsonify({"error": str(e)}), 502
+
+
+@app.route("/api/beta-tests", methods=["GET"])
+def api_beta_tests():
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    try:
+        with _db_conn() as conn:
+            rows = conn.execute("SELECT * FROM beta_tests ORDER BY created_at DESC").fetchall()
+            return jsonify({"tests": [dict(r) for r in rows]})
+    except Exception as e:
+        return jsonify({"tests": [], "error": str(e)})
+
+
+@app.route("/api/beta-tests", methods=["POST"])
+def api_beta_tests_create():
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    data = request.get_json(force=True)
+    title = data.get('title', '').strip()
+    description = data.get('description', '').strip()
+    required = int(data.get('required_confirmations', 2))
+    if not title or not description:
+        return jsonify({"error": "title and description required"}), 400
+
+    import secrets
+    test_id = 'QA-' + secrets.token_hex(3).upper()
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+
+    try:
+        with _db_conn() as conn:
+            conn.execute(
+                "INSERT INTO beta_tests (id, title, description, required_confirmations, status, created_at) "
+                "VALUES (?, ?, ?, ?, 'active', ?)",
+                (test_id, title, description, required, now))
+
+        # Broadcast notification to all customers
+        import requests as _req
+        cookie = _get_admin_session_cookie()
+        _req.post(f"{RETAIL_PORTAL_URL}/api/notifications/broadcast",
+                  json={
+                      "category": "system",
+                      "title": f"Beta Test: {title}",
+                      "body": f"{description}\n\nOpen the Support panel to submit your response.",
+                      "meta": {"beta_test_id": test_id, "type": "beta_test"}
+                  },
+                  cookies={'synthos_s': cookie}, timeout=15)
+
+        print(f"[Monitor] Beta test {test_id} created and broadcast: {title}")
+        return jsonify({"ok": True, "test_id": test_id})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/support-queue")
+def support_queue_page():
+    if not _authorized():
+        return redirect(url_for("login"))
+    return _subpage_header('Customer Support') + _SUPPORT_QUEUE_BODY
+
+
+_SUPPORT_QUEUE_BODY = """
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0a0c14;color:rgba(255,255,255,0.88);font-family:'Inter',system-ui,sans-serif;font-size:14px;min-height:100vh}
+::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:99px}
+.sq-page{max-width:1000px;margin:0 auto;padding:20px 24px}
+.sq-title{font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.4);margin-bottom:14px}
+.sq-filters{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap}
+.sq-f{padding:5px 14px;border-radius:8px;font-size:11px;font-weight:600;background:transparent;border:1px solid rgba(255,255,255,0.07);color:rgba(255,255,255,0.4);cursor:pointer;font-family:inherit}
+.sq-f.active{background:rgba(0,245,212,0.06);border-color:rgba(0,245,212,0.15);color:#00f5d4}
+.sq-card{background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px 16px;margin-bottom:8px;cursor:pointer;transition:border-color .15s}
+.sq-card:hover{border-color:rgba(255,255,255,0.15)}
+.sq-card-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+.sq-subj{font-size:13px;font-weight:600}
+.sq-badge{font-size:8px;font-weight:700;padding:2px 8px;border-radius:99px;text-transform:uppercase;letter-spacing:0.06em}
+.sq-badge.portal{background:rgba(0,245,212,0.08);color:#00f5d4}
+.sq-badge.account{background:rgba(123,97,255,0.08);color:#7b61ff}
+.sq-badge.suggestion{background:rgba(245,166,35,0.08);color:#f5a623}
+.sq-badge.beta_test{background:rgba(255,75,110,0.08);color:#ff4b6e}
+.sq-status{font-size:8px;font-weight:700;padding:2px 8px;border-radius:99px;text-transform:uppercase}
+.sq-status.open{background:rgba(245,166,35,0.1);color:#f5a623}
+.sq-status.in_progress{background:rgba(123,97,255,0.1);color:#7b61ff}
+.sq-status.resolved{background:rgba(0,245,212,0.1);color:#00f5d4}
+.sq-meta{font-size:10px;color:rgba(255,255,255,0.35);margin-top:2px}
+.sq-preview{font-size:11px;color:rgba(255,255,255,0.25);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sq-detail{background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:16px;margin-bottom:16px}
+.sq-msg{padding:8px 10px;border-radius:8px;margin-bottom:6px}
+.sq-msg.customer{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06)}
+.sq-msg.admin{background:rgba(123,97,255,0.06);border:1px solid rgba(123,97,255,0.12)}
+.sq-msg-head{font-size:9px;color:rgba(255,255,255,0.35);margin-bottom:3px}
+.sq-msg-body{font-size:12px;color:rgba(255,255,255,0.88);line-height:1.5;white-space:pre-wrap}
+.sq-reply-box{width:100%;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 10px;color:rgba(255,255,255,0.88);font-size:12px;font-family:'Inter',sans-serif;min-height:60px;resize:vertical;outline:none;margin-top:8px}
+.sq-reply-btn{padding:6px 16px;border-radius:6px;border:none;background:#00f5d4;color:#000;font-size:11px;font-weight:700;cursor:pointer;margin-top:6px}
+.sq-status-btns{display:flex;gap:6px;margin-top:8px}
+.sq-st-btn{padding:4px 10px;border-radius:6px;font-size:9px;font-weight:600;border:1px solid rgba(255,255,255,0.1);background:transparent;color:rgba(255,255,255,0.4);cursor:pointer}
+.sq-st-btn:hover{border-color:rgba(255,255,255,0.2);color:rgba(255,255,255,0.7)}
+.sq-section{margin-top:28px}
+.sq-create{display:flex;flex-direction:column;gap:8px;margin-bottom:16px}
+.sq-input{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:rgba(255,255,255,0.88);font-size:12px;outline:none;font-family:'Inter',sans-serif}
+.sq-input:focus{border-color:rgba(0,245,212,0.3)}
+.sq-create-btn{padding:8px 16px;border-radius:8px;border:none;background:rgba(255,75,110,0.08);border:1px solid rgba(255,75,110,0.2);color:#ff4b6e;font-size:11px;font-weight:700;cursor:pointer}
+.sq-test-card{padding:12px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;margin-bottom:6px}
+.sq-test-title{font-size:12px;font-weight:600}
+.sq-test-desc{font-size:11px;color:rgba(255,255,255,0.4);margin-top:3px}
+.sq-test-progress{font-size:10px;color:rgba(255,255,255,0.3);margin-top:4px}
+.sq-toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);padding:8px 20px;border-radius:8px;font-size:12px;font-weight:600;z-index:999;opacity:0;transition:opacity .3s;pointer-events:none}
+.sq-toast.show{opacity:1}
+.sq-toast.ok{background:#00f5d4;color:#000}
+.sq-toast.err{background:#ff4b6e;color:#fff}
+</style>
+<div class="sq-page">
+  <div class="sq-title">Support Tickets</div>
+  <div class="sq-filters">
+    <button class="sq-f active" onclick="sqFilter(null,this)">All</button>
+    <button class="sq-f" onclick="sqFilter('open',this)">Open</button>
+    <button class="sq-f" onclick="sqFilter('in_progress',this)">In Progress</button>
+    <button class="sq-f" onclick="sqFilter('resolved',this)">Resolved</button>
+    <button class="sq-f" onclick="sqFilter(null,this,'beta_test')">Beta Tests</button>
+  </div>
+  <div id="sq-list"><div style="color:rgba(255,255,255,0.3);text-align:center;padding:30px">Loading...</div></div>
+  <div id="sq-detail"></div>
+
+  <div class="sq-section">
+    <div class="sq-title">Beta Test Management</div>
+    <div class="sq-create">
+      <input class="sq-input" id="bt-title" placeholder="Test title (e.g. Signup flow verification)">
+      <textarea class="sq-input" id="bt-desc" placeholder="Description of what to test..." style="min-height:60px;resize:vertical"></textarea>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span style="font-size:10px;color:rgba(255,255,255,0.35)">Required confirmations:</span>
+        <input class="sq-input" id="bt-required" type="number" value="2" min="1" max="10" style="width:50px">
+        <button type="button" class="sq-create-btn" onclick="sqCreateBetaTest()">Create & Broadcast</button>
+      </div>
+    </div>
+    <div id="bt-list"></div>
+  </div>
+
+  <div class="sq-section">
+    <div class="sq-title">Direct Message</div>
+    <div class="sq-create">
+      <select class="sq-input" id="dm-customer" style="width:100%">
+        <option value="">Loading customers...</option>
+      </select>
+      <select class="sq-input" id="dm-category">
+        <option value="account">Account</option>
+        <option value="system">System</option>
+        <option value="alert">Alert</option>
+        <option value="daily">Daily</option>
+      </select>
+      <input class="sq-input" id="dm-title" placeholder="Message title">
+      <textarea class="sq-input" id="dm-body" placeholder="Message body..." style="min-height:60px;resize:vertical"></textarea>
+      <button type="button" class="sq-create-btn" onclick="sqSendDirect();return false" style="background:rgba(0,245,212,0.06);border-color:rgba(0,245,212,0.15);color:#00f5d4">Send to Customer</button>
+    </div>
+  </div>
+</div>
+<div class="sq-toast" id="sq-toast"></div>
+
+<script>
+var _sqFilter = null;
+var _sqCatFilter = null;
+
+function sqToast(msg, type) {
+  var t = document.getElementById('sq-toast');
+  t.textContent = msg;
+  t.className = 'sq-toast show ' + (type||'ok');
+  setTimeout(function(){t.className='sq-toast'},3000);
+}
+
+async function sqLoadTickets() {
+  var el = document.getElementById('sq-list');
+  try {
+    var url = '/api/proxy/support/all-tickets';
+    var params = [];
+    if (_sqFilter) params.push('status=' + _sqFilter);
+    if (_sqCatFilter) params.push('category=' + _sqCatFilter);
+    if (params.length) url += '?' + params.join('&');
+    var r = await fetch(url);
+    var d = await r.json();
+    var tickets = d.tickets || [];
+    if (!tickets.length) {
+      el.innerHTML = '<div style="color:rgba(255,255,255,0.3);text-align:center;padding:30px">No tickets found</div>';
+      return;
+    }
+    el.innerHTML = tickets.map(function(t) {
+      var last = t.last_message ? t.last_message.message.slice(0,80) : '';
+      var name = t.customer_name || t.customer_email || t.customer_id.slice(0,8);
+      return '<div class="sq-card" onclick="sqViewTicket(\\'' + t.ticket_id + '\\',\\'' + t.customer_id + '\\')">'
+        + '<div class="sq-card-top">'
+        + '<div class="sq-subj">' + t.subject + '</div>'
+        + '<div style="display:flex;gap:4px"><span class="sq-badge ' + t.category + '">' + t.category + '</span>'
+        + '<span class="sq-status ' + t.status + '">' + t.status + '</span></div></div>'
+        + '<div class="sq-meta">' + name + ' &middot; ' + (t.updated_at||'').slice(0,16) + ' &middot; ' + (t.message_count||0) + ' messages</div>'
+        + (last ? '<div class="sq-preview">' + last + '</div>' : '')
+        + '</div>';
+    }).join('');
+  } catch(e) { el.innerHTML = '<div style="color:#ff4b6e;padding:20px;text-align:center">Error loading tickets</div>'; }
+}
+
+function sqFilter(status, btn, cat) {
+  _sqFilter = status;
+  _sqCatFilter = cat || null;
+  document.querySelectorAll('.sq-f').forEach(function(b){b.classList.remove('active')});
+  btn.classList.add('active');
+  document.getElementById('sq-detail').innerHTML = '';
+  sqLoadTickets();
+}
+
+async function sqViewTicket(ticketId, customerId) {
+  var el = document.getElementById('sq-detail');
+  try {
+    var r = await fetch('/api/proxy/support/ticket/' + ticketId + '?customer_id=' + customerId);
+    var d = await r.json();
+    if (!d.ticket) { el.innerHTML = 'Ticket not found'; return; }
+    var t = d.ticket;
+    var msgs = d.messages || [];
+    var html = '<div class="sq-detail">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+    html += '<div style="font-size:14px;font-weight:700">' + t.subject + '</div>';
+    html += '<span class="sq-status ' + t.status + '">' + t.status + '</span></div>';
+    html += '<div style="font-size:10px;color:rgba(255,255,255,0.35);margin-bottom:12px">' + t.ticket_id + ' &middot; ' + t.category + '</div>';
+    msgs.forEach(function(m) {
+      var cls = m.sender === 'admin' ? 'admin' : 'customer';
+      html += '<div class="sq-msg ' + cls + '">';
+      html += '<div class="sq-msg-head">' + (m.sender==='admin'?'You':'Customer') + ' &middot; ' + (m.created_at||'').slice(0,16) + '</div>';
+      html += '<div class="sq-msg-body">' + m.message + '</div></div>';
+    });
+    html += '<textarea class="sq-reply-box" id="sq-reply" placeholder="Write a reply..."></textarea>';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center">';
+    html += '<button class="sq-reply-btn" onclick="sqReply(\\'' + ticketId + '\\',\\'' + customerId + '\\')">Send Reply</button>';
+    html += '<div class="sq-status-btns">';
+    html += '<button class="sq-st-btn" data-tid="' + ticketId + '" data-cid="' + customerId + '" data-st="in_progress" onclick="sqSetStatus(this.dataset.tid,this.dataset.cid,this.dataset.st)">In Progress</button>';
+    html += '<button class="sq-st-btn" data-tid="' + ticketId + '" data-cid="' + customerId + '" data-st="resolved" onclick="sqSetStatus(this.dataset.tid,this.dataset.cid,this.dataset.st)">Resolved</button>';
+    html += '<button class="sq-st-btn" data-tid="' + ticketId + '" data-cid="' + customerId + '" data-st="closed" onclick="sqSetStatus(this.dataset.tid,this.dataset.cid,this.dataset.st)">Close</button>';
+    html += '</div></div></div>';
+    el.innerHTML = html;
+    el.scrollIntoView({behavior:'smooth'});
+  } catch(e) { el.innerHTML = 'Error loading ticket'; }
+}
+
+async function sqReply(ticketId, customerId) {
+  var msg = document.getElementById('sq-reply').value.trim();
+  if (!msg) return;
+  await fetch('/api/proxy/support/reply/' + ticketId, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({message: msg, customer_id: customerId})
+  });
+  sqToast('Reply sent');
+  sqViewTicket(ticketId, customerId);
+}
+
+async function sqSetStatus(ticketId, customerId, status) {
+  await fetch('/api/proxy/support/status/' + ticketId, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({status: status, customer_id: customerId})
+  });
+  sqToast('Status: ' + status);
+  sqLoadTickets();
+  sqViewTicket(ticketId, customerId);
+}
+
+async function sqCreateBetaTest() {
+  var title = document.getElementById('bt-title').value.trim();
+  var desc = document.getElementById('bt-desc').value.trim();
+  var req = parseInt(document.getElementById('bt-required').value) || 2;
+  if (!title || !desc) { sqToast('Title and description required', 'err'); return; }
+  var r = await fetch('/api/beta-tests', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({title: title, description: desc, required_confirmations: req})
+  });
+  var d = await r.json();
+  if (d.ok) {
+    sqToast('Beta test created: ' + d.test_id);
+    document.getElementById('bt-title').value = '';
+    document.getElementById('bt-desc').value = '';
+    sqLoadBetaTests();
+  } else { sqToast(d.error || 'Failed', 'err'); }
+}
+
+async function sqLoadBetaTests() {
+  var el = document.getElementById('bt-list');
+  try {
+    var r = await fetch('/api/beta-tests');
+    var d = await r.json();
+    var tests = d.tests || [];
+    if (!tests.length) { el.innerHTML = '<div style="font-size:11px;color:rgba(255,255,255,0.3);padding:12px 0;text-align:center">No beta tests yet</div>'; return; }
+    el.innerHTML = tests.map(function(t) {
+      var stColor = t.status === 'cleared' ? '#00f5d4' : t.status === 'cancelled' ? '#ff4b6e' : '#f5a623';
+      return '<div class="sq-test-card">'
+        + '<div style="display:flex;justify-content:space-between;align-items:center">'
+        + '<div class="sq-test-title">' + t.id + ': ' + t.title + '</div>'
+        + '<span style="font-size:9px;font-weight:700;color:' + stColor + ';text-transform:uppercase">' + t.status + '</span></div>'
+        + '<div class="sq-test-desc">' + t.description.slice(0,100) + '</div>'
+        + '<div class="sq-test-progress">Required: ' + t.required_confirmations + ' confirmations</div>'
+        + '</div>';
+    }).join('');
+  } catch(e) {}
+}
+
+
+// ── Direct Message to Customer ──
+async function sqSendDirect() {
+  var cid = document.getElementById('dm-customer').value;
+  var title = document.getElementById('dm-title').value.trim();
+  var body = document.getElementById('dm-body').value.trim();
+  if (!cid) { sqToast('Select a customer first', 'err'); return; }
+  if (!title) { sqToast('Enter a message title', 'err'); return; }
+  if (!body) { sqToast('Enter a message body', 'err'); return; }
+  try {
+    // Create a direct_message ticket in customer's DB
+    var r = await fetch('/api/proxy/direct-message', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({customer_id: cid, title: title, message: body})
+    });
+    if (!r.ok) { sqToast('Server error: HTTP ' + r.status, 'err'); return; }
+    var d = await r.json();
+    if (d.ok) {
+      sqToast('Message sent', 'ok');
+      document.getElementById('dm-title').value = '';
+      document.getElementById('dm-body').value = '';
+      sqLoadTickets();
+    } else { sqToast(d.error || 'Send failed', 'err'); }
+  } catch(e) {
+    sqToast('Network error: ' + e.message, 'err');
+    console.error('sqSendDirect error:', e);
+  }
+}
+
+async function sqLoadCustomerList() {
+  try {
+    var r = await fetch('/api/proxy/billing/all-customers');
+    var d = await r.json();
+    var sel = document.getElementById('dm-customer');
+    if (!sel) return;
+    var custs = d.customers || [];
+    sel.innerHTML = '<option value="">Select customer...</option>';
+    custs.forEach(function(c) {
+      var opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = (c.name || c.email || c.id.slice(0,8));
+      sel.appendChild(opt);
+    });
+  } catch(e) {}
+}
+
+sqLoadTickets();
+sqLoadBetaTests();
+sqLoadCustomerList();
+setInterval(sqLoadTickets, 10000);
+</script>
+"""
+
+
+
+
+
+# ── COMPANY FINANCES PAGE ─────────────────────────────────────────────────────
+
+@app.route("/company-finances")
+def company_finances_page():
+    if not _authorized():
+        return redirect(url_for("login"))
+    return _subpage_header('Company Finances') + """
+<style>*{box-sizing:border-box;margin:0;padding:0}body{background:#0a0c14;color:rgba(255,255,255,0.88);font-family:'Inter',system-ui,sans-serif;font-size:14px;min-height:100vh}::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:99px}</style>
+<div style="max-width:1000px;margin:0 auto;padding:20px 24px">
+  <div style="font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.4);margin-bottom:14px">Revenue &amp; Expenses</div>
+
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:24px">
+    <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:20px;text-align:center">
+      <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px">Monthly Revenue</div>
+      <div style="font-size:22px;font-weight:700;color:#00f5d4">—</div>
+      <div style="font-size:10px;color:rgba(255,255,255,0.2);margin-top:4px">Module pending</div>
+    </div>
+    <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:20px;text-align:center">
+      <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px">Monthly Expenses</div>
+      <div style="font-size:22px;font-weight:700;color:#ff4b6e">—</div>
+      <div style="font-size:10px;color:rgba(255,255,255,0.2);margin-top:4px">Module pending</div>
+    </div>
+    <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:20px;text-align:center">
+      <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px">Net P&amp;L</div>
+      <div style="font-size:22px;font-weight:700;color:rgba(255,255,255,0.5)">—</div>
+      <div style="font-size:10px;color:rgba(255,255,255,0.2);margin-top:4px">Module pending</div>
+    </div>
+    <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:20px;text-align:center">
+      <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px">API Costs (MTD)</div>
+      <div style="font-size:22px;font-weight:700;color:#f5a623">—</div>
+      <div style="font-size:10px;color:rgba(255,255,255,0.2);margin-top:4px">Fidget agent pending</div>
+    </div>
+  </div>
+
+  <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:20px;margin-bottom:16px">
+    <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:12px">Expense Log</div>
+    <div id="exp-list"><div style="text-align:center;padding:30px 0;color:rgba(255,255,255,0.2);font-size:12px">Loading...</div></div>
+  </div>
+</div>
+<script>
+async function loadExpenses() {
+  try {
+    var r = await fetch('/api/company-expenses');
+    var d = await r.json();
+    var el = document.getElementById('exp-list');
+    var exps = d.expenses || [];
+    if (!exps.length) { el.innerHTML = '<div style="text-align:center;padding:20px;color:rgba(255,255,255,0.2)">No expenses recorded yet</div>'; return; }
+    var total = exps.reduce(function(s,e){return s+e.amount},0);
+    el.innerHTML = '<div style="font-size:11px;color:rgba(255,255,255,0.35);margin-bottom:8px">Total: $' + total.toFixed(2) + '</div>'
+      + '<table style="width:100%;border-collapse:collapse;font-size:12px">'
+      + '<tr style="border-bottom:1px solid rgba(255,255,255,0.08);font-size:10px;color:rgba(255,255,255,0.35);text-transform:uppercase">'
+      + '<th style="padding:6px;text-align:left">Date</th><th style="padding:6px;text-align:left">Category</th>'
+      + '<th style="padding:6px;text-align:left">Description</th><th style="padding:6px;text-align:right">Amount</th></tr>'
+      + exps.map(function(e){
+        return '<tr style="border-bottom:1px solid rgba(255,255,255,0.04)">'
+          + '<td style="padding:6px;font-size:11px;color:rgba(255,255,255,0.5)">' + e.date + '</td>'
+          + '<td style="padding:6px;font-size:11px">' + e.category + '</td>'
+          + '<td style="padding:6px">' + e.description + '</td>'
+          + '<td style="padding:6px;text-align:right;color:#ff4b6e">$' + e.amount.toFixed(2) + '</td></tr>';
+      }).join('') + '</table>';
+  } catch(e) {}
+}
+async function addExpense() {
+  var cat = document.getElementById('exp-cat').value;
+  var desc = document.getElementById('exp-desc').value.trim();
+  var amt = parseFloat(document.getElementById('exp-amount').value);
+  var date = document.getElementById('exp-date').value;
+  var rec = document.getElementById('exp-recurring').checked ? 1 : 0;
+  if (!desc || !amt || !date) { alert('All fields required'); return; }
+  await fetch('/api/company-expenses', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({category:cat,description:desc,amount:amt,date:date,recurring:rec})
+  });
+  document.getElementById('exp-desc').value = '';
+  document.getElementById('exp-amount').value = '';
+  loadExpenses();
+}
+document.getElementById('exp-date').value = new Date().toISOString().slice(0,10);
+loadExpenses();
+</script>
+  </div>
+
+  <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:20px">
+    <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:12px">Manual Expense Entry</div>
+    <div style="display:grid;gap:8px;max-width:500px">
+      <select id="exp-cat" style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:rgba(255,255,255,0.88);font-size:12px">
+        <option value="infrastructure">Infrastructure</option>
+        <option value="api_costs">API Costs</option>
+        <option value="hardware">Hardware</option>
+        <option value="software">Software/Licenses</option>
+        <option value="hosting">Hosting</option>
+        <option value="other">Other</option>
+      </select>
+      <input id="exp-desc" placeholder="Description" style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:rgba(255,255,255,0.88);font-size:12px;outline:none">
+      <div style="display:flex;gap:8px">
+        <input id="exp-amount" type="number" step="0.01" placeholder="Amount ($)" style="flex:1;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:rgba(255,255,255,0.88);font-size:12px;outline:none">
+        <input id="exp-date" type="date" style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:rgba(255,255,255,0.88);font-size:12px;outline:none">
+      </div>
+      <label style="font-size:11px;color:rgba(255,255,255,0.4);display:flex;align-items:center;gap:6px">
+        <input type="checkbox" id="exp-recurring"> Recurring monthly
+      </label>
+      <button onclick="addExpense()" style="padding:8px;border-radius:8px;border:none;background:#00f5d4;color:#000;font-size:12px;font-weight:700;cursor:pointer">Add Expense</button>
+    </div>
+  </div>
+</div>
+"""
+
+
+# ── REPORTS PAGE ──────────────────────────────────────────────────────────────
+
+@app.route("/reports")
+def reports_page():
+    if not _authorized():
+        return redirect(url_for("login"))
+    return _subpage_header('Reports') + """
+<style>*{box-sizing:border-box;margin:0;padding:0}body{background:#0a0c14;color:rgba(255,255,255,0.88);font-family:'Inter',system-ui,sans-serif;font-size:14px;min-height:100vh}::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:99px}</style>
+<div style="max-width:800px;margin:0 auto;padding:20px 24px">
+  <div style="font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.4);margin-bottom:14px">Exportable Reports</div>
+
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px">
+    <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:24px">
+      <div style="font-size:14px;font-weight:700;color:rgba(255,255,255,0.88);margin-bottom:4px">Revenue Report</div>
+      <div style="font-size:11px;color:rgba(255,255,255,0.35);margin-bottom:16px">Monthly/quarterly revenue by customer, subscription tier, and payment status.</div>
+      <div style="font-size:10px;color:rgba(255,255,255,0.2)">PDF + Spreadsheet — Module pending</div>
+    </div>
+    <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:24px">
+      <div style="font-size:14px;font-weight:700;color:rgba(255,255,255,0.88);margin-bottom:4px">Expense Report</div>
+      <div style="font-size:11px;color:rgba(255,255,255,0.35);margin-bottom:16px">API costs, infrastructure, manual entries. Categorized by type.</div>
+      <div style="font-size:10px;color:rgba(255,255,255,0.2)">PDF + Spreadsheet — Module pending</div>
+    </div>
+    <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:24px">
+      <div style="font-size:14px;font-weight:700;color:rgba(255,255,255,0.88);margin-bottom:4px">Tax Summary</div>
+      <div style="font-size:11px;color:rgba(255,255,255,0.35);margin-bottom:16px">Georgia sales tax collected, quarterly estimates, filing-ready export.</div>
+      <div style="font-size:10px;color:rgba(255,255,255,0.2)">PDF — Module pending</div>
+    </div>
+    <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:24px">
+      <div style="font-size:14px;font-weight:700;color:rgba(255,255,255,0.88);margin-bottom:4px">Customer Activity</div>
+      <div style="font-size:11px;color:rgba(255,255,255,0.35);margin-bottom:16px">Login history, trades, agent usage per customer.</div>
+      <div style="font-size:10px;color:rgba(255,255,255,0.2)">Spreadsheet — Module pending</div>
+    </div>
+  </div>
+</div>
+"""
+
+
+# ── CUSTOMER BILLING PAGE ─────────────────────────────────────────────────────
+
+@app.route("/customer-billing")
+def customer_billing_page():
+    if not _authorized():
+        return redirect(url_for("login"))
+    return _subpage_header('Customer Billing') + """
+<style>*{box-sizing:border-box;margin:0;padding:0}body{background:#0a0c14;color:rgba(255,255,255,0.88);font-family:'Inter',system-ui,sans-serif;font-size:14px;min-height:100vh}::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:99px}</style>
+<div style="max-width:1000px;margin:0 auto;padding:20px 24px">
+  <div style="font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.4);margin-bottom:14px">All Customer Payment Status</div>
+
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:20px">
+    <div style="background:rgba(0,245,212,0.04);border:1px solid rgba(0,245,212,0.12);border-radius:8px;padding:14px;text-align:center">
+      <div style="font-size:20px;font-weight:700;color:#00f5d4">—</div>
+      <div style="font-size:9px;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.06em;margin-top:4px">Active</div>
+    </div>
+    <div style="background:rgba(245,166,35,0.04);border:1px solid rgba(245,166,35,0.12);border-radius:8px;padding:14px;text-align:center">
+      <div style="font-size:20px;font-weight:700;color:#f5a623">—</div>
+      <div style="font-size:9px;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.06em;margin-top:4px">Past Due</div>
+    </div>
+    <div style="background:rgba(255,75,110,0.04);border:1px solid rgba(255,75,110,0.12);border-radius:8px;padding:14px;text-align:center">
+      <div style="font-size:20px;font-weight:700;color:#ff4b6e">—</div>
+      <div style="font-size:9px;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.06em;margin-top:4px">Cancelled</div>
+    </div>
+    <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:14px;text-align:center">
+      <div style="font-size:20px;font-weight:700;color:rgba(255,255,255,0.5)">—</div>
+      <div style="font-size:9px;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.06em;margin-top:4px">MRR</div>
+    </div>
+  </div>
+
+  <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:20px">
+    <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:12px">Customer List</div>
+    <div id="cb-list"><div style="text-align:center;padding:30px 0;color:rgba(255,255,255,0.2);font-size:12px">Loading...</div></div>
+  </div>
+</div>
+<script>
+async function loadCustBilling() {
+  try {
+    var r = await fetch('/api/proxy/billing/all-customers');
+    var d = await r.json();
+    // Summary cards
+    var s = d.summary || {};
+    var cards = document.querySelectorAll('[style*="text-align:center"] > div:first-child');
+    // Update customer list
+    var el = document.getElementById('cb-list');
+    var custs = d.customers || [];
+    if (!custs.length) { el.innerHTML = '<div style="text-align:center;padding:20px;color:rgba(255,255,255,0.2)">No customers</div>'; return; }
+    var stColors = {active:'#00f5d4',trialing:'#7b61ff',past_due:'#f5a623',cancelled:'#ff4b6e',inactive:'rgba(255,255,255,0.35)'};
+    el.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:12px">'
+      + '<tr style="border-bottom:1px solid rgba(255,255,255,0.08);font-size:10px;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.06em">'
+      + '<th style="padding:8px;text-align:left">Customer</th>'
+      + '<th style="padding:8px;text-align:left">Email</th>'
+      + '<th style="padding:8px;text-align:center">Status</th>'
+      + '<th style="padding:8px;text-align:center">Tier</th>'
+      + '<th style="padding:8px;text-align:center">Alpaca</th>'
+      + '<th style="padding:8px;text-align:right">Since</th></tr>'
+      + custs.map(function(c) {
+        var st = c.subscription_status || 'inactive';
+        var col = stColors[st] || stColors.inactive;
+        return '<tr style="border-bottom:1px solid rgba(255,255,255,0.05)">'
+          + '<td style="padding:8px">' + (c.name||'—') + '</td>'
+          + '<td style="padding:8px;color:rgba(255,255,255,0.5);font-size:11px">' + (c.email||'—') + '</td>'
+          + '<td style="padding:8px;text-align:center"><span style="font-size:9px;font-weight:700;padding:2px 8px;border-radius:99px;background:' + col + '20;color:' + col + '">' + st + '</span></td>'
+          + '<td style="padding:8px;text-align:center;font-size:11px;color:rgba(255,255,255,0.5)">' + (c.pricing_tier||'standard') + '</td>'
+          + '<td style="padding:8px;text-align:center">' + (c.has_alpaca?'<span style="color:#00f5d4">\u2713</span>':'<span style="color:rgba(255,255,255,0.2)">\u2014</span>') + '</td>'
+          + '<td style="padding:8px;text-align:right;font-size:10px;color:rgba(255,255,255,0.35)">' + (c.created_at||'').slice(0,10) + '</td></tr>';
+      }).join('')
+      + '</table>';
+  } catch(e) { document.getElementById('cb-list').innerHTML = '<div style="color:#ff4b6e;text-align:center;padding:20px">Error loading billing data</div>'; }
+}
+loadCustBilling();
+</script>
+  </div>
+</div>
+"""
+
+
+
+AUDIT_PAGE_HTML = """
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -4190,24 +7345,25 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 .page{max-width:1200px;margin:0 auto;padding:24px}
 .title{font-size:22px;font-weight:700;letter-spacing:-0.3px;margin-bottom:4px}
 .title span{background:linear-gradient(90deg,var(--purple),var(--teal));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.subtitle{font-size:12px;color:var(--muted);margin-bottom:24px}
-
-/* Stats row */
+.subtitle{font-size:12px;color:var(--muted);margin-bottom:20px}
+.node-tabs{display:flex;gap:6px;margin-bottom:20px;flex-wrap:wrap}
+.node-tab{padding:6px 14px;border-radius:8px;border:1px solid var(--border);background:transparent;
+          color:var(--muted);font-size:11px;font-weight:600;cursor:pointer;transition:all 0.15s;font-family:var(--sans)}
+.node-tab:hover{border-color:var(--border2);color:var(--text)}
+.node-tab.active{background:rgba(0,245,212,0.08);border-color:rgba(0,245,212,0.3);color:var(--teal)}
+.node-tab .tab-badge{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:99px;
+                      font-size:9px;font-weight:700;background:rgba(255,75,110,0.15);color:var(--pink)}
+.node-tab .tab-badge.clean{background:rgba(0,245,212,0.1);color:var(--teal)}
 .stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px}
 .stat-mini{padding:14px 16px;border-radius:12px;border:1px solid var(--border);background:var(--surface)}
 .sm-label{font-size:9px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
 .sm-val{font-size:26px;font-weight:800;letter-spacing:-1px}
 .sm-sub{font-size:10px;color:var(--muted);margin-top:3px}
-
-/* Two column layout */
 .two-col{display:grid;grid-template-columns:2fr 1fr;gap:16px;margin-bottom:16px}
 @media(max-width:900px){.two-col{grid-template-columns:1fr}}
-
-/* Panels */
 .panel{border-radius:16px;border:1px solid var(--border);background:var(--surface);overflow:hidden;margin-bottom:16px}
 .panel:last-child{margin-bottom:0}
-.panel-header{padding:14px 16px;border-bottom:1px solid var(--border);
-              display:flex;align-items:center;gap:8px}
+.panel-header{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
 .panel-title{font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);flex:1}
 .panel-badge{padding:2px 8px;border-radius:99px;font-size:9px;font-weight:700;border:1px solid}
 .pb-purple{background:rgba(123,97,255,0.08);border-color:rgba(123,97,255,0.25);color:var(--purple)}
@@ -4215,8 +7371,6 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 .pb-amber{background:rgba(255,179,71,0.08);border-color:rgba(255,179,71,0.2);color:var(--amber)}
 .pb-pink{background:rgba(255,75,110,0.08);border-color:rgba(255,75,110,0.2);color:var(--pink)}
 .panel-scroll{max-height:480px;overflow-y:auto}
-
-/* Issue rows */
 .issue-row{padding:11px 16px;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:flex-start}
 .issue-row:last-child{border-bottom:none}
 .sev-badge{flex-shrink:0;padding:2px 7px;border-radius:5px;font-size:9px;font-weight:800;
@@ -4229,65 +7383,44 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 .issue-file{font-size:10px;font-family:var(--mono);color:var(--purple);margin-bottom:3px}
 .issue-ctx{font-size:11px;color:var(--text);line-height:1.5;word-break:break-all}
 .issue-meta{font-size:9px;color:var(--dim);font-family:var(--mono);margin-top:4px}
-
-/* Scan state rows */
 .scan-row{padding:8px 16px;border-bottom:1px solid var(--border);font-size:10px;
           display:flex;gap:8px;align-items:center;font-family:var(--mono)}
 .scan-row:last-child{border-bottom:none}
 .scan-file{color:var(--text);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .scan-age{color:var(--muted);flex-shrink:0}
-
-/* Morning report */
 .report-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:14px 16px}
 .rg-cell{text-align:center}
 .rg-val{font-size:22px;font-weight:800;letter-spacing:-1px}
 .rg-lab{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);margin-top:2px}
-
-/* Error / empty */
 .empty{padding:32px;text-align:center;color:var(--muted);font-size:12px}
 .empty-icon{font-size:28px;margin-bottom:10px}
-.error-bar{padding:12px 16px;font-size:11px;color:var(--pink);background:rgba(255,75,110,0.06);
-           border-bottom:1px solid rgba(255,75,110,0.15)}
+.error-bar{padding:12px 16px;font-size:11px;color:var(--pink);background:rgba(255,75,110,0.06);border-bottom:1px solid rgba(255,75,110,0.15)}
+.loading-bar{padding:12px 16px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border)}
 </style>
 </head>
 <body>
 
-<header class="header">
-  <div class="wordmark">SYNTHOS</div>
-  <div style="font-size:11px;color:var(--muted);font-family:var(--mono)">Auditor</div>
-  <a href="/monitor" class="nav-back">&#8592; Monitor</a>
-</header>
+{{ subpage_hdr|safe }}
+
 
 <div class="page">
-  <div class="title">Auditor — <span>Log Monitor</span></div>
-  <div class="subtitle" id="page-sub">Loading findings...</div>
+  <div class="title">Auditor &#x2014; <span>All Nodes</span></div>
+  <div class="subtitle" id="page-sub">Loading nodes...</div>
 
-  <!-- STATS -->
+  <div class="node-tabs" id="node-tabs">
+    <button class="node-tab active" data-node="company" onclick="selectNode('company',this)">
+      pi4b &#x2014; Company <span class="tab-badge" id="badge-company">&#x2014;</span>
+    </button>
+  </div>
+
   <div class="stats-row">
-    <div class="stat-mini">
-      <div class="sm-label">Critical</div>
-      <div class="sm-val" id="stat-crit" style="color:var(--pink)">—</div>
-      <div class="sm-sub">Unresolved</div>
-    </div>
-    <div class="stat-mini">
-      <div class="sm-label">High</div>
-      <div class="sm-val" id="stat-high" style="color:var(--amber)">—</div>
-      <div class="sm-sub">Unresolved</div>
-    </div>
-    <div class="stat-mini">
-      <div class="sm-label">Medium</div>
-      <div class="sm-val" id="stat-med" style="color:var(--purple)">—</div>
-      <div class="sm-sub">Unresolved</div>
-    </div>
-    <div class="stat-mini">
-      <div class="sm-label">Total</div>
-      <div class="sm-val" id="stat-total" style="color:var(--text)">—</div>
-      <div class="sm-sub">Unresolved</div>
-    </div>
+    <div class="stat-mini"><div class="sm-label">Critical</div><div class="sm-val" id="stat-crit" style="color:var(--pink)">&#x2014;</div><div class="sm-sub">Unresolved</div></div>
+    <div class="stat-mini"><div class="sm-label">High</div><div class="sm-val" id="stat-high" style="color:var(--amber)">&#x2014;</div><div class="sm-sub">Unresolved</div></div>
+    <div class="stat-mini"><div class="sm-label">Medium</div><div class="sm-val" id="stat-med" style="color:var(--purple)">&#x2014;</div><div class="sm-sub">Unresolved</div></div>
+    <div class="stat-mini"><div class="sm-label">Total</div><div class="sm-val" id="stat-total" style="color:var(--text)">&#x2014;</div><div class="sm-sub">Unresolved</div></div>
   </div>
 
   <div class="two-col">
-    <!-- LEFT: ISSUES LIST -->
     <div>
       <div class="panel">
         <div class="panel-header">
@@ -4295,38 +7428,35 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
           <span class="panel-badge pb-pink" id="issues-badge">Loading</span>
         </div>
         <div class="panel-scroll" id="issues-list">
-          <div class="empty"><div class="empty-icon">⏳</div>Fetching findings...</div>
+          <div class="empty"><div class="empty-icon">&#x23F3;</div>Fetching findings...</div>
         </div>
       </div>
     </div>
 
-    <!-- RIGHT: SCAN COVERAGE + MORNING REPORT -->
     <div>
       <div class="panel">
         <div class="panel-header">
           <span class="panel-title">Scan Coverage</span>
-          <span class="panel-badge pb-teal" id="scan-badge">—</span>
+          <span class="panel-badge pb-teal" id="scan-badge">&#x2014;</span>
         </div>
-        <div id="scan-list">
-          <div class="empty" style="padding:20px">Loading...</div>
-        </div>
+        <div id="scan-list"><div class="empty" style="padding:20px">Loading...</div></div>
       </div>
-
-      <div class="panel">
+      <div class="panel" id="report-panel">
         <div class="panel-header">
           <span class="panel-title">Last Morning Report</span>
-          <span class="panel-badge pb-purple" id="report-badge">—</span>
+          <span class="panel-badge pb-purple" id="report-badge">&#x2014;</span>
         </div>
-        <div id="report-body">
-          <div class="empty" style="padding:20px">No reports yet</div>
-        </div>
+        <div id="report-body"><div class="empty" style="padding:20px">No reports yet</div></div>
       </div>
     </div>
   </div>
-
 </div>
 
 <script>
+const TOKEN = '{{ secret_token }}';
+let currentNode = 'company';
+let nodeCache = {};
+
 function escHtml(s){
   return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
@@ -4338,128 +7468,150 @@ function ageSince(isoStr){
   if(secs<86400) return Math.floor(secs/3600)+'h ago';
   return Math.floor(secs/86400)+'d ago';
 }
-function fmtSize(bytes){
-  if(bytes==null) return '—';
-  if(bytes<1024) return bytes+'B';
-  if(bytes<1048576) return (bytes/1024).toFixed(0)+'K';
-  return (bytes/1048576).toFixed(1)+'M';
+
+function selectNode(node, el) {
+  currentNode = node;
+  document.querySelectorAll('.node-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('report-panel').style.display = node === 'company' ? '' : 'none';
+  if (nodeCache[node]) render(nodeCache[node]);
+  else loadNode(node);
 }
 
-async function load(){
-  try{
-    const r=await fetch('/api/auditor');
-    const d=await r.json();
-    render(d);
-  }catch(e){
-    document.getElementById('page-sub').textContent='Could not reach company server';
-    document.getElementById('issues-list').innerHTML=
-      '<div class="empty"><div class="empty-icon">⚠</div>'+escHtml(e.message)+'</div>';
+async function loadNode(node) {
+  if (node === currentNode)
+    document.getElementById('issues-list').innerHTML = '<div class="loading-bar">Fetching ' + escHtml(node) + ' findings…</div>';
+  try {
+    const url = node === 'company' ? '/api/auditor' : '/api/audit/' + encodeURIComponent(node);
+    const r = await fetch(url, {headers: {'X-Token': TOKEN}});
+    const d = await r.json();
+    nodeCache[node] = d;
+    if (node === currentNode) render(d);
+    const badge = document.getElementById('badge-' + CSS.escape(node));
+    if (badge) {
+      const total = d.total_unresolved != null ? d.total_unresolved : (d.issues ? d.issues.length : 0);
+      badge.textContent = total || '✓';
+      badge.className = 'tab-badge' + (total ? '' : ' clean');
+    }
+  } catch(e) {
+    if (node === currentNode) {
+      document.getElementById('page-sub').textContent = 'Could not reach ' + node;
+      document.getElementById('issues-list').innerHTML =
+        '<div class="empty"><div class="empty-icon">⚠</div>' + escHtml(e.message) + '</div>';
+    }
   }
 }
 
 function render(d){
-  const sev=d.by_severity||{};
-  const issues=d.issues||[];
-  const total=d.total_unresolved||0;
+  const sev    = d.by_severity || {};
+  const issues = d.issues || [];
+  const total  = d.total_unresolved != null ? d.total_unresolved : issues.length;
 
-  // Subtitle
-  if(d.error && !issues.length){
-    document.getElementById('page-sub').textContent='Error: '+d.error;
-  } else {
-    document.getElementById('page-sub').textContent=
-      total+' unresolved issue'+(total!==1?'s':'')+
-      (d.scan_state&&d.scan_state.length ? ' · '+d.scan_state.length+' log files monitored' : '')+
-      ' · refreshes every 60s';
-  }
+  document.getElementById('page-sub').textContent =
+    (d.error && !issues.length) ? 'Error: ' + d.error :
+    total + ' unresolved issue' + (total!==1?'s':'') +
+    (d.scan_state && d.scan_state.length ? ' · ' + d.scan_state.length + ' log files monitored' : '') +
+    ' · refreshes every 60s';
 
-  // Stats
-  document.getElementById('stat-crit').textContent  = sev.critical||0;
-  document.getElementById('stat-high').textContent  = sev.high||0;
-  document.getElementById('stat-med').textContent   = sev.medium||0;
+  document.getElementById('stat-crit').textContent  = sev.critical || 0;
+  document.getElementById('stat-high').textContent  = sev.high     || 0;
+  document.getElementById('stat-med').textContent   = sev.medium   || 0;
   document.getElementById('stat-total').textContent = total;
 
-  // Issues panel
-  const issuesEl=document.getElementById('issues-list');
-  const badge=document.getElementById('issues-badge');
-
-  if(d.error && !issues.length){
-    issuesEl.innerHTML='<div class="error-bar">'+escHtml(d.error)+'</div>'
-      +'<div class="empty">Check that the company server is reachable and the auditor has run.</div>';
-    badge.textContent='Error';
-    badge.className='panel-badge pb-pink';
-  } else if(!issues.length){
-    issuesEl.innerHTML='<div class="empty"><div class="empty-icon">✓</div>No unresolved issues — system healthy</div>';
-    badge.textContent='All clear';
-    badge.className='panel-badge pb-teal';
+  const issuesEl = document.getElementById('issues-list');
+  const badge    = document.getElementById('issues-badge');
+  if (d.error && !issues.length) {
+    issuesEl.innerHTML = '<div class="error-bar">'+escHtml(d.error)+'</div>'
+      + '<div class="empty">Check that the node is reachable and has run at least one scan.</div>';
+    badge.textContent = 'Error'; badge.className = 'panel-badge pb-pink';
+  } else if (!issues.length) {
+    issuesEl.innerHTML = '<div class="empty"><div class="empty-icon">✓</div>No unresolved issues — node healthy</div>';
+    badge.textContent = 'All clear'; badge.className = 'panel-badge pb-teal';
   } else {
-    badge.textContent=total+' issue'+(total!==1?'s':'');
-    badge.className='panel-badge '+(sev.critical?'pb-pink':sev.high?'pb-amber':'pb-purple');
-    issuesEl.innerHTML=issues.map(iss=>{
-      const sevClass='sev-'+(iss.severity||'low');
-      const hits=iss.hit_count>1?' <span style="color:var(--dim)">×'+iss.hit_count+'</span>':'';
-      const firstSeen=iss.first_seen?ageSince(iss.first_seen):'?';
-      const lastSeen=iss.last_seen?ageSince(iss.last_seen):'?';
+    badge.textContent = total + ' issue' + (total!==1?'s':'');
+    badge.className = 'panel-badge ' + (sev.critical?'pb-pink':sev.high?'pb-amber':'pb-purple');
+    issuesEl.innerHTML = issues.map(iss => {
+      const sc = 'sev-' + (iss.severity||'low');
+      const hits = iss.hit_count > 1 ? ' <span style="color:var(--dim)">×'+iss.hit_count+'</span>' : '';
       return '<div class="issue-row">'
-        +'<div class="sev-badge '+sevClass+'">'+escHtml(iss.severity)+'</div>'
-        +'<div class="issue-body">'
-          +'<div class="issue-file">'+escHtml(iss.source_file)+hits+'</div>'
-          +'<div class="issue-ctx">'+escHtml(iss.context||'')+'</div>'
-          +'<div class="issue-meta">first: '+firstSeen+' · last: '+lastSeen+'</div>'
-        +'</div>'
-      +'</div>';
+        + '<div class="sev-badge '+sc+'">'+escHtml(iss.severity)+'</div>'
+        + '<div class="issue-body">'
+          + '<div class="issue-file">'+escHtml(iss.source_file)+hits+'</div>'
+          + '<div class="issue-ctx">'+escHtml(iss.context||'')+'</div>'
+          + '<div class="issue-meta">first: '+ageSince(iss.first_seen)+' · last: '+ageSince(iss.last_seen)+'</div>'
+        + '</div></div>';
     }).join('');
   }
 
-  // Scan coverage
-  const scanEl=document.getElementById('scan-list');
-  const scanBadge=document.getElementById('scan-badge');
-  const scanState=d.scan_state||[];
-  scanBadge.textContent=scanState.length+' files';
-  if(!scanState.length){
-    scanEl.innerHTML='<div class="empty" style="padding:16px">No log files tracked yet</div>';
-  } else {
-    scanEl.innerHTML=scanState.map(s=>{
-      const fname=s.log_file?s.log_file.split('/').pop():s.log_file;
-      const pct=s.file_size>0?Math.round(s.last_offset/s.file_size*100):100;
-      return '<div class="scan-row">'
-        +'<span class="scan-file">'+escHtml(fname)+'</span>'
-        +'<span class="scan-age" style="color:'+(pct<100?'var(--amber)':'var(--teal)')+'">'+pct+'%</span>'
-        +'<span class="scan-age">'+ageSince(s.last_scanned)+'</span>'
-      +'</div>';
-    }).join('');
-  }
+  const scanEl    = document.getElementById('scan-list');
+  const scanBadge = document.getElementById('scan-badge');
+  const scanState = d.scan_state || [];
+  scanBadge.textContent = scanState.length + ' files';
+  scanEl.innerHTML = !scanState.length
+    ? '<div class="empty" style="padding:16px">No log files tracked yet</div>'
+    : scanState.map(s => {
+        const fname = s.log_file ? s.log_file.split('/').pop() : '?';
+        const pct = s.file_size > 0 ? Math.round(s.last_offset / s.file_size * 100) : 100;
+        return '<div class="scan-row">'
+          + '<span class="scan-file">'+escHtml(fname)+'</span>'
+          + '<span class="scan-age" style="color:'+(pct<100?'var(--amber)':'var(--teal)')+'">'+pct+'%</span>'
+          + '<span class="scan-age">'+ageSince(s.last_scanned)+'</span>'
+        + '</div>';
+      }).join('');
 
-  // Morning report
-  const rpt=d.morning_report;
-  const reportBadge=document.getElementById('report-badge');
-  const reportBody=document.getElementById('report-body');
-  if(!rpt){
-    reportBadge.textContent='None yet';
-    reportBody.innerHTML='<div class="empty" style="padding:16px">Daily report generated at 6 AM ET</div>';
-  } else {
-    const status=rpt.status||'unknown';
-    reportBadge.textContent=rpt.date||'?';
-    reportBadge.className='panel-badge '+(status==='healthy'?'pb-teal':'pb-pink');
-    const last24=rpt.last_24h||{};
-    reportBody.innerHTML='<div class="report-grid">'
-      +'<div class="rg-cell"><div class="rg-val" style="color:var(--pink)">'+(last24.critical&&last24.critical.unique!=null?last24.critical.unique:(last24.critical||0))+'</div><div class="rg-lab">Critical</div></div>'
-      +'<div class="rg-cell"><div class="rg-val" style="color:var(--amber)">'+(last24.high&&last24.high.unique!=null?last24.high.unique:(last24.high||0))+'</div><div class="rg-lab">High</div></div>'
-      +'<div class="rg-cell"><div class="rg-val" style="color:var(--purple)">'+(last24.medium&&last24.medium.unique!=null?last24.medium.unique:(last24.medium||0))+'</div><div class="rg-lab">Medium</div></div>'
-      +'<div class="rg-cell"><div class="rg-val" style="color:var(--text)">'+(rpt.total_unresolved||0)+'</div><div class="rg-lab">Unresolved</div></div>'
-    +'</div>';
+  const rpt = d.morning_report;
+  const rb = document.getElementById('report-badge');
+  const rbody = document.getElementById('report-body');
+  if (rb && rbody) {
+    if (!rpt) {
+      rb.textContent = 'None yet';
+      rbody.innerHTML = '<div class="empty" style="padding:16px">Daily report generated at 6 AM ET</div>';
+    } else {
+      const last24 = rpt.last_24h || {};
+      rb.textContent = rpt.date || '?';
+      rb.className = 'panel-badge ' + (rpt.status==='healthy' ? 'pb-teal' : 'pb-pink');
+      rbody.innerHTML = '<div class="report-grid">'
+        + '<div class="rg-cell"><div class="rg-val" style="color:var(--pink)">'+(last24.critical&&last24.critical.unique!=null?last24.critical.unique:(last24.critical||0))+'</div><div class="rg-lab">Critical</div></div>'
+        + '<div class="rg-cell"><div class="rg-val" style="color:var(--amber)">'+(last24.high&&last24.high.unique!=null?last24.high.unique:(last24.high||0))+'</div><div class="rg-lab">High</div></div>'
+        + '<div class="rg-cell"><div class="rg-val" style="color:var(--purple)">'+(last24.medium&&last24.medium.unique!=null?last24.medium.unique:(last24.medium||0))+'</div><div class="rg-lab">Medium</div></div>'
+        + '<div class="rg-cell"><div class="rg-val" style="color:var(--text)">'+(rpt.total_unresolved||0)+'</div><div class="rg-lab">Unresolved</div></div>'
+      + '</div>';
+    }
   }
 }
 
-load();
-setInterval(load, 60000);
+async function buildNodeTabs() {
+  try {
+    const r = await fetch('/api/status', {headers:{}});
+    const pis = await r.json();
+    const tabsEl = document.getElementById('node-tabs');
+    const skip = new Set(['pi4b-company','pi2w-monitor','pi2w-sentinel']);
+    Object.entries(pis).forEach(([pi_id, pi]) => {
+      if (skip.has(pi_id)) return;
+      const label = pi.label || pi_id;
+      const tab = document.createElement('button');
+      tab.className = 'node-tab';
+      tab.dataset.node = pi_id;
+      tab.innerHTML = escHtml(label) + ' <span class="tab-badge" id="badge-' + CSS.escape(pi_id) + '">—</span>';
+      tab.onclick = function(){ selectNode(pi_id, this); };
+      tabsEl.appendChild(tab);
+      loadNode(pi_id);
+    });
+  } catch(e) { console.warn('Could not build node tabs', e); }
+}
+
+buildNodeTabs();
+loadNode('company');
+setInterval(() => loadNode(currentNode), 15000);
 </script>
 </body>
-</html>"""
+</html>
+"""
 
 
 @app.route("/audit")
 def audit_page():
-    return AUDIT_PAGE_HTML
+    return AUDIT_PAGE_HTML.replace("{{ subpage_hdr|safe }}", _subpage_header("Auditor"))
 
 
 # ── Boot ──────────────────────────────────────────────────────────────────────
@@ -4494,7 +7646,7 @@ if __name__ == "__main__":
         self_pi_id    = os.getenv("PI_ID",    "pi2w-monitor")
         self_pi_label = os.getenv("PI_LABEL", "Monitor Node")
         self_url      = f"http://127.0.0.1:{PORT}/heartbeat"
-        interval      = int(os.getenv("SELF_HB_INTERVAL", "300"))  # default 5 min
+        interval      = int(os.getenv("SELF_HB_INTERVAL", "60"))  # default 5 min
 
         time.sleep(10)  # let Flask finish starting
         while True:

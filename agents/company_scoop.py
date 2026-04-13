@@ -82,7 +82,15 @@ RETRY_INTERVAL_SEC  = 300
 MAX_RETRIES         = 5
 MORNING_REPORT_HOUR = 8
 
-SYNTHOS_VERSION = "2.0"
+SYNTHOS_VERSION = "2.1"
+
+# -- PORTAL NOTIFICATION CONFIG -----------------------------------------------
+# In-app notifications via retail portal API. Agents include customer_id and
+# optional notify_channels hint in payload to control delivery.
+PORTAL_URL    = (os.environ.get("PORTAL_URL") or os.environ.get("RETAIL_PORTAL_URL", "")).rstrip("/")
+PORTAL_TOKEN  = os.environ.get("PORTAL_TOKEN", "")
+PREFER_PORTAL = os.environ.get("PREFER_PORTAL_NOTIFICATIONS", "false").lower() in ("1", "true", "yes")
+BATCH_SIZE    = int(os.environ.get("SCOOP_BATCH_SIZE", "50"))
 
 # -- LOGGING ------------------------------------------------------------------
 
@@ -135,15 +143,34 @@ def get_customer_email(pi_id: str):
 
 
 def db_get_next_event():
-    """Fetch single highest-priority PENDING or RETRY event."""
+    """Fetch single highest-priority PENDING or RETRY event.
+    RETRY items are only eligible after exponential backoff:
+    delay = RETRY_INTERVAL_SEC * 2^(retry_count-1)
+    """
     try:
         with get_db() as conn:
-            row = conn.execute("""
+            rows = conn.execute("""
                 SELECT * FROM scoop_queue
                 WHERE status IN ('PENDING', 'RETRY')
                 ORDER BY priority ASC, created_at ASC
-                LIMIT 1
-            """).fetchone()
+                LIMIT ?
+            """, (BATCH_SIZE,)).fetchall()
+            now_ts = now_utc().timestamp()
+            row = None
+            for r in rows:
+                if r["status"] == "RETRY" and r["last_attempt"]:
+                    try:
+                        last = datetime.fromisoformat(
+                            r["last_attempt"].replace("Z", "+00:00")
+                        ).timestamp()
+                    except Exception:
+                        last = 0
+                    retries = r["retry_count"] or 1
+                    backoff = RETRY_INTERVAL_SEC * (2 ** (retries - 1))
+                    if now_ts - last < backoff:
+                        continue  # not yet eligible
+                row = r
+                break
             return dict(row) if row else None
     except Exception as e:
         log.error(f"db_get_next_event error: {e}")
@@ -240,12 +267,17 @@ def send_via_resend(to_email: str, subject: str, body_text: str,
         payload_dict["html"] = body_html
     payload = json.dumps(payload_dict).encode()
 
+    # Idempotency key prevents duplicate emails on crash/restart.
+    # Includes retry_count so legitimate retries get a fresh key.
+    idem_key = f"scoop-{subject[:30]}-{to_email}-{int(time.time() // 60)}"
+
     req = urllib.request.Request(
         "https://api.resend.com/emails",
         data=payload,
         headers={
-            "Authorization": f"Bearer {RESEND_API_KEY}",
-            "Content-Type":  "application/json",
+            "Authorization":   f"Bearer {RESEND_API_KEY}",
+            "Content-Type":    "application/json",
+            "Idempotency-Key": idem_key,
         }
     )
     try:
@@ -294,19 +326,133 @@ def send_email(to_email: str, subject: str, body_text: str,
 # -- RECIPIENT RESOLUTION -----------------------------------------------------
 
 def resolve_recipient(event: dict):
+    eid = event.get("id", "?")[:8]
     audience = event.get("audience", "internal")
     if audience == "customer":
         pi_id = event.get("pi_id")
         if pi_id:
             email = get_customer_email(pi_id)
             if email:
+                log.debug(f"Recipient: {email} (customer lookup)  id={eid}")
                 return email
         log.warning(
             f"audience=customer but no email for pi_id={event.get('pi_id')} "
             f"-- falling back to project lead"
         )
+    if PROJECT_LEAD_EMAIL:
+        log.debug(f"Recipient: {PROJECT_LEAD_EMAIL} (project lead fallback)  id={eid}")
     return PROJECT_LEAD_EMAIL or None
 
+
+
+
+# -- PORTAL NOTIFICATION DISPATCH ---------------------------------------------
+
+_EVENT_CATEGORY_MAP = {
+    "trade_executed": "trade", "trade_signal": "trade", "order_filled": "trade",
+    "TRADE_NOTIFICATION": "trade",
+    "kill_switch": "alert", "portfolio_alert": "alert", "watchdog_alert": "alert",
+    "PROTECTIVE_EXIT_TRIGGERED": "alert", "CASCADE_DETECTED": "alert",
+    "HEARTBEAT_SILENCE_ALERT": "alert",
+    "daily_digest": "daily", "weekly_report": "daily", "performance": "daily",
+    "DAILY_REPORT": "daily", "MORNING_DIGEST": "daily",
+    "account_approved": "account", "account_issue": "account",
+    "APPROVAL_REQUEST": "account",
+    "maintenance": "system", "system_alert": "system",
+}
+
+def _event_to_category(event_type: str) -> str:
+    return _EVENT_CATEGORY_MAP.get(event_type, "system")
+
+def _portal_headers() -> dict:
+    headers = {"Content-Type": "application/json"}
+    if PORTAL_TOKEN:
+        headers["X-Service-Token"] = PORTAL_TOKEN
+    return headers
+
+def dispatch_portal_notification(event: dict) -> bool:
+    """Send in-app notification to a specific customer via portal API."""
+    if not PORTAL_URL:
+        return False
+
+    try:
+        payload = json.loads(event.get("payload") or "{}")
+    except Exception:
+        payload = {}
+    customer_id = payload.get("customer_id", "")
+    if not customer_id:
+        log.debug(f"No customer_id in payload -- skipping portal notification")
+        return False
+
+    subject  = event.get("subject") or event.get("event_type", "Notification")
+    body     = event.get("body") or ""
+    category = _event_to_category(event.get("event_type", ""))
+
+    notif_data = {
+        "customer_id": customer_id,
+        "category":    category,
+        "title":       subject,
+        "body":        body,
+        "meta": {
+            "source_agent": event.get("source_agent", ""),
+            "priority":     event.get("priority"),
+            "event_type":   event.get("event_type", ""),
+            "scoop_id":     event.get("id", ""),
+        },
+    }
+
+    import requests as _req
+    try:
+        r = _req.post(
+            f"{PORTAL_URL}/api/notifications/send",
+            headers=_portal_headers(), json=notif_data, timeout=10,
+        )
+        if r.status_code in (200, 201):
+            log.info(f"[PORTAL] Notification sent: {subject[:50]} -> customer {customer_id[:8]}")
+            return True
+        log.warning(f"[PORTAL] HTTP {r.status_code}: {r.text[:100]}")
+        return False
+    except Exception as e:
+        log.warning(f"[PORTAL] Error: {e}")
+        return False
+
+
+def dispatch_broadcast(event: dict) -> bool:
+    """Send system-wide notification to ALL active customers via portal broadcast."""
+    if not PORTAL_URL:
+        log.warning("[PORTAL] PORTAL_URL not configured -- cannot broadcast")
+        return False
+
+    subject  = event.get("subject") or event.get("event_type", "System Alert")
+    body     = event.get("body") or ""
+    category = _event_to_category(event.get("event_type", ""))
+
+    broadcast_data = {
+        "category": category,
+        "title":    subject,
+        "body":     body,
+        "meta": {
+            "source_agent": event.get("source_agent", ""),
+            "priority":     event.get("priority"),
+            "event_type":   event.get("event_type", ""),
+        },
+    }
+
+    import requests as _req
+    try:
+        r = _req.post(
+            f"{PORTAL_URL}/api/notifications/broadcast",
+            headers=_portal_headers(), json=broadcast_data, timeout=15,
+        )
+        if r.status_code in (200, 201):
+            sent = r.json().get("sent", "?")
+            log.info(f"[PORTAL] Broadcast to {sent} customers: {subject[:50]}")
+            return True
+        log.warning(f"[PORTAL] Broadcast HTTP {r.status_code}: {r.text[:100]}")
+        return False
+    except Exception as e:
+        log.warning(f"[PORTAL] Broadcast error: {e}")
+        return False
 
 # -- DISPATCH -----------------------------------------------------------------
 
@@ -338,20 +484,50 @@ def dispatch_event(event: dict) -> bool:
             payload = {}
         subject, body = _format_legacy_event(event_type, payload)
 
+    # -- Determine channels --------------------------------------------------
+    try:
+        payload_data = json.loads(event.get("payload") or "{}")
+    except Exception:
+        payload_data = {}
+
+    is_broadcast = payload_data.get("broadcast", False)
+    channels = payload_data.get("notify_channels")
+    if channels is None:
+        if PREFER_PORTAL and PORTAL_URL and payload_data.get("customer_id"):
+            channels = ["in_app", "email"]
+        else:
+            channels = ["email"]
+
     log.info(
         f"Dispatching P{priority} {event_type} -> {recipient} "
-        f"(retry={event.get('retry_count', 0)})"
+        f"(retry={event.get('retry_count', 0)}, channels={channels})"
     )
-    success = send_email(recipient, subject, body)
+
+    # -- Broadcast path -------------------------------------------------------
+    if is_broadcast:
+        portal_ok = dispatch_broadcast(event)
+        email_ok  = send_email(recipient, subject, body) if recipient else False
+        success   = portal_ok or email_ok
+    else:
+        success = False
+        if "in_app" in channels:
+            if dispatch_portal_notification(event):
+                success = True
+        if "email" in channels and recipient:
+            if send_email(recipient, subject, body):
+                success = True
 
     if success:
         db_mark_sent(event_id)
     else:
         retry_count = (event.get("retry_count") or 0) + 1
-        if retry_count >= MAX_RETRIES:
-            db_mark_failed(event_id, f"max_retries_exceeded ({MAX_RETRIES})")
+        # Permanent errors (no recipient, config missing) skip retries
+        is_permanent = (recipient is None) or (not RESEND_API_KEY and "email" in channels)
+        if is_permanent or retry_count >= MAX_RETRIES:
+            reason = "permanent error" if is_permanent else f"max retries ({MAX_RETRIES})"
+            db_mark_failed(event_id, reason)
             log.error(
-                f"Permanently failed after {MAX_RETRIES} attempts: "
+                f"FAILED ({reason}): "
                 f"{event_type} -> {recipient}"
             )
         else:
@@ -510,13 +686,39 @@ def _format_morning_report(report: dict):
 def run_loop() -> None:
     log.info(f"Scoop v{SYNTHOS_VERSION} started -- polling DB every {POLL_INTERVAL_SEC}s")
 
+    # -- Startup validation ---------------------------------------------------
+    fatal = False
+    if not RESEND_API_KEY:
+        log.warning("RESEND_API_KEY not set -- email dispatch will fail")
     if not PROJECT_LEAD_EMAIL:
         log.warning("PROJECT_LEAD_EMAIL not set -- internal alerts will not be delivered")
-    if not RESEND_API_KEY:
-        log.warning("RESEND_API_KEY not set -- no emails will be sent")
+    if PREFER_PORTAL and not PORTAL_URL:
+        log.error("PORTAL_URL required when PREFER_PORTAL_NOTIFICATIONS=true")
+        fatal = True
+    if fatal:
+        log.error("Refusing to start -- fix configuration errors above")
+        sys.exit(1)
+
+    if PORTAL_URL:
+        mode = "PRIMARY" if PREFER_PORTAL else "SECONDARY"
+        log.info(f"Portal: {PORTAL_URL}  mode={mode}")
+        if not PORTAL_TOKEN:
+            log.warning("PORTAL_TOKEN not set -- portal auth may fail")
+    else:
+        log.info("Email-only mode (no PORTAL_URL configured)")
 
     # One-time legacy drain
     drain_legacy_trigger_file()
+
+    # Ensure composite index for efficient polling
+    try:
+        with get_db() as conn:
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_scoop_dispatch "
+                "ON scoop_queue(status, priority, created_at)"
+            )
+    except Exception:
+        pass
 
     while True:
         try:

@@ -268,19 +268,19 @@ class DB:
              priority: int = 5, duration_sec: int = 300,
              access_type: str = "WRITE"):
         """
-        Request a Timekeeper work slot before doing DB writes.
-        Releases automatically on exit (including on exception).
-
-        Usage:
-            with db.slot("Patches", "light_scan", priority=5):
-                db.post_suggestion(...)
+        Acquire company.db write lock before doing DB writes.
+        Uses fcntl file lock (replaced Timekeeper slot system).
+        Context manager — lock released automatically on exit.
         """
-        request_id = self._request_slot(agent_name, task_type, priority,
-                                        duration_sec, access_type)
+        from utils.company_lock import CompanyWriteLock
+        lock = CompanyWriteLock(agent_name, timeout=duration_sec)
+        acquired = lock.acquire()
+        if not acquired:
+            log.warning(f"[{agent_name}] Could not acquire write lock — proceeding anyway")
         try:
             yield
         finally:
-            self._release_slot(request_id)
+            lock.release()
 
     def _request_slot(self, agent_name: str, task_type: str,
                       priority: int, duration_sec: int,

@@ -4005,7 +4005,12 @@ _GITHUB_TOKEN       = os.getenv("GITHUB_TOKEN", "")
 _GITHUB_OWNER       = os.getenv("GITHUB_REPO_OWNER", "personalprometheus-blip")
 _GITHUB_STATUS_REPO = os.getenv("GITHUB_STATUS_REPO", "synthos")
 _GITHUB_STATUS_PATH = os.getenv("GITHUB_STATUS_PATH", "synthos_build/data/project_status.json")
-_STATUS_CACHE_TTL   = int(os.getenv("PROJECT_STATUS_TTL", "300"))   # seconds (default 5 min)
+_STATUS_CACHE_TTL   = int(os.getenv("PROJECT_STATUS_TTL", "300"))
+
+# System Architecture (same GitHub pull pattern)
+_ARCH_JSON          = os.path.join(os.path.dirname(_HERE), "data", "system_architecture.json")
+_GITHUB_ARCH_PATH   = os.getenv("GITHUB_ARCH_PATH", "synthos_build/data/system_architecture.json")
+_arch_cache: dict   = {"data": None, "fetched_at": None, "source": "none"}   # seconds (default 5 min)
 
 _status_cache: dict = {"data": None, "fetched_at": None, "source": "none"}
 
@@ -4686,6 +4691,80 @@ def system_architecture_page():
                 "<p style='color:rgba(255,255,255,0.5)'>Pass <code>?token=SECRET_TOKEN</code> to access.</p>"
                 "</body></html>"), 401
     return render_template_string(_SYSARCH_HTML, subpage_hdr=_subpage_header('System Architecture'))
+
+
+
+def _fetch_arch_from_github():
+    """Fetch system_architecture.json from GitHub API."""
+    import urllib.request as _urllib_req
+    import base64 as _b64
+    import time as _time
+
+    if not _GITHUB_TOKEN:
+        return None
+    url = (f"https://api.github.com/repos/{_GITHUB_OWNER}"
+           f"/{_GITHUB_STATUS_REPO}/contents/{_GITHUB_ARCH_PATH}")
+    req = _urllib_req.Request(url, headers={
+        "Authorization": f"token {_GITHUB_TOKEN}",
+        "Accept": "application/vnd.github.v3+json",
+        "User-Agent": "synthos-company-server/1.0",
+    })
+    try:
+        with _urllib_req.urlopen(req, timeout=8) as resp:
+            payload = json.loads(resp.read())
+        content = _b64.b64decode(payload["content"]).decode("utf-8")
+        data = json.loads(content)
+        _arch_cache["data"] = data
+        _arch_cache["fetched_at"] = _time.time()
+        _arch_cache["source"] = "github"
+        return data
+    except Exception as e:
+        print(f"[Company] architecture.json GitHub fetch failed: {e}")
+        return None
+
+
+def _get_arch_data():
+    """Return architecture data from cache, GitHub, or local file."""
+    import time as _time
+    if _arch_cache["data"] and _arch_cache["fetched_at"]:
+        if (_time.time() - _arch_cache["fetched_at"]) < _STATUS_CACHE_TTL:
+            return _arch_cache
+    data = _fetch_arch_from_github()
+    if data:
+        return _arch_cache
+    # Fallback to local file
+    try:
+        if os.path.exists(_ARCH_JSON):
+            with open(_ARCH_JSON, "r") as f:
+                data = json.load(f)
+            _arch_cache["data"] = data
+            _arch_cache["fetched_at"] = _time.time()
+            _arch_cache["source"] = "local"
+            return _arch_cache
+    except Exception:
+        pass
+    return {"data": None, "fetched_at": None, "source": "none"}
+
+
+@app.route("/api/system-architecture")
+def api_system_architecture():
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    cache = _get_arch_data()
+    if cache["data"]:
+        return jsonify({**cache["data"], "_meta": {"source": cache["source"], "fetched_at": cache["fetched_at"]}})
+    return jsonify({"error": "No architecture data available"}), 404
+
+
+@app.route("/api/system-architecture/refresh", methods=["POST"])
+def api_system_architecture_refresh():
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    _arch_cache["fetched_at"] = None
+    data = _fetch_arch_from_github()
+    if data:
+        return jsonify({"ok": True, "source": "github"})
+    return jsonify({"ok": False, "error": "GitHub fetch failed"}), 502
 
 
 @app.route("/project-status")

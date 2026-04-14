@@ -1413,6 +1413,7 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
   <div class="mon-tabs">
     <button class="mon-tab active" id="mon-tab-notif" onclick="switchMonTab('notif')">Notifications</button>
     <button class="mon-tab" id="mon-tab-cmd" onclick="switchMonTab('cmd')">Commands</button>
+    <button class="mon-tab" id="mon-tab-wave" onclick="switchMonTab('wave')">Wave</button>
   </div>
   <div class="mon-tab-body" id="mon-tab-content"></div>
 </div>
@@ -3032,7 +3033,7 @@ function updateMktSummary() {
 var _monPanelOpen=false, _monTab='notif';
 function toggleMonPanel(){_monPanelOpen=!_monPanelOpen;document.getElementById('mon-panel').classList.toggle('open',_monPanelOpen);document.getElementById('mon-overlay').classList.toggle('open',_monPanelOpen);if(_monPanelOpen)switchMonTab(_monTab);}
 function closeMonPanel(){_monPanelOpen=false;document.getElementById('mon-panel').classList.remove('open');document.getElementById('mon-overlay').classList.remove('open');}
-function switchMonTab(tab){_monTab=tab;document.querySelectorAll('.mon-tab').forEach(function(t){t.classList.remove('active');});document.getElementById('mon-tab-'+tab).classList.add('active');if(tab==='notif')loadMonNotifications();else loadMonCommands();}
+function switchMonTab(tab){_monTab=tab;document.querySelectorAll('.mon-tab').forEach(function(t){t.classList.remove('active');});document.getElementById('mon-tab-'+tab).classList.add('active');if(tab==='notif')loadMonNotifications();else if(tab==='cmd')loadMonCommands();else if(tab==='wave')loadWaveControls();}
 async function loadMonNotifications(){var el=document.getElementById('mon-tab-content');el.innerHTML='<div class="mon-empty">Loading...</div>';var html='';try{var r1=await fetch('/api/proxy/pending-signups?status=PENDING',{headers:{'X-Token':SECRET_TOKEN}});if(r1.ok){var d1=await r1.json();var sg=d1.pending||d1.signups||[];if(Array.isArray(sg)&&sg.length){sg.slice(0,3).forEach(function(s){html+='<a href="/approvals" style="text-decoration:none"><div class="mon-notif"><div class="mon-notif-dot" style="background:var(--amber)"></div><div class="mon-notif-body"><div class="mon-notif-title">'+(s.name||'New Signup')+'</div><div class="mon-notif-sub">Pending approval</div></div></div></a>'});}}}catch(e){}try{var r2=await fetch('/api/proxy/support/all-tickets',{headers:{'X-Token':SECRET_TOKEN}});if(r2.ok){var d2=await r2.json();var tks=(d2.tickets||[]).filter(function(t){return t.status==='open';});if(tks.length){tks.slice(0,5).forEach(function(t){var dc=t.category==='direct_message'?'var(--teal)':'var(--pink)';html+='<a href="/support-queue" style="text-decoration:none"><div class="mon-notif"><div class="mon-notif-dot" style="background:'+dc+'"></div><div class="mon-notif-body"><div class="mon-notif-title">'+(t.customer_name||'Customer')+'</div><div class="mon-notif-sub">'+(t.subject||'Support ticket')+'</div></div></div></a>'});}}}catch(e){}el.innerHTML=html||'<div class="mon-empty">No notifications</div>';}
 function loadMonCommands(){var el=document.getElementById('mon-tab-content');function cb(a,l,s,f){return '<button data-action="'+a+'" onclick="runMonCmd(this)" style="padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--surface2);cursor:pointer;text-align:left;font-family:var(--sans);'+(f?'grid-column:1/-1;':'')+'" onmouseover="this.style.borderColor=&#39;rgba(255,255,255,0.15)&#39;" onmouseout="this.style.borderColor=&#39;var(--border)&#39;">'+'<div style="font-size:11px;font-weight:600;color:var(--text)">'+l+'</div><div style="font-size:9px;color:var(--muted)">'+s+'</div></button>';}el.innerHTML='<div style="margin-bottom:14px"><div style="font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Agents</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+cb('news_overnight','News','Overnight')+cb('news_market','News','Market')+cb('sentiment','Sentiment','The Pulse')+cb('screener','Screener','Sectors')+cb('trade','Trade Logic','All customers',true)+'</div></div><div><div style="font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Sessions</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+cb('prep_session','Prep','Full prep')+cb('open_session','Open','Market open')+cb('midday_session','Midday','Mid check')+cb('close_session','Close','End of day')+'</div></div>';}
 async function runMonCmd(btn){var action=btn.dataset.action;var orig=btn.querySelector('div').textContent;btn.querySelector('div').textContent='Starting...';btn.style.borderColor='rgba(123,97,255,0.3)';try{var r=await fetch('/api/command/run-agent',{method:'POST',headers:{'X-Token':SECRET_TOKEN,'Content-Type':'application/json'},body:JSON.stringify({action:action})});var d=await r.json();if(d.ok){toast(d.message,'ok');}else{toast(d.error||'Failed','err');}}catch(e){toast('Error','err');}setTimeout(function(){btn.querySelector('div').textContent=orig;btn.style.borderColor='var(--border)';},10000);}
@@ -3042,6 +3043,32 @@ setTimeout(_updateBellBadge,2000);
 
 // ── INIT ──
 /* DBG */ try { document.getElementById('dbg-keys').textContent = 'INIT REACHED'; } catch(e){}
+
+function loadWaveControls(){
+  var el=document.getElementById('mon-tab-content');
+  el.innerHTML='<div style="margin-bottom:16px">'
+    +'<div style="font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:12px">Wave Override</div>'
+    +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">'
+    +'<label style="font-size:11px;color:var(--text);display:flex;align-items:center;gap:6px;cursor:pointer">'
+    +'<input type="checkbox" id="wave-override" onchange="toggleWaveOverride()"'+(window._waveOverride?' checked':'')+'>Override animation</label></div>'
+    +'<div style="font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Agent Color</div>'
+    +'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:16px">'
+    +'<button onclick="setWaveAgent(&#39;teal&#39;)" style="padding:8px;border-radius:8px;border:1px solid rgba(0,245,212,0.3);background:rgba(0,245,212,0.1);color:#00f5d4;font-size:10px;font-weight:700;cursor:pointer">Trade</button>'
+    +'<button onclick="setWaveAgent(&#39;purple&#39;)" style="padding:8px;border-radius:8px;border:1px solid rgba(123,97,255,0.3);background:rgba(123,97,255,0.1);color:#7b61ff;font-size:10px;font-weight:700;cursor:pointer">News</button>'
+    +'<button onclick="setWaveAgent(&#39;amber&#39;)" style="padding:8px;border-radius:8px;border:1px solid rgba(255,179,71,0.3);background:rgba(255,179,71,0.1);color:#ffb347;font-size:10px;font-weight:700;cursor:pointer">Sentiment</button>'
+    +'<button onclick="setWaveAgent(&#39;pink&#39;)" style="padding:8px;border-radius:8px;border:1px solid rgba(255,75,110,0.3);background:rgba(255,75,110,0.1);color:#ff4b6e;font-size:10px;font-weight:700;cursor:pointer">Screener</button>'
+    +'</div>'
+    +'<div style="font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Amplitude</div>'
+    +'<input type="range" id="wave-amp" min="5" max="40" value="'+(window._waveAmpOverride||30)+'" oninput="setWaveAmp(this.value)" style="width:100%;accent-color:var(--teal)">'
+    +'<div style="display:flex;justify-content:space-between;font-size:9px;color:var(--dim);margin-top:2px"><span>Idle</span><span id="wave-amp-val">'+(window._waveAmpOverride||30)+'</span><span>Max</span></div>'
+    +'</div>';
+}
+window._waveOverride=false;window._waveColorOverride=null;window._waveAmpOverride=null;
+function toggleWaveOverride(){window._waveOverride=document.getElementById('wave-override').checked;if(!window._waveOverride){window._waveColorOverride=null;window._waveAmpOverride=null;}pushWaveOverride();}
+function setWaveAgent(color){window._waveColorOverride=color;window._waveOverride=true;var cb=document.getElementById('wave-override');if(cb)cb.checked=true;pushWaveOverride();toast('Wave: '+color,'ok');}
+function setWaveAmp(val){window._waveAmpOverride=parseInt(val);document.getElementById('wave-amp-val').textContent=val;pushWaveOverride();}
+function pushWaveOverride(){fetch('/api/command/wave-override',{method:'POST',headers:{'X-Token':SECRET_TOKEN,'Content-Type':'application/json'},body:JSON.stringify({override:window._waveOverride,color:window._waveColorOverride,amplitude:window._waveAmpOverride})}).catch(function(){});}
+
 fetchStatus();
 fetchTodos();
 fetchMktActivity();

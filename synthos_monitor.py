@@ -743,7 +743,8 @@ _COMMAND_WHITELIST = {
 @app.route("/api/command/run-agent", methods=["POST"])
 def cmd_run_agent():
     """Fire-and-forget: launch a whitelisted agent on SentinelRetail via SSH."""
-    if not _check_token():
+    token = request.headers.get("X-Token", "")
+    if token != SECRET_TOKEN and not _authorized():
         return jsonify({"error": "unauthorized"}), 401
     data = request.get_json(silent=True) or {}
     action = data.get("action", "")
@@ -766,7 +767,8 @@ def cmd_run_agent():
 @app.route("/api/command/agent-status", methods=["GET"])
 def cmd_agent_status():
     """Return recent AGENT_START / AGENT_COMPLETE events from pi5."""
-    if not _check_token():
+    token = request.headers.get("X-Token", "")
+    if token != SECRET_TOKEN and not _authorized():
         return jsonify({"error": "unauthorized"}), 401
     try:
         cid = "30eff008-c27a-4c71-a788-05f883e4e3a0"

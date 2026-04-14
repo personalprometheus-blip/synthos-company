@@ -2911,11 +2911,28 @@ function buildMktChart() {
         tooltip:{
           backgroundColor:'rgba(13,17,32,0.95)',borderColor:'rgba(255,255,255,0.1)',borderWidth:1,
           titleColor:'rgba(255,255,255,0.5)',bodyColor:'rgba(255,255,255,0.85)',
-          callbacks:{label:function(c){
-            if(c.dataset.yAxisID==='y1')return c.dataset.label+': '+c.parsed.y;
-            var v=Math.abs(c.parsed.y);
-            return c.dataset.label+': $'+v.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
-          }}
+          callbacks:{
+            label:function(c){
+              if(c.dataset.yAxisID==='y1'){
+                var count = c.parsed.y;
+                var line = c.dataset.label+': '+count;
+                return line;
+              }
+              var v=Math.abs(c.parsed.y);
+              return c.dataset.label+': $'+v.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+            },
+            afterBody:function(items){
+              if(!_mktData)return '';
+              // Find the hovered hour index
+              var idx = items[0] ? items[0].dataIndex : -1;
+              if(idx<0)return '';
+              // Show who was online during this hour
+              var hourKey = _mktData.hours[idx];
+              var users = (_mktData.session_users||{})[hourKey];
+              if(!users||!users.length)return '';
+              return ['','Active this hour:'].concat(users.map(function(n){return '  ● '+n;}));
+            }
+          }
         }
       },
       scales:{
@@ -4504,8 +4521,8 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
     <div class="node-hdr"><div class="node-dot live"></div><div class="node-name">pi2w_monitor_node</div><div class="node-role">Heartbeat Receiver</div></div>
     <div class="node-body">
       <div style="font-size:9px;color:var(--dim);margin-bottom:8px;font-family:var(--mono)">Pi Zero 2W · 10.0.0.12 · eth0 static</div>
-      <div class="ag"><div class="ag-status cron"></div><div class="ag-name">node_heartbeat.py</div><div class="ag-desc">System metrics → monitor</div><div class="ag-how">cron 5m</div></div>
-      <div style="font-size:10px;color:var(--muted);margin-top:6px">Legacy monitor server · being consolidated to pi4b</div>
+      <div class="ag"><div class="ag-status cron"></div><div class="ag-name">node_heartbeat.py</div><div class="ag-desc">System metrics → pi4b monitor</div><div class="ag-how">cron 1m</div></div>
+      <div style="font-size:10px;color:var(--teal);margin-top:6px">Consolidated — heartbeat only (legacy monitor removed)</div>
     </div>
   </div>
 

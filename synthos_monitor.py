@@ -764,6 +764,32 @@ def cmd_run_agent():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+
+@app.route("/api/command/wave-override", methods=["POST"])
+def cmd_wave_override():
+    """Push wave animation override to retail portal."""
+    token = request.headers.get("X-Token", "")
+    if token != SECRET_TOKEN and not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    data = request.get_json(silent=True) or {}
+    override_json = json.dumps({
+        "override": data.get("override", False),
+        "color": data.get("color"),
+        "amplitude": data.get("amplitude"),
+    })
+    import subprocess as _sp
+    try:
+        # Pipe JSON via stdin to avoid shell quote escaping
+        _sp.run(
+            ["ssh", "-o", "ConnectTimeout=5", "SentinelRetail",
+             "tee", "/home/pi516gb/synthos/synthos_build/.wave_override"],
+            input=override_json.encode(), capture_output=True, timeout=10,
+        )
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/api/command/agent-status", methods=["GET"])
 def cmd_agent_status():
     """Return recent AGENT_START / AGENT_COMPLETE events from pi5."""

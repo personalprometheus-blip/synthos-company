@@ -1214,6 +1214,47 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 .cc-event-icon{font-size:10px}
 .cc-event-name{color:var(--muted);flex:1}
 
+.bell-wrap{position:relative;cursor:pointer}
+.bell-btn{background:none;border:1px solid var(--border);border-radius:8px;padding:4px 8px;cursor:pointer;font-size:16px;line-height:1;transition:all .15s;color:var(--muted)}
+.bell-btn:hover{border-color:var(--border2);color:var(--text)}
+.bell-badge{position:absolute;top:-4px;right:-4px;min-width:16px;height:16px;border-radius:99px;background:var(--pink);color:#fff;font-size:8px;font-weight:800;align-items:center;justify-content:center;padding:0 4px;display:none}
+.bell-badge.active{display:flex}
+.bell-dropdown{display:none;position:absolute;top:calc(100% + 8px);right:0;min-width:280px;max-height:360px;overflow-y:auto;background:var(--surface);border:1px solid var(--border2);border-radius:12px;padding:6px;z-index:999;box-shadow:0 12px 40px rgba(0,0,0,0.5)}
+.bell-dropdown.open{display:flex;flex-direction:column}
+.bell-section{font-size:8px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--dim);padding:6px 10px 4px}
+.bell-item{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;font-size:11px;color:var(--muted);text-decoration:none;transition:all .15s}
+.bell-item:hover{background:rgba(255,255,255,0.04);color:var(--text)}
+.bell-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.bell-dot.pink{background:var(--pink)}.bell-dot.amber{background:var(--amber)}.bell-dot.teal{background:var(--teal)}
+.bell-empty{padding:16px;text-align:center;font-size:11px;color:var(--dim)}
+
+
+/* MONITOR BELL + SLIDE-OUT PANEL */
+.mon-bell-wrap{position:relative;width:32px;height:32px;border-radius:50%;background:rgba(255,179,71,0.06);border:1px solid rgba(255,179,71,0.2);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .15s}
+.mon-bell-wrap:hover{border-color:rgba(255,179,71,0.3);box-shadow:0 0 10px rgba(255,179,71,0.08)}
+.mon-bell-wrap:hover svg{color:rgba(255,255,255,0.7)}
+.mon-bell-badge{position:absolute;top:-3px;right:-3px;min-width:16px;height:16px;border-radius:99px;background:var(--amber);color:#000;font-size:8px;font-weight:800;line-height:16px;text-align:center;padding:0 4px;display:none;box-shadow:0 0 8px rgba(255,179,71,0.4)}
+.mon-bell-badge.active{display:block}
+.mon-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:500;display:none}
+.mon-overlay.open{display:block}
+.mon-panel{position:fixed;top:0;right:0;bottom:0;width:360px;background:var(--surface);border-left:1px solid var(--border2);z-index:501;transform:translateX(100%);transition:transform .25s ease;display:flex;flex-direction:column}
+.mon-panel.open{transform:translateX(0)}
+.mon-panel-head{padding:14px 18px 0;display:flex;align-items:center;gap:10px;flex-shrink:0}
+.mon-panel-title{font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text);flex:1}
+.mon-panel-close{background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;padding:4px 8px;border-radius:6px;transition:all .15s}
+.mon-panel-close:hover{color:var(--text);background:rgba(255,255,255,0.05)}
+.mon-tabs{display:flex;gap:0;border-bottom:1px solid var(--border);margin:10px 18px 0;flex-shrink:0}
+.mon-tab{flex:1;padding:8px 0;font-size:10px;font-weight:600;text-align:center;color:var(--muted);background:none;border:none;border-bottom:2px solid transparent;cursor:pointer;font-family:var(--sans);transition:all .15s}
+.mon-tab:hover{color:var(--text)}
+.mon-tab.active{color:var(--amber);border-bottom-color:var(--amber)}
+.mon-tab-body{flex:1;overflow-y:auto;padding:14px 18px}
+.mon-notif{display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.04);cursor:pointer;transition:opacity .15s}
+.mon-notif:hover{opacity:0.8}
+.mon-notif-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;margin-top:5px}
+.mon-notif-body{flex:1;min-width:0}
+.mon-notif-title{font-size:11px;font-weight:600;color:var(--text)}
+.mon-notif-sub{font-size:10px;color:var(--muted);margin-top:2px}
+.mon-empty{text-align:center;padding:30px 0;color:var(--dim);font-size:11px}
 /* MARKET ACTIVITY CHART */
 .mkt-section{margin-bottom:20px}
 .mkt-card{border-radius:14px;border:1px solid var(--border);background:var(--surface);padding:16px}
@@ -1257,7 +1298,10 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
   <div class="header-right">
     <div class="clock" id="clock">--:--:-- ET</div>
     <div class="live-pill"><div class="live-dot"></div><span id="pi-count">No Nodes</span></div>
-    <button class="cc-trigger" onclick="toggleCmdPanel()">Commands</button>
+    <div class="mon-bell-wrap" id="mon-bell-wrap" onclick="toggleMonPanel()">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(255,179,71,0.7)"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+      <div class="mon-bell-badge" id="mon-bell-badge"></div>
+    </div>
     <div class="hamburger-wrap">    <div class="hamburger-wrap">
       <button class="hamburger-btn" onclick="toggleMenu()" id="hbtn" aria-label="Menu">
         <span></span><span></span><span></span>
@@ -1356,6 +1400,20 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
       </div>
     </div>
   </div>
+
+<!-- MONITOR SLIDE-OUT PANEL -->
+<div class="mon-overlay" id="mon-overlay" onclick="closeMonPanel()"></div>
+<div class="mon-panel" id="mon-panel">
+  <div class="mon-panel-head">
+    <div class="mon-panel-title">Control Center</div>
+    <button class="mon-panel-close" onclick="closeMonPanel()">&#x2715;</button>
+  </div>
+  <div class="mon-tabs">
+    <button class="mon-tab active" id="mon-tab-notif" onclick="switchMonTab('notif')">Notifications</button>
+    <button class="mon-tab" id="mon-tab-cmd" onclick="switchMonTab('cmd')">Commands</button>
+  </div>
+  <div class="mon-tab-body" id="mon-tab-content"></div>
+</div>
 
 <!-- TOAST -->
 <div class="toast" id="toast"></div>
@@ -2967,6 +3025,18 @@ function updateMktSummary() {
   el('ms-active').textContent = s.active_now;
   el('ms-peak').textContent = s.peak_sessions;
 }
+
+// ── MONITOR CONTROL CENTER ──
+var _monPanelOpen=false, _monTab='notif';
+function toggleMonPanel(){_monPanelOpen=!_monPanelOpen;document.getElementById('mon-panel').classList.toggle('open',_monPanelOpen);document.getElementById('mon-overlay').classList.toggle('open',_monPanelOpen);if(_monPanelOpen)switchMonTab(_monTab);}
+function closeMonPanel(){_monPanelOpen=false;document.getElementById('mon-panel').classList.remove('open');document.getElementById('mon-overlay').classList.remove('open');}
+function switchMonTab(tab){_monTab=tab;document.querySelectorAll('.mon-tab').forEach(function(t){t.classList.remove('active');});document.getElementById('mon-tab-'+tab).classList.add('active');if(tab==='notif')loadMonNotifications();else loadMonCommands();}
+async function loadMonNotifications(){var el=document.getElementById('mon-tab-content');el.innerHTML='<div class="mon-empty">Loading...</div>';var html='';try{var r1=await fetch('/api/proxy/pending-signups?status=PENDING',{headers:{'X-Token':SECRET_TOKEN}});if(r1.ok){var d1=await r1.json();var sg=d1.pending||d1.signups||[];if(Array.isArray(sg)&&sg.length){sg.slice(0,3).forEach(function(s){html+='<a href="/approvals" style="text-decoration:none"><div class="mon-notif"><div class="mon-notif-dot" style="background:var(--amber)"></div><div class="mon-notif-body"><div class="mon-notif-title">'+(s.name||'New Signup')+'</div><div class="mon-notif-sub">Pending approval</div></div></div></a>'});}}}catch(e){}try{var r2=await fetch('/api/proxy/support/all-tickets',{headers:{'X-Token':SECRET_TOKEN}});if(r2.ok){var d2=await r2.json();var tks=(d2.tickets||[]).filter(function(t){return t.status==='open';});if(tks.length){tks.slice(0,5).forEach(function(t){var dc=t.category==='direct_message'?'var(--teal)':'var(--pink)';html+='<a href="/support-queue" style="text-decoration:none"><div class="mon-notif"><div class="mon-notif-dot" style="background:'+dc+'"></div><div class="mon-notif-body"><div class="mon-notif-title">'+(t.customer_name||'Customer')+'</div><div class="mon-notif-sub">'+(t.subject||'Support ticket')+'</div></div></div></a>'});}}}catch(e){}el.innerHTML=html||'<div class="mon-empty">No notifications</div>';}
+function loadMonCommands(){var el=document.getElementById('mon-tab-content');function cb(a,l,s,f){return '<button data-action="'+a+'" onclick="runMonCmd(this)" style="padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--surface2);cursor:pointer;text-align:left;font-family:var(--sans);'+(f?'grid-column:1/-1;':'')+'" onmouseover="this.style.borderColor=&#39;rgba(255,255,255,0.15)&#39;" onmouseout="this.style.borderColor=&#39;var(--border)&#39;">'+'<div style="font-size:11px;font-weight:600;color:var(--text)">'+l+'</div><div style="font-size:9px;color:var(--muted)">'+s+'</div></button>';}el.innerHTML='<div style="margin-bottom:14px"><div style="font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Agents</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+cb('news_overnight','News','Overnight')+cb('news_market','News','Market')+cb('sentiment','Sentiment','The Pulse')+cb('screener','Screener','Sectors')+cb('trade','Trade Logic','All customers',true)+'</div></div><div><div style="font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Sessions</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+cb('prep_session','Prep','Full prep')+cb('open_session','Open','Market open')+cb('midday_session','Midday','Mid check')+cb('close_session','Close','End of day')+'</div></div>';}
+async function runMonCmd(btn){var action=btn.dataset.action;var orig=btn.querySelector('div').textContent;btn.querySelector('div').textContent='Starting...';btn.style.borderColor='rgba(123,97,255,0.3)';try{var r=await fetch('/api/command/run-agent',{method:'POST',headers:{'X-Token':SECRET_TOKEN,'Content-Type':'application/json'},body:JSON.stringify({action:action})});var d=await r.json();if(d.ok){toast(d.message,'ok');}else{toast(d.error||'Failed','err');}}catch(e){toast('Error','err');}setTimeout(function(){btn.querySelector('div').textContent=orig;btn.style.borderColor='var(--border)';},10000);}
+function _updateBellBadge(){(async function(){var total=0;try{var r1=await fetch('/api/proxy/pending-signups?status=PENDING',{headers:{'X-Token':SECRET_TOKEN}});if(r1.ok){var d1=await r1.json();total+=(d1.pending||d1.signups||[]).length;}}catch(e){}try{var r2=await fetch('/api/proxy/support/all-tickets',{headers:{'X-Token':SECRET_TOKEN}});if(r2.ok){var d2=await r2.json();total+=(d2.tickets||[]).filter(function(t){return t.status==='open';}).length;}}catch(e){}var badge=document.getElementById('mon-bell-badge');if(total>0){badge.textContent=total;badge.classList.add('active');}else{badge.classList.remove('active');}})();}
+setInterval(_updateBellBadge,60000);
+setTimeout(_updateBellBadge,2000);
 
 // ── INIT ──
 /* DBG */ try { document.getElementById('dbg-keys').textContent = 'INIT REACHED'; } catch(e){}

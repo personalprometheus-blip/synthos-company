@@ -151,7 +151,7 @@ def db_get_next_event():
         with get_db() as conn:
             rows = conn.execute("""
                 SELECT * FROM scoop_queue
-                WHERE status IN ('PENDING', 'RETRY')
+                WHERE UPPER(status) IN ('PENDING', 'RETRY')
                 ORDER BY priority ASC, created_at ASC
                 LIMIT ?
             """, (BATCH_SIZE,)).fetchall()
@@ -255,7 +255,7 @@ def send_via_resend(to_email: str, subject: str, body_text: str,
         log.warning(f"No recipient for: {subject[:60]}")
         return False
 
-    import urllib.request
+    import requests as _req
     from_field = f"{ALERT_FROM_NAME} <{ALERT_FROM}>" if ALERT_FROM_NAME else ALERT_FROM
     payload_dict = {
         "from":    from_field,
@@ -265,28 +265,24 @@ def send_via_resend(to_email: str, subject: str, body_text: str,
     }
     if body_html:
         payload_dict["html"] = body_html
-    payload = json.dumps(payload_dict).encode()
 
-    # Idempotency key prevents duplicate emails on crash/restart.
-    # Includes retry_count so legitimate retries get a fresh key.
     idem_key = f"scoop-{subject[:30]}-{to_email}-{int(time.time() // 60)}"
 
-    req = urllib.request.Request(
-        "https://api.resend.com/emails",
-        data=payload,
-        headers={
-            "Authorization":   f"Bearer {RESEND_API_KEY}",
-            "Content-Type":    "application/json",
-            "Idempotency-Key": idem_key,
-        }
-    )
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            if resp.status in (200, 201):
-                log.info(f"[RESEND] Sent: {subject[:60]} -> {to_email}")
-                return True
-            log.warning(f"[RESEND] Returned {resp.status}")
-            return False
+        r = _req.post(
+            "https://api.resend.com/emails",
+            json=payload_dict,
+            headers={
+                "Authorization":   f"Bearer {RESEND_API_KEY}",
+                "Idempotency-Key": idem_key,
+            },
+            timeout=15,
+        )
+        if r.status_code in (200, 201):
+            log.info(f"[RESEND] Sent: {subject[:60]} -> {to_email}")
+            return True
+        log.warning(f"[RESEND] HTTP {r.status_code}: {r.text[:100]}")
+        return False
     except Exception as e:
         log.error(f"[RESEND] Error: {e}")
         return False

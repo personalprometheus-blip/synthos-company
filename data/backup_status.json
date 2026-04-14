@@ -1,0 +1,22 @@
+{
+  "company-pi": {
+    "pi_id": "company-pi",
+    "date": "2026-04-13",
+    "last_backup": "2026-04-13T23:56:04.337787+00:00",
+    "r2_key": "company-pi/2026-04-13/synthos_backup_company-pi_2026-04-13.tar.gz.enc",
+    "checksum": "d8f7b76bbc3841899c069d195aac5fd27972d457caaea4a3df035fc42ac44c47",
+    "size_bytes": 812644,
+    "outcome": "success",
+    "error": null
+  },
+  "synthos-pi-retail": {
+    "pi_id": "synthos-pi-retail",
+    "date": "2026-04-13",
+    "last_backup": "2026-04-13T23:56:04.878305+00:00",
+    "r2_key": "synthos-pi-retail/2026-04-13/synthos_backup_synthos-pi-retail_2026-04-13.tar.gz.enc",
+    "checksum": "ad955d59d42db4d21ba232d0940f37a85e6b58c4073c3f3d1bf89c6e873780c6",
+    "size_bytes": 2784056,
+    "outcome": "success",
+    "error": null
+  }
+}

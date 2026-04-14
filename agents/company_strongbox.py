@@ -70,12 +70,12 @@ SYNTHOS_HOME = AGENT_DIR.parent
 DATA_DIR     = SYNTHOS_HOME / "data"
 LOG_DIR      = SYNTHOS_HOME / "logs"
 USER_DIR     = SYNTHOS_HOME / "user"
-STAGING_DIR  = SYNTHOS_HOME / ".backup_staging"
+STAGING_DIR  = Path(os.path.expanduser("~/.backup_staging"))
 
 BACKUP_STATUS_FILE = DATA_DIR / "backup_status.json"
 SCOOP_TRIGGER_FILE = DATA_DIR / "scoop_trigger.json"
 
-load_dotenv(USER_DIR / ".env", override=True)
+load_dotenv(SYNTHOS_HOME / "company.env", override=True)
 
 # ── CONSTANTS ─────────────────────────────────────────────────────────────────
 RETENTION_DAYS     = 30

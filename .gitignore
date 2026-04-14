@@ -38,3 +38,7 @@ config/package_manifest.json
 data/scoop_trigger.json
 data/suggestions.json
 data/post_deploy_watch.json
+logs/archive/
+logs/*.bak.*
+data/.company_write.lock
+data/.monitor_registry.json

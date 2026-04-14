@@ -75,7 +75,7 @@ REGISTRY_FILE = os.path.join(DATA_DIR, ".monitor_registry.json")
 
 # ── Company DB Path ──────────────────────────────────────────────────────────
 DB_PATH  = os.getenv("COMPANY_DB_PATH", os.path.join(DATA_DIR, "company.db"))
-LOG_DIR  = os.path.join(os.path.dirname(_HERE), "logs")   # synthos_build/logs/
+LOG_DIR  = os.path.join(_HERE, "logs")   # synthos-company/logs/
 
 # ── Sentinel Display Bridge ───────────────────────────────────────────────────
 SENTINEL_URL   = os.getenv("SENTINEL_URL", "").rstrip("/")
@@ -160,6 +160,8 @@ def init_db():
                 amount REAL NOT NULL,
                 date TEXT NOT NULL,
                 recurring INTEGER NOT NULL DEFAULT 0,
+                frequency TEXT DEFAULT 'one-time',
+                next_renewal TEXT,
                 created_at TEXT NOT NULL
             );
 
@@ -399,7 +401,7 @@ def heartbeat():
             "urgent_flags":      data.get("urgent_flags",   existing.get("urgent_flags", 0)),
             "trades_today":      data.get("trades_today",   existing.get("trades_today", 0)),
             # System
-            "agents":            data.get("agents",         existing.get("agents", {})),
+            "agents":            {**existing.get("agents", {}), **data.get("agents", {})},
             "uptime":            data.get("uptime",         existing.get("uptime", None)),
             "uptime_secs":       data.get("uptime_secs",    existing.get("uptime_secs", 0)),
             "operating_mode":    data.get("operating_mode", existing.get("operating_mode", "SUPERVISED")),
@@ -868,7 +870,7 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 .cmd-section:last-child{border-bottom:none}
 .cmd-label{font-size:10px;font-weight:600;color:var(--muted);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px}
 .cmd-row{display:flex;gap:6px}
-.cmd-btn{flex:1;padding:6px 10px;font-size:10px;font-weight:700;font-family:var(--mono);
+.cmd-btn{flex:1;padding:6px 10px;font-size:10px;font-weight:700;font-family:var(--mono);color:var(--text);
          border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--muted);
          cursor:pointer;transition:all 0.15s;text-transform:uppercase;letter-spacing:0.05em}
 .cmd-btn:hover{border-color:var(--teal);color:var(--teal);background:rgba(0,245,212,0.06)}
@@ -1503,22 +1505,22 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
         <div class="cmd-section">
           <div class="cmd-label">Trading Mode Gate</div>
           <div class="cmd-row">
-            <button class="cc-btn" id="cmd-paper" onclick="sendGlobalCmd('trading-mode','PAPER')">Paper</button>
-            <button class="cc-btn" id="cmd-live" onclick="confirmCmd('trading-mode','LIVE','Switch ALL nodes to LIVE trading?')">Live</button>
+            <button class="cmd-btn" id="cmd-paper" onclick="sendGlobalCmd('trading-mode','PAPER')">Paper</button>
+            <button class="cmd-btn" id="cmd-live" onclick="confirmCmd('trading-mode','LIVE','Switch ALL nodes to LIVE trading?')">Live</button>
           </div>
         </div>
         <div class="cmd-section">
           <div class="cmd-label">Operating Mode</div>
           <div class="cmd-row">
-            <button class="cc-btn" id="cmd-supervised" onclick="sendGlobalCmd('operating-mode','SUPERVISED')">Supervised</button>
-            <button class="cc-btn" id="cmd-autonomous" onclick="confirmCmd('operating-mode','AUTONOMOUS','Grant AUTONOMOUS mode to ALL nodes?')">Autonomous</button>
+            <button class="cmd-btn" id="cmd-supervised" onclick="sendGlobalCmd('operating-mode','SUPERVISED')">Supervised</button>
+            <button class="cmd-btn" id="cmd-autonomous" onclick="confirmCmd('operating-mode','AUTONOMOUS','Grant AUTONOMOUS mode to ALL nodes?')">Autonomous</button>
           </div>
         </div>
         <div class="cmd-section">
           <div class="cmd-label">Emergency</div>
           <div class="cmd-row">
             <button class="cmd-btn danger" id="cmd-kill-on" onclick="confirmCmd('kill-switch',true,'ACTIVATE kill switch on ALL nodes?')">Kill Switch ON</button>
-            <button class="cc-btn" id="cmd-kill-off" onclick="sendGlobalCmd('kill-switch',false)">Kill Switch OFF</button>
+            <button class="cmd-btn" id="cmd-kill-off" onclick="sendGlobalCmd('kill-switch',false)">Kill Switch OFF</button>
           </div>
         </div>
       </div>
@@ -1849,9 +1851,11 @@ function updateFleetStats() {
     });
   });
 
-  // Trading mode counts
-  const paperCount = pis.filter(p => (p.trading_mode||'PAPER') === 'PAPER').length;
-  const liveCount  = pis.filter(p => (p.trading_mode||'PAPER') === 'LIVE').length;
+  // Trading mode counts (from customer data, not Pi nodes)
+  var _tm = (_mktData && _mktData.trading_modes) || {};
+  const paperCount = _tm.PAPER || 0;
+  const liveCount  = _tm.LIVE || 0;
+  const custTotal  = _tm.total || 0;
 
   const sv = (id,v) => { const el=document.getElementById(id); if(el) el.textContent=v; };
 
@@ -1860,8 +1864,8 @@ function updateFleetStats() {
   sv('fl-issues',  allTodos.filter(t=>!t.resolved).length);
   sv('fl-agents',  agTotal > 0 ? agActive + ' / ' + agTotal : '—');
   sv('fl-agents-sub', agTotal > 0 ? agActive + ' active' + (agIdle ? ', ' + agIdle + ' idle' : '') + (agFault ? ', ' + agFault + ' fault' : '') + (agInactive ? ', ' + agInactive + ' off' : '') : 'Awaiting data');
-  sv('fl-trading',    total > 0 ? paperCount + 'P / ' + liveCount + 'L' : '—');
-  sv('fl-trading-sub', total > 0 ? paperCount + ' paper, ' + liveCount + ' live' : 'Awaiting data');
+  sv('fl-trading',    custTotal > 0 ? paperCount + 'P / ' + liveCount + 'L' : '—');
+  sv('fl-trading-sub', custTotal > 0 ? custTotal + ' customers — ' + paperCount + ' paper, ' + liveCount + ' live' : 'Awaiting data');
 
   // Header pill
   if (total === 0)       sv('pi-count', 'No Nodes');
@@ -2208,7 +2212,7 @@ function renderModalTab(tab, pi) {
               callbacks:{label:c=>c.parsed.y.toFixed(1)+unit}
             }},
             scales:{
-              x:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'rgba(255,255,255,0.3)',font:{size:9},maxTicksLimit:6}},
+              x:{stacked:true,grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'rgba(255,255,255,0.3)',font:{size:9},maxTicksLimit:6}},
               y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'rgba(255,255,255,0.3)',font:{size:9},callback:v=>v+unit},min:0,max:100,position:'right'}
             }
           }
@@ -2457,22 +2461,33 @@ async function sendGlobalCmd(type, value) {
 }
 
 function updateCommandState(pis) {
-  // Highlight buttons based on current fleet majority state
-  const tm = pis.map(p => (p.trading_mode||'PAPER'));
-  const allPaper = tm.every(m => m === 'PAPER');
-  const allLive  = tm.every(m => m === 'LIVE');
-  const om = pis.map(p => (p.operating_mode||'SUPERVISED'));
-  const allSup   = om.every(m => m === 'SUPERVISED');
-  const allAuto  = om.every(m => m === 'AUTONOMOUS');
-  const ks = pis.map(p => !!p.kill_switch);
-  const anyKill  = ks.some(k => k);
-  const noKill   = ks.every(k => !k);
+  // Highlight buttons based on customer trading mode data from market activity API
+  var _tm = (_mktData && _mktData.trading_modes) || {};
+  var custTotal = _tm.total || 0;
+  var allPaper = custTotal > 0 && (_tm.PAPER || 0) === custTotal;
+  var allLive  = custTotal > 0 && (_tm.LIVE || 0) === custTotal;
 
-  const cls = (id, c, on) => { const el=document.getElementById(id); if(el){el.classList.remove('active-teal','active-amber','active-pink'); if(on) el.classList.add(c);} };
-  cls('cmd-paper',      'active-teal',  allPaper && pis.length > 0);
-  cls('cmd-live',       'active-amber', allLive  && pis.length > 0);
-  cls('cmd-supervised', 'active-teal',  allSup   && pis.length > 0);
-  cls('cmd-autonomous', 'active-amber', allAuto  && pis.length > 0);
+  // Operating mode — still read from Pi heartbeat data for now
+  var om = pis.map(function(p) { return p.operating_mode || 'SUPERVISED'; });
+  var allSup  = om.length > 0 && om.every(function(m) { return m === 'SUPERVISED'; });
+  var allAuto = om.length > 0 && om.every(function(m) { return m === 'AUTONOMOUS'; });
+
+  // Kill switch from Pi data
+  var ks = pis.map(function(p) { return !!p.kill_switch; });
+  var anyKill = ks.some(function(k) { return k; });
+  var noKill  = ks.every(function(k) { return !k; });
+
+  var cls = function(id, c, on) {
+    var el = document.getElementById(id);
+    if (el) {
+      el.classList.remove('active-teal','active-amber','active-pink');
+      if (on) el.classList.add(c);
+    }
+  };
+  cls('cmd-paper',      'active-teal',  allPaper);
+  cls('cmd-live',       'active-amber', allLive);
+  cls('cmd-supervised', 'active-teal',  allSup);
+  cls('cmd-autonomous', 'active-amber', allAuto);
   cls('cmd-kill-on',    'active-pink',  anyKill);
   cls('cmd-kill-off',   'active-teal',  noKill && pis.length > 0);
 }
@@ -2812,19 +2827,48 @@ function buildMktChart() {
 
   var datasets = [];
 
+  // Per-customer stacked bars (buys above $0, sells below)
+  var custColors = ['#00f5d4','#7b61ff','#22d3ee','#a78bfa','#67e8f9','#f0abfc','#fbbf24','#34d399'];
+  var customers = _mktData.customers || {};
+  var custIds = Object.keys(customers);
   if (_mktVis.buys) {
-    datasets.push({
-      type:'bar', label:'Buys', data:_mktData.buys,
-      backgroundColor:colorWithAlpha('#00f5d4',0.65), borderColor:'#00f5d4',
-      borderWidth:1, borderRadius:3, yAxisID:'y', order:2
-    });
+    if (custIds.length > 0) {
+      custIds.forEach(function(cid, i) {
+        var c = customers[cid];
+        var color = custColors[i % custColors.length];
+        datasets.push({
+          type:'bar', label:c.name+' buys', data:c.buys, stack:'buys',
+          backgroundColor:colorWithAlpha(color,0.7), borderColor:color,
+          borderWidth:1, borderRadius:2, yAxisID:'y', order:2
+        });
+      });
+    } else {
+      datasets.push({
+        type:'bar', label:'Buys', data:_mktData.buys, stack:'buys',
+        backgroundColor:colorWithAlpha('#00f5d4',0.65), borderColor:'#00f5d4',
+        borderWidth:1, borderRadius:3, yAxisID:'y', order:2
+      });
+    }
   }
   if (_mktVis.sells) {
-    datasets.push({
-      type:'bar', label:'Sells', data:_mktData.sells.map(function(v){return -v;}),
-      backgroundColor:colorWithAlpha('#ff4b6e',0.65), borderColor:'#ff4b6e',
-      borderWidth:1, borderRadius:3, yAxisID:'y', order:2
-    });
+    if (custIds.length > 0) {
+      custIds.forEach(function(cid, i) {
+        var c = customers[cid];
+        var color = custColors[i % custColors.length];
+        var negSells = c.sells.map(function(v){return -v;});
+        datasets.push({
+          type:'bar', label:c.name+' sells', data:negSells, stack:'sells',
+          backgroundColor:colorWithAlpha(color,0.35), borderColor:color,
+          borderWidth:1, borderRadius:2, borderDash:[2,2], yAxisID:'y', order:2
+        });
+      });
+    } else {
+      datasets.push({
+        type:'bar', label:'Sells', data:_mktData.sells.map(function(v){return -v;}), stack:'sells',
+        backgroundColor:colorWithAlpha('#ff4b6e',0.65), borderColor:'#ff4b6e',
+        borderWidth:1, borderRadius:3, yAxisID:'y', order:2
+      });
+    }
   }
   if (_mktVis.net) {
     var netD = _mktData.buys.map(function(b,i){return b - (_mktData.sells[i]||0);});
@@ -2877,6 +2921,7 @@ function buildMktChart() {
       scales:{
         x:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'rgba(255,255,255,0.3)',font:{size:9},maxTicksLimit:12}},
         y:{
+          stacked:true,
           position:'left',grid:{color:'rgba(255,255,255,0.04)'},
           ticks:{color:'rgba(255,255,255,0.3)',font:{size:9},callback:function(v){return(v<0?'-':'')+'$'+Math.abs(v).toLocaleString();}},
           title:{display:true,text:'Dollars',color:'rgba(255,255,255,0.15)',font:{size:8}}
@@ -3390,17 +3435,28 @@ _COMPANY_LOGS_CSS = (
     '</style>'
 )
 
-_COMPANY_LOG_FILES = {
-    'scoop':       'scoop.log',
-    'sentinel':    'sentinel.log',
-    'heartbeat':   'heartbeat.log',
-    'scheduler':   'scheduler.log',
-    'vault':       'vault.log',
-    'librarian':   'librarian.log',
-    'fidget':      'fidget.log',
-    'patches':     'patches.log',
-    'engineer':    'engineer.log',
+_LOG_SOURCES = {
+    # ── PI4B (Company Node) — local files ──
+    'auditor':     {'node': 'pi4b', 'file': 'auditor_daemon.log', 'label': 'Auditor'},
+    'scoop':       {'node': 'pi4b', 'file': 'scoop.log',         'label': 'Scoop'},
+    'sentinel':    {'node': 'pi4b', 'file': 'sentinel.log',      'label': 'Sentinel'},
+    'vault':       {'node': 'pi4b', 'file': 'vault.log',         'label': 'Vault'},
+    'fidget':      {'node': 'pi4b', 'file': 'fidget.log',        'label': 'Fidget'},
+    'librarian':   {'node': 'pi4b', 'file': 'librarian.log',     'label': 'Librarian'},
+    'archivist':   {'node': 'pi4b', 'file': 'archivist.log',     'label': 'Archivist'},
+    'heartbeat':   {'node': 'pi4b', 'file': 'heartbeat.log',     'label': 'Heartbeat'},
+    # ── PI5 (Retail Node) — via SSH ──
+    'scheduler':   {'node': 'pi5',  'file': 'scheduler.log',     'label': 'Scheduler'},
+    'portal':      {'node': 'pi5',  'file': 'portal.log',        'label': 'Portal'},
+    'poller':      {'node': 'pi5',  'file': 'price_poller.log',  'label': 'Price Poller'},
+    'backup':      {'node': 'pi5',  'file': 'retail_backup.log', 'label': 'Backup'},
+    'watchdog':    {'node': 'pi5',  'file': 'watchdog.log',      'label': 'Watchdog'},
+    'boot':        {'node': 'pi5',  'file': 'boot.log',          'label': 'Boot Seq'},
+    'pi5-hb':      {'node': 'pi5',  'file': 'heartbeat.log',     'label': 'Heartbeat'},
 }
+_PI5_LOG_DIR = '/home/pi516gb/synthos/synthos_build/logs'
+# Backward compat
+_COMPANY_LOG_FILES = {k: v['file'] for k, v in _LOG_SOURCES.items() if v['node'] == 'pi4b'}
 
 
 # ── Retail backup receiver ────────────────────────────────────────────────────
@@ -3496,42 +3552,77 @@ _LOGS_HEADER = _subpage_header('Logs')
 
 @app.route("/logs")
 def company_logs():
-    """Tail company-side log files — same token auth as console."""
+    """Tail log files across all nodes — pi4b local + pi5 via SSH."""
     if not _authorized():
         return (
             "<html><body style='font-family:monospace;background:#080b12;color:#fff;padding:40px'>"
-            "<h2>Synthos Company Logs</h2>"
+            "<h2>Synthos Logs</h2>"
             "<p style='color:rgba(255,255,255,0.5)'>Pass <code>?token=SECRET_TOKEN</code> "
             "or set <code>X-Token</code> header to access logs.</p>"
             "</body></html>"
         ), 401
 
-    selected = request.args.get('file', 'scoop')
+    selected = request.args.get('file', 'auditor')
     try:
         lines = int(request.args.get('lines', 100))
     except (ValueError, TypeError):
         lines = 100
-    fname    = _COMPANY_LOG_FILES.get(selected, 'scoop.log')
-    fpath    = os.path.join(LOG_DIR, fname)
+
+    src_info = _LOG_SOURCES.get(selected, _LOG_SOURCES.get('auditor'))
+    node = src_info['node']
+    fname = src_info['file']
 
     content = ''
-    if os.path.exists(fpath):
+    if node == 'pi4b':
+        fpath = os.path.join(LOG_DIR, fname)
+        if os.path.exists(fpath):
+            try:
+                with open(fpath, 'r', encoding='utf-8', errors='replace') as f:
+                    all_lines = f.readlines()
+                content = ''.join(all_lines[-lines:])
+            except Exception as e:
+                content = f'Error reading log: {e}'
+        else:
+            content = f'Log file not found: {fpath}'
+    elif node == 'pi5':
+        import subprocess
+        remote_path = f'{_PI5_LOG_DIR}/{fname}'
         try:
-            with open(fpath, 'r', encoding='utf-8', errors='replace') as f:
-                all_lines = f.readlines()
-            content = ''.join(all_lines[-lines:])
+            result = subprocess.run(
+                ['ssh', '-o', 'ConnectTimeout=5', 'SentinelRetail',
+                 f'tail -{lines} {remote_path} 2>/dev/null || echo "[Log file not found: {remote_path}]"'],
+                capture_output=True, text=True, timeout=15,
+            )
+            content = result.stdout or f'No output from {remote_path}'
         except Exception as e:
-            content = f'Error reading log: {e}'
-    else:
-        content = f'Log file not found: {fpath}'
+            content = f'SSH error reading pi5 log: {e}'
 
-    tabs = ''.join(
-        f'<a href="/logs?file={k}&lines={lines}" '
-        f'style="padding:6px 14px;font-family:monospace;font-size:0.72rem;'
-        f'letter-spacing:0.08em;text-transform:uppercase;text-decoration:none;'
-        f'border-bottom:2px solid {"#00f5d4" if k == selected else "transparent"};'
-        f'color:{"#00f5d4" if k == selected else "#556"};display:inline-block">{k}</a>'
-        for k in _COMPANY_LOG_FILES
+    # Build tabs grouped by node
+    pi4b_tabs = []
+    pi5_tabs = []
+    for k, info in _LOG_SOURCES.items():
+        style = (
+            f'padding:5px 12px;font-family:monospace;font-size:0.68rem;'
+            f'letter-spacing:0.06em;text-decoration:none;border-radius:6px;'
+            f'margin:2px;display:inline-block;'
+        )
+        if k == selected:
+            style += f'background:rgba(0,245,212,0.1);border:1px solid rgba(0,245,212,0.25);color:#00f5d4;'
+        else:
+            style += f'background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);color:#556;'
+        tab = f'<a href="/logs?file={k}&lines={lines}" style="{style}">{info["label"]}</a>'
+        if info['node'] == 'pi4b':
+            pi4b_tabs.append(tab)
+        else:
+            pi5_tabs.append(tab)
+
+    tabs = (
+        '<div style="padding:12px 24px 4px">'
+        '<div style="font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.25);margin-bottom:6px">PI4B — Company Node</div>'
+        '<div style="display:flex;flex-wrap:wrap;gap:0">' + ''.join(pi4b_tabs) + '</div>'
+        '<div style="font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.25);margin:10px 0 6px">PI5 — Retail Node</div>'
+        '<div style="display:flex;flex-wrap:wrap;gap:0">' + ''.join(pi5_tabs) + '</div>'
+        '</div>'
     )
 
     line_opts = ''.join(
@@ -3539,6 +3630,7 @@ def company_logs():
         for n in [50, 100, 200, 500]
     )
 
+    node_label = f'{src_info["label"]} ({node})'
     log_escaped = content.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
     html = f"""<!DOCTYPE html>
@@ -3551,12 +3643,12 @@ def company_logs():
 <body>
 {_LOGS_HEADER}
 <div style="padding:4px 24px 0"><a href="/logs?file={selected}&lines={lines}" onclick="location.reload();return false" style="font-size:11px;color:rgba(255,255,255,0.4);text-decoration:none">&#8635; Refresh</a></div>
-<div class="tabs">{tabs}</div>
+{tabs}
 <div class="controls">
   <label>Lines</label>
   <select onchange="window.location='/logs?file={selected}&lines='+this.value">{line_opts}</select>
   <button class="refresh-btn" onclick="location.reload()">&#8635; Refresh</button>
-  <span style="font-size:0.72rem;color:#556;margin-left:auto">{fname}</span>
+  <span style="font-size:0.72rem;color:#556;margin-left:auto">{node_label}</span>
 </div>
 <div class="log-box" id="log-content">{log_escaped}</div>
 <script>
@@ -5182,6 +5274,8 @@ def _write_env_key(key, value):
 _SETTINGS_ALLOWED_KEYS = {
     'ANTHROPIC_API_KEY', 'RESEND_API_KEY', 'ALERT_FROM',
     'COMPANY_URL', 'SECRET_TOKEN', 'LIVE_TRADING_ENABLED',
+    'R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY',
+    'R2_BUCKET_NAME', 'BACKUP_ENCRYPTION_KEY',
 }
 
 SETTINGS_PAGE_HTML = """<!doctype html>
@@ -5316,6 +5410,59 @@ SETTINGS_PAGE_HTML = """<!doctype html>
       <input class="s-input" id="val-SECRET_TOKEN" type="password" placeholder="used by retail portals to authenticate" autocomplete="off">
       <button class="btn-save" onclick="saveKey('SECRET_TOKEN')">Update</button>
     </div>
+
+    <hr class="divider">
+    <p style="font-size:0.72rem;color:var(--muted);margin-bottom:1rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase">Cloudflare R2 Backup</p>
+
+    <div class="field-row">
+      <div>
+        <div class="field-label">R2 Account ID</div>
+        <div class="field-current" id="cur-R2_ACCOUNT_ID">—</div>
+      </div>
+      <input class="s-input" id="val-R2_ACCOUNT_ID" placeholder="Cloudflare account ID" autocomplete="off">
+      <button class="btn-save" onclick="saveKey('R2_ACCOUNT_ID')">Update</button>
+    </div>
+
+    <div class="field-row">
+      <div>
+        <div class="field-label">R2 Access Key ID</div>
+        <div class="field-current" id="cur-R2_ACCESS_KEY_ID">—</div>
+      </div>
+      <input class="s-input" id="val-R2_ACCESS_KEY_ID" type="password" placeholder="R2 API access key" autocomplete="off">
+      <button class="btn-save" onclick="saveKey('R2_ACCESS_KEY_ID')">Update</button>
+    </div>
+
+    <div class="field-row">
+      <div>
+        <div class="field-label">R2 Secret Access Key</div>
+        <div class="field-current" id="cur-R2_SECRET_ACCESS_KEY">—</div>
+      </div>
+      <input class="s-input" id="val-R2_SECRET_ACCESS_KEY" type="password" placeholder="R2 API secret" autocomplete="off">
+      <button class="btn-save" onclick="saveKey('R2_SECRET_ACCESS_KEY')">Update</button>
+    </div>
+
+    <div class="field-row">
+      <div>
+        <div class="field-label">R2 Bucket Name</div>
+        <div class="field-current" id="cur-R2_BUCKET_NAME">—</div>
+      </div>
+      <input class="s-input" id="val-R2_BUCKET_NAME" placeholder="synthos-backups" autocomplete="off">
+      <button class="btn-save" onclick="saveKey('R2_BUCKET_NAME')">Update</button>
+    </div>
+
+    <hr class="divider">
+    <p style="font-size:0.72rem;color:var(--muted);margin-bottom:1rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase">Backup Encryption</p>
+
+    <div class="field-row">
+      <div>
+        <div class="field-label">Backup Encryption Key</div>
+        <div class="field-current" id="cur-BACKUP_ENCRYPTION_KEY">—</div>
+      </div>
+      <input class="s-input" id="val-BACKUP_ENCRYPTION_KEY" type="password" placeholder="Fernet key (Base64)" autocomplete="off">
+      <button class="btn-save" onclick="saveKey('BACKUP_ENCRYPTION_KEY')">Update</button>
+    </div>
+    <p style="font-size:0.65rem;color:rgba(255,75,110,0.6);margin-top:4px">Store this key safely outside the system. Without it, R2 backups cannot be decrypted.</p>
+
   </div>
 </div>
 
@@ -5343,7 +5490,7 @@ async function loadCurrentValues() {
     const r = await fetch('/api/monitor-settings/current', {headers:{}});
     if (!r.ok) return;
     const d = await r.json();
-    ['ANTHROPIC_API_KEY','RESEND_API_KEY','ALERT_FROM','COMPANY_URL','SECRET_TOKEN'].forEach(k => {
+    ['ANTHROPIC_API_KEY','RESEND_API_KEY','ALERT_FROM','COMPANY_URL','SECRET_TOKEN','R2_ACCOUNT_ID','R2_ACCESS_KEY_ID','R2_SECRET_ACCESS_KEY','R2_BUCKET_NAME','BACKUP_ENCRYPTION_KEY'].forEach(k => {
       const el = document.getElementById('cur-' + k);
       if (el) el.textContent = d[k] ? obfuscate(d[k]) : '— not set';
     });
@@ -6636,6 +6783,22 @@ def api_company_expenses_add():
     amount = float(data.get('amount', 0))
     date = data.get('date', '')
     recurring = int(data.get('recurring', 0))
+    frequency = data.get('frequency', 'one-time') if recurring else 'one-time'
+    next_renewal = data.get('next_renewal', '')
+    if recurring and not next_renewal and date:
+        # Auto-calculate next renewal
+        from datetime import datetime, timedelta
+        try:
+            d = datetime.strptime(date, '%Y-%m-%d')
+            if frequency == 'monthly':
+                nr = d.replace(month=d.month % 12 + 1) if d.month < 12 else d.replace(year=d.year+1, month=1)
+            elif frequency == 'yearly':
+                nr = d.replace(year=d.year + 1)
+            else:
+                nr = d + timedelta(days=30)
+            next_renewal = nr.strftime('%Y-%m-%d')
+        except Exception:
+            pass
     if not cat or not desc or not amount or not date:
         return jsonify({"error": "All fields required"}), 400
     from datetime import datetime, timezone
@@ -6643,13 +6806,47 @@ def api_company_expenses_add():
     try:
         with _db_conn() as conn:
             conn.execute(
-                "INSERT INTO company_expenses (category, description, amount, date, recurring, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (cat, desc, amount, date, recurring, now))
+                "INSERT INTO company_expenses (category, description, amount, date, recurring, frequency, next_renewal, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (cat, desc, amount, date, recurring, frequency, next_renewal or None, now))
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
+
+@app.route("/api/company-expenses/<int:expense_id>", methods=["DELETE"])
+def api_company_expenses_delete(expense_id):
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    try:
+        with _db_conn() as conn:
+            conn.execute("DELETE FROM company_expenses WHERE id=?", (expense_id,))
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/company-expenses/<int:expense_id>", methods=["PUT"])
+def api_company_expenses_update(expense_id):
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    data = request.get_json(force=True)
+    fields = []
+    values = []
+    for key in ('category', 'description', 'amount', 'date', 'recurring', 'frequency', 'next_renewal'):
+        if key in data:
+            fields.append(f"{key}=?")
+            values.append(data[key])
+    if not fields:
+        return jsonify({"error": "no fields to update"}), 400
+    values.append(expense_id)
+    try:
+        with _db_conn() as conn:
+            conn.execute(f"UPDATE company_expenses SET {','.join(fields)} WHERE id=?", values)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/proxy/send-notification", methods=["POST"])
@@ -7099,105 +7296,241 @@ def company_finances_page():
     if not _authorized():
         return redirect(url_for("login"))
     return _subpage_header('Company Finances') + """
-<style>*{box-sizing:border-box;margin:0;padding:0}body{background:#0a0c14;color:rgba(255,255,255,0.88);font-family:'Inter',system-ui,sans-serif;font-size:14px;min-height:100vh}::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:99px}</style>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0a0c14;color:rgba(255,255,255,0.88);font-family:'Inter',system-ui,sans-serif;font-size:14px;min-height:100vh}
+::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:99px}
+.fin-card{background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:20px;margin-bottom:16px}
+.fin-title{font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:12px}
+.fin-input{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:rgba(255,255,255,0.88);font-size:12px;outline:none;width:100%}
+.fin-input:focus{border-color:rgba(0,245,212,0.3)}
+.fin-btn{padding:8px 16px;border-radius:8px;border:none;font-size:12px;font-weight:700;cursor:pointer}
+.fin-btn-teal{background:#00f5d4;color:#000}
+.fin-btn-sm{padding:4px 8px;font-size:9px;font-weight:700;border-radius:5px;border:1px solid rgba(255,255,255,0.08);background:transparent;cursor:pointer;font-family:inherit}
+.fin-btn-edit{color:rgba(255,255,255,0.4)}
+.fin-btn-edit:hover{color:#00f5d4;border-color:rgba(0,245,212,0.3)}
+.fin-btn-del{color:rgba(255,75,110,0.5)}
+.fin-btn-del:hover{color:#ff4b6e;border-color:rgba(255,75,110,0.3)}
+.renewal-badge{font-size:8px;font-weight:700;padding:2px 6px;border-radius:99px;letter-spacing:0.04em}
+.rb-monthly{background:rgba(123,97,255,0.1);border:1px solid rgba(123,97,255,0.2);color:#a78bfa}
+.rb-yearly{background:rgba(255,179,71,0.1);border:1px solid rgba(255,179,71,0.2);color:#ffb347}
+</style>
 <div style="max-width:1000px;margin:0 auto;padding:20px 24px">
   <div style="font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.4);margin-bottom:14px">Revenue &amp; Expenses</div>
 
+  <!-- SUMMARY CARDS -->
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:24px">
-    <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:20px;text-align:center">
-      <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px">Monthly Revenue</div>
-      <div style="font-size:22px;font-weight:700;color:#00f5d4">—</div>
-      <div style="font-size:10px;color:rgba(255,255,255,0.2);margin-top:4px">Module pending</div>
+    <div class="fin-card" style="text-align:center;margin-bottom:0">
+      <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px">Monthly Recurring</div>
+      <div style="font-size:22px;font-weight:700;color:#ff4b6e" id="fin-monthly">$0</div>
     </div>
-    <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:20px;text-align:center">
-      <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px">Monthly Expenses</div>
-      <div style="font-size:22px;font-weight:700;color:#ff4b6e">—</div>
-      <div style="font-size:10px;color:rgba(255,255,255,0.2);margin-top:4px">Module pending</div>
+    <div class="fin-card" style="text-align:center;margin-bottom:0">
+      <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px">Yearly Recurring</div>
+      <div style="font-size:22px;font-weight:700;color:#ffb347" id="fin-yearly">$0</div>
     </div>
-    <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:20px;text-align:center">
-      <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px">Net P&amp;L</div>
-      <div style="font-size:22px;font-weight:700;color:rgba(255,255,255,0.5)">—</div>
-      <div style="font-size:10px;color:rgba(255,255,255,0.2);margin-top:4px">Module pending</div>
+    <div class="fin-card" style="text-align:center;margin-bottom:0">
+      <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px">One-Time Total</div>
+      <div style="font-size:22px;font-weight:700;color:rgba(255,255,255,0.5)" id="fin-onetime">$0</div>
     </div>
-    <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:20px;text-align:center">
-      <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px">API Costs (MTD)</div>
-      <div style="font-size:22px;font-weight:700;color:#f5a623">—</div>
-      <div style="font-size:10px;color:rgba(255,255,255,0.2);margin-top:4px">Fidget agent pending</div>
+    <div class="fin-card" style="text-align:center;margin-bottom:0">
+      <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px">All-Time Total</div>
+      <div style="font-size:22px;font-weight:700;color:#ff4b6e" id="fin-total">$0</div>
     </div>
   </div>
 
-  <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:20px;margin-bottom:16px">
-    <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:12px">Expense Log</div>
-    <div id="exp-list"><div style="text-align:center;padding:30px 0;color:rgba(255,255,255,0.2);font-size:12px">Loading...</div></div>
+  <!-- RECURRING SUBSCRIPTIONS -->
+  <div class="fin-card">
+    <div class="fin-title">Recurring Expenses &amp; Renewals</div>
+    <div id="fin-recurring"><div style="text-align:center;padding:20px;color:rgba(255,255,255,0.2);font-size:12px">No recurring expenses</div></div>
+  </div>
+
+  <!-- ALL EXPENSES -->
+  <div class="fin-card">
+    <div class="fin-title">Expense Log</div>
+    <div id="exp-list"><div style="text-align:center;padding:20px;color:rgba(255,255,255,0.2);font-size:12px">Loading...</div></div>
+  </div>
+
+  <!-- ADD EXPENSE FORM -->
+  <div class="fin-card">
+    <div class="fin-title">Add Expense</div>
+    <div style="display:grid;gap:8px;max-width:600px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <select id="exp-cat" class="fin-input">
+          <option value="infrastructure">Infrastructure</option>
+          <option value="api_costs">API Costs</option>
+          <option value="hardware">Hardware</option>
+          <option value="software">Software/Licenses</option>
+          <option value="hosting">Hosting</option>
+          <option value="subscription">Subscription</option>
+          <option value="other">Other</option>
+        </select>
+        <select id="exp-freq" class="fin-input" onchange="toggleRenewal()">
+          <option value="one-time">One-time</option>
+          <option value="monthly">Monthly</option>
+          <option value="yearly">Yearly</option>
+        </select>
+      </div>
+      <input id="exp-desc" class="fin-input" placeholder="Description (e.g. Cloudflare Pro, Resend API)">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+        <input id="exp-amount" type="number" step="0.01" class="fin-input" placeholder="Amount ($)">
+        <input id="exp-date" type="date" class="fin-input">
+        <input id="exp-renewal" type="date" class="fin-input" placeholder="Next renewal" style="display:none">
+      </div>
+      <button onclick="addExpense()" class="fin-btn fin-btn-teal">Add Expense</button>
+    </div>
+  </div>
+
+  <!-- EDIT MODAL -->
+  <div id="edit-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:999;align-items:center;justify-content:center">
+    <div style="background:#111520;border:1px solid rgba(255,255,255,0.12);border-radius:14px;padding:24px;max-width:400px;width:90%">
+      <div class="fin-title">Edit Expense</div>
+      <input type="hidden" id="edit-id">
+      <div style="display:grid;gap:8px">
+        <select id="edit-cat" class="fin-input"></select>
+        <input id="edit-desc" class="fin-input" placeholder="Description">
+        <input id="edit-amount" type="number" step="0.01" class="fin-input" placeholder="Amount">
+        <input id="edit-date" type="date" class="fin-input">
+        <select id="edit-freq" class="fin-input">
+          <option value="one-time">One-time</option>
+          <option value="monthly">Monthly</option>
+          <option value="yearly">Yearly</option>
+        </select>
+        <input id="edit-renewal" type="date" class="fin-input" placeholder="Next renewal">
+        <div style="display:flex;gap:8px;margin-top:4px">
+          <button onclick="saveEdit()" class="fin-btn fin-btn-teal" style="flex:1">Save</button>
+          <button onclick="closeEdit()" class="fin-btn" style="flex:1;background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.5)">Cancel</button>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
+
 <script>
+function toggleRenewal() {
+  var freq = document.getElementById('exp-freq').value;
+  document.getElementById('exp-renewal').style.display = freq === 'one-time' ? 'none' : 'block';
+}
+function fmt(v) { return '$' + Math.abs(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
+
 async function loadExpenses() {
   try {
     var r = await fetch('/api/company-expenses');
     var d = await r.json();
-    var el = document.getElementById('exp-list');
     var exps = d.expenses || [];
-    if (!exps.length) { el.innerHTML = '<div style="text-align:center;padding:20px;color:rgba(255,255,255,0.2)">No expenses recorded yet</div>'; return; }
+
+    // Summary
+    var monthly = exps.filter(function(e){return e.frequency==='monthly'}).reduce(function(s,e){return s+e.amount},0);
+    var yearly = exps.filter(function(e){return e.frequency==='yearly'}).reduce(function(s,e){return s+e.amount},0);
+    var onetime = exps.filter(function(e){return !e.frequency||e.frequency==='one-time'}).reduce(function(s,e){return s+e.amount},0);
     var total = exps.reduce(function(s,e){return s+e.amount},0);
-    el.innerHTML = '<div style="font-size:11px;color:rgba(255,255,255,0.35);margin-bottom:8px">Total: $' + total.toFixed(2) + '</div>'
-      + '<table style="width:100%;border-collapse:collapse;font-size:12px">'
-      + '<tr style="border-bottom:1px solid rgba(255,255,255,0.08);font-size:10px;color:rgba(255,255,255,0.35);text-transform:uppercase">'
+    document.getElementById('fin-monthly').textContent = fmt(monthly) + '/mo';
+    document.getElementById('fin-yearly').textContent = fmt(yearly) + '/yr';
+    document.getElementById('fin-onetime').textContent = fmt(onetime);
+    document.getElementById('fin-total').textContent = fmt(total);
+
+    // Recurring section
+    var recurring = exps.filter(function(e){return e.frequency && e.frequency !== 'one-time'});
+    var recEl = document.getElementById('fin-recurring');
+    if (!recurring.length) {
+      recEl.innerHTML = '<div style="text-align:center;padding:16px;color:rgba(255,255,255,0.2);font-size:11px">No recurring expenses</div>';
+    } else {
+      recEl.innerHTML = recurring.map(function(e){
+        var badge = e.frequency==='monthly' ? '<span class="renewal-badge rb-monthly">MONTHLY</span>' : '<span class="renewal-badge rb-yearly">YEARLY</span>';
+        var renewal = e.next_renewal ? '<span style="font-size:10px;color:rgba(255,255,255,0.35)">Renews: '+e.next_renewal+'</span>' : '';
+        return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.04)">'
+          + '<div style="flex:1"><div style="font-size:12px;font-weight:600">'+e.description+'</div>'
+          + '<div style="font-size:10px;color:rgba(255,255,255,0.4)">'+e.category+' '+badge+' '+renewal+'</div></div>'
+          + '<div style="font-size:14px;font-weight:700;color:#ff4b6e">'+fmt(e.amount)+'</div>'
+          + '<button class="fin-btn-sm fin-btn-edit" onclick="openEdit('+JSON.stringify(e).replace(/"/g,'&quot;')+')">Edit</button>'
+          + '<button class="fin-btn-sm fin-btn-del" onclick="delExpense('+e.id+')">Delete</button>'
+          + '</div>';
+      }).join('');
+    }
+
+    // All expenses table
+    var el = document.getElementById('exp-list');
+    if (!exps.length) { el.innerHTML = '<div style="text-align:center;padding:20px;color:rgba(255,255,255,0.2)">No expenses recorded</div>'; return; }
+    el.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:12px">'
+      + '<tr style="border-bottom:1px solid rgba(255,255,255,0.08);font-size:9px;color:rgba(255,255,255,0.3);text-transform:uppercase;letter-spacing:0.06em">'
       + '<th style="padding:6px;text-align:left">Date</th><th style="padding:6px;text-align:left">Category</th>'
-      + '<th style="padding:6px;text-align:left">Description</th><th style="padding:6px;text-align:right">Amount</th></tr>'
+      + '<th style="padding:6px;text-align:left">Description</th><th style="padding:6px;text-align:center">Type</th>'
+      + '<th style="padding:6px;text-align:right">Amount</th><th style="padding:6px"></th></tr>'
       + exps.map(function(e){
+        var freq = e.frequency || 'one-time';
+        var badge = freq==='monthly'?'<span class="renewal-badge rb-monthly">MO</span>':freq==='yearly'?'<span class="renewal-badge rb-yearly">YR</span>':'';
         return '<tr style="border-bottom:1px solid rgba(255,255,255,0.04)">'
-          + '<td style="padding:6px;font-size:11px;color:rgba(255,255,255,0.5)">' + e.date + '</td>'
-          + '<td style="padding:6px;font-size:11px">' + e.category + '</td>'
-          + '<td style="padding:6px">' + e.description + '</td>'
-          + '<td style="padding:6px;text-align:right;color:#ff4b6e">$' + e.amount.toFixed(2) + '</td></tr>';
+          + '<td style="padding:6px;font-size:10px;color:rgba(255,255,255,0.4)">'+e.date+'</td>'
+          + '<td style="padding:6px;font-size:11px;color:rgba(255,255,255,0.5)">'+e.category+'</td>'
+          + '<td style="padding:6px">'+e.description+'</td>'
+          + '<td style="padding:6px;text-align:center">'+badge+'</td>'
+          + '<td style="padding:6px;text-align:right;color:#ff4b6e;font-weight:600">'+fmt(e.amount)+'</td>'
+          + '<td style="padding:6px;text-align:right;white-space:nowrap">'
+          + '<button class="fin-btn-sm fin-btn-edit" onclick="openEdit('+JSON.stringify(e).replace(/"/g,'&quot;')+')">Edit</button> '
+          + '<button class="fin-btn-sm fin-btn-del" onclick="delExpense('+e.id+')">Del</button></td></tr>';
       }).join('') + '</table>';
-  } catch(e) {}
+  } catch(e) { console.error('loadExpenses:', e); }
 }
+
 async function addExpense() {
-  var cat = document.getElementById('exp-cat').value;
-  var desc = document.getElementById('exp-desc').value.trim();
-  var amt = parseFloat(document.getElementById('exp-amount').value);
-  var date = document.getElementById('exp-date').value;
-  var rec = document.getElementById('exp-recurring').checked ? 1 : 0;
-  if (!desc || !amt || !date) { alert('All fields required'); return; }
-  await fetch('/api/company-expenses', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({category:cat,description:desc,amount:amt,date:date,recurring:rec})
-  });
+  var freq = document.getElementById('exp-freq').value;
+  var data = {
+    category: document.getElementById('exp-cat').value,
+    description: document.getElementById('exp-desc').value.trim(),
+    amount: parseFloat(document.getElementById('exp-amount').value),
+    date: document.getElementById('exp-date').value,
+    recurring: freq !== 'one-time' ? 1 : 0,
+    frequency: freq,
+    next_renewal: document.getElementById('exp-renewal').value || ''
+  };
+  if (!data.description || !data.amount || !data.date) { alert('All fields required'); return; }
+  await fetch('/api/company-expenses', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
   document.getElementById('exp-desc').value = '';
   document.getElementById('exp-amount').value = '';
   loadExpenses();
 }
+
+async function delExpense(id) {
+  if (!confirm('Delete this expense?')) return;
+  await fetch('/api/company-expenses/' + id, {method:'DELETE'});
+  loadExpenses();
+}
+
+function openEdit(e) {
+  document.getElementById('edit-id').value = e.id;
+  document.getElementById('edit-cat').innerHTML = document.getElementById('exp-cat').innerHTML;
+  document.getElementById('edit-cat').value = e.category;
+  document.getElementById('edit-desc').value = e.description;
+  document.getElementById('edit-amount').value = e.amount;
+  document.getElementById('edit-date').value = e.date;
+  document.getElementById('edit-freq').value = e.frequency || 'one-time';
+  document.getElementById('edit-renewal').value = e.next_renewal || '';
+  document.getElementById('edit-overlay').style.display = 'flex';
+}
+function closeEdit() { document.getElementById('edit-overlay').style.display = 'none'; }
+async function saveEdit() {
+  var id = document.getElementById('edit-id').value;
+  var freq = document.getElementById('edit-freq').value;
+  var data = {
+    category: document.getElementById('edit-cat').value,
+    description: document.getElementById('edit-desc').value.trim(),
+    amount: parseFloat(document.getElementById('edit-amount').value),
+    date: document.getElementById('edit-date').value,
+    frequency: freq,
+    recurring: freq !== 'one-time' ? 1 : 0,
+    next_renewal: document.getElementById('edit-renewal').value || ''
+  };
+  await fetch('/api/company-expenses/' + id, {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+  closeEdit();
+  loadExpenses();
+}
+
 document.getElementById('exp-date').value = new Date().toISOString().slice(0,10);
 loadExpenses();
 </script>
-  </div>
-
-  <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:20px">
-    <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:12px">Manual Expense Entry</div>
-    <div style="display:grid;gap:8px;max-width:500px">
-      <select id="exp-cat" style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:rgba(255,255,255,0.88);font-size:12px">
-        <option value="infrastructure">Infrastructure</option>
-        <option value="api_costs">API Costs</option>
-        <option value="hardware">Hardware</option>
-        <option value="software">Software/Licenses</option>
-        <option value="hosting">Hosting</option>
-        <option value="other">Other</option>
-      </select>
-      <input id="exp-desc" placeholder="Description" style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:rgba(255,255,255,0.88);font-size:12px;outline:none">
-      <div style="display:flex;gap:8px">
-        <input id="exp-amount" type="number" step="0.01" placeholder="Amount ($)" style="flex:1;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:rgba(255,255,255,0.88);font-size:12px;outline:none">
-        <input id="exp-date" type="date" style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:rgba(255,255,255,0.88);font-size:12px;outline:none">
-      </div>
-      <label style="font-size:11px;color:rgba(255,255,255,0.4);display:flex;align-items:center;gap:6px">
-        <input type="checkbox" id="exp-recurring"> Recurring monthly
-      </label>
-      <button onclick="addExpense()" style="padding:8px;border-radius:8px;border:none;background:#00f5d4;color:#000;font-size:12px;font-weight:700;cursor:pointer">Add Expense</button>
-    </div>
-  </div>
-</div>
 """
+
+
+# ── REPORTS PAGE"""
 
 
 # ── REPORTS PAGE ──────────────────────────────────────────────────────────────

@@ -1,0 +1,177 @@
+{
+  "meta": {
+    "project": "Synthos",
+    "version": "3.0",
+    "total_phases": 10,
+    "current_phase": 5,
+    "last_updated": "2026-04-13T16:30:00-04:00"
+  },
+  "phases": [
+    {
+      "id": 1, "name": "Core Trading Stack", "status": "complete",
+      "tasks": [
+        {"task": "14-gate trade logic agent", "done": true},
+        {"task": "22-gate news classification agent", "done": true},
+        {"task": "27-gate sentiment/deterioration agent", "done": true},
+        {"task": "Sector screener agent", "done": true},
+        {"task": "Retail scheduler with per-session locks", "done": true},
+        {"task": "Retail database (signals.db) with full schema", "done": true},
+        {"task": "Alpaca paper trading integration", "done": true},
+        {"task": "BIL treasury reserve system", "done": true}
+      ]
+    },
+    {
+      "id": 2, "name": "Customer Portal", "status": "complete",
+      "tasks": [
+        {"task": "Flask retail portal with auth", "done": true},
+        {"task": "Customer dashboard (positions, history, planning)", "done": true},
+        {"task": "Config panel with Conservative/Moderate/Aggressive presets", "done": true},
+        {"task": "Support ticket system with threaded replies", "done": true},
+        {"task": "Direct messaging (admin to customer)", "done": true},
+        {"task": "Setup guide for new customers", "done": true},
+        {"task": "Georgia-only signup with state/zip verification", "done": true},
+        {"task": "Notification bell with real-time alerts", "done": true},
+        {"task": "15-minute auto-logout for non-admin", "done": true}
+      ]
+    },
+    {
+      "id": 3, "name": "Multi-Tenant Architecture", "status": "complete",
+      "tasks": [
+        {"task": "Per-customer signals.db isolation", "done": true},
+        {"task": "customer_settings key-value store", "done": true},
+        {"task": "Shared intelligence (_shared_db for news/intel)", "done": true},
+        {"task": "Per-customer trade agent execution", "done": true},
+        {"task": "Cross-account leak prevention (Alpaca keys, mode, kill switch)", "done": true},
+        {"task": "Preset persistence (PRESET_NAME saved to DB)", "done": true},
+        {"task": "Shared live_prices table + price poller agent", "done": true}
+      ]
+    },
+    {
+      "id": 4, "name": "Company Operations Portal", "status": "complete",
+      "tasks": [
+        {"task": "Monitor dashboard with fleet stats", "done": true},
+        {"task": "Customer support queue with proxy routes", "done": true},
+        {"task": "Customer billing page", "done": true},
+        {"task": "Signup approval workflow", "done": true},
+        {"task": "Command Center slide-out (manual agent triggers)", "done": true},
+        {"task": "Market Activity chart (buys/sells/sessions)", "done": true},
+        {"task": "System Architecture reference page", "done": true},
+        {"task": "Project Status dashboard", "done": true}
+      ]
+    },
+    {
+      "id": 5, "name": "Infrastructure Hardening", "status": "in_progress",
+      "tasks": [
+        {"task": "EEPROM boot order set (NVMe-first pi5, USB-first pi4b)", "done": true},
+        {"task": "Desktop environment removed from pi4b", "done": true},
+        {"task": "Sentinel display removed from pi4b (runs on pi2w)", "done": true},
+        {"task": "Deprecated agents cleaned (timekeeper, patches, blueprint)", "done": true},
+        {"task": "Ghost cron entries removed", "done": true},
+        {"task": "company_lock.py write-access protection for company.db", "done": true},
+        {"task": "Auditor cross-node SSH scanning (pi4b, pi5, pi2w)", "done": true},
+        {"task": "Backup chain: pi5 nightly archive to pi4b staging", "done": true},
+        {"task": "NVMe SSD for pi5 (ordered, pending install)", "done": false},
+        {"task": "USB SSD for pi4b (ordered, pending install)", "done": false},
+        {"task": "Strongbox R2 cloud backup (needs Cloudflare setup)", "done": false},
+        {"task": "Full disaster recovery drill", "done": false},
+        {"task": "Unified installer (company/retail/monitor node types)", "done": false}
+      ]
+    },
+    {
+      "id": 6, "name": "Agent Optimization", "status": "in_progress",
+      "tasks": [
+        {"task": "Yahoo Finance circuit breaker (sentiment agent)", "done": true},
+        {"task": "Interrogation skip for WATCH signals (news agent)", "done": true},
+        {"task": "Numeric tier fix in trade agent", "done": true},
+        {"task": "BIL excluded from deployed capital calculation", "done": true},
+        {"task": "get_bars null safety fix", "done": true},
+        {"task": "Position reconciliation with Alpaca", "done": true},
+        {"task": "Agent lock graceful degradation (portal shows DB data)", "done": true},
+        {"task": "Sentiment agent reads from live_prices (Phase 2)", "done": false},
+        {"task": "Validation peer framework (Phase 10 — interrogation)", "done": false}
+      ]
+    },
+    {
+      "id": 7, "name": "Billing & Payments", "status": "planned",
+      "tasks": [
+        {"task": "Stripe Checkout integration", "done": false},
+        {"task": "Subscription management (upgrade/downgrade)", "done": false},
+        {"task": "Invoice generation", "done": false},
+        {"task": "Grace period enforcement", "done": false}
+      ]
+    },
+    {
+      "id": 8, "name": "Scaling", "status": "planned",
+      "tasks": [
+        {"task": "Gunicorn multi-worker portal", "done": false},
+        {"task": "PostgreSQL migration evaluation", "done": false},
+        {"task": "Dedicated server migration (at 200+ customers)", "done": false},
+        {"task": "Load balancer for multi-node portal", "done": false}
+      ]
+    },
+    {
+      "id": 9, "name": "Advanced Monitoring", "status": "planned",
+      "tasks": [
+        {"task": "Watchdog authority on pi4b (remote restart via SSH)", "done": false},
+        {"task": "24-hour session tracking history", "done": false},
+        {"task": "Performance analytics per customer", "done": false},
+        {"task": "Automated rollback on repeated failures", "done": false}
+      ]
+    },
+    {
+      "id": 10, "name": "Intelligence V2", "status": "planned",
+      "tasks": [
+        {"task": "Cross-Pi interrogation peers (bias checking)", "done": false},
+        {"task": "Event calendar integration (earnings, FOMC)", "done": false},
+        {"task": "Options flow data integration", "done": false},
+        {"task": "Machine learning signal scoring", "done": false}
+      ]
+    }
+  ],
+  "agents": {
+    "retail_pi": [
+      {"alias": "trader", "file": "retail_trade_logic_agent.py", "job": "14-gate trade execution", "status": "built"},
+      {"alias": "research", "file": "retail_news_agent.py", "job": "22-gate news classification", "status": "built"},
+      {"alias": "sentiment", "file": "retail_market_sentiment_agent.py", "job": "27-gate deterioration detection", "status": "built"},
+      {"alias": "screener", "file": "retail_sector_screener.py", "job": "Sector momentum scoring", "status": "built"},
+      {"alias": "scheduler", "file": "retail_scheduler.py", "job": "Session orchestrator + DB locks", "status": "built"},
+      {"alias": "watchdog", "file": "retail_watchdog.py", "job": "Crash monitor, auto-restart", "status": "built"},
+      {"alias": "portal", "file": "retail_portal.py", "job": "Customer web dashboard + API", "status": "built"},
+      {"alias": "heartbeat", "file": "retail_heartbeat.py", "job": "Agent status POST to monitor", "status": "built"},
+      {"alias": "boot", "file": "retail_boot_sequence.py", "job": "Network wait, integrity check", "status": "built"},
+      {"alias": "shutdown", "file": "retail_shutdown.py", "job": "Graceful pre-maintenance shutdown", "status": "built"},
+      {"alias": "backup", "file": "retail_backup.py", "job": "Nightly archive to pi4b", "status": "built"},
+      {"alias": "poller", "file": "retail_price_poller.py", "job": "Shared live_prices for all customers", "status": "built"},
+      {"alias": "patcher", "file": "retail_patch.py", "job": "Safe file updater with rollback", "status": "built"},
+      {"alias": "listener", "file": "retail_interrogation_listener.py", "job": "UDP cross-validation responder", "status": "built"}
+    ],
+    "company_pi": [
+      {"alias": "monitor", "file": "synthos_monitor.py", "job": "Admin portal + fleet dashboard", "status": "built"},
+      {"alias": "auditor", "file": "company_auditor.py", "job": "Cross-node log scanner (SSH)", "status": "built"},
+      {"alias": "scoop", "file": "company_scoop.py", "job": "Email queue drain, Resend dispatch", "status": "built"},
+      {"alias": "sentinel", "file": "company_sentinel.py", "job": "Heartbeat receiver, silence alerts", "status": "built"},
+      {"alias": "server", "file": "company_server.py", "job": "Event queue API, backup receiver", "status": "built"},
+      {"alias": "archivist", "file": "company_archivist.py", "job": "DB row archival to compressed JSON", "status": "built"},
+      {"alias": "vault", "file": "company_vault.py", "job": "License keys, compliance, secrets", "status": "built"},
+      {"alias": "fidget", "file": "company_fidget.py", "job": "Keep-alive, usage anomaly detection", "status": "built"},
+      {"alias": "librarian", "file": "company_librarian.py", "job": "Package audit, CVE scan, all nodes", "status": "built"},
+      {"alias": "strongbox", "file": "company_strongbox.py", "job": "Encrypt + R2 cloud upload", "status": "planned"}
+    ]
+  },
+  "security": [
+    {"item": "Encrypted Alpaca credentials in auth.db", "repo": "retail_portal", "status": "done"},
+    {"item": "Per-customer DB isolation", "repo": "retail_database", "status": "done"},
+    {"item": "Session cookie HTTPOnly + SameSite=Strict", "repo": "retail_portal", "status": "done"},
+    {"item": "Admin-only API key fallback", "repo": "retail_portal", "status": "done"},
+    {"item": "fcntl write locks (retail scheduler + company_lock)", "repo": "both", "status": "done"},
+    {"item": "EEPROM NVMe/USB boot priority", "repo": "hardware", "status": "done"},
+    {"item": "AES-256 backup encryption (Strongbox)", "repo": "company", "status": "pending"},
+    {"item": "R2 off-site cloud backup", "repo": "company", "status": "pending"},
+    {"item": "Rate limiting on login", "repo": "retail_portal", "status": "done"},
+    {"item": "CSP + security headers on all responses", "repo": "retail_portal", "status": "done"}
+  ],
+  "blockers": [
+    {"title": "NVMe + USB SSD hardware pending", "severity": "low", "note": "Ordered. Current SD cards work, SSDs improve reliability + speed."},
+    {"title": "Strongbox needs Cloudflare R2 setup", "severity": "medium", "note": "Backups stage locally on pi4b. No off-site copy until R2 configured."}
+  ]
+}

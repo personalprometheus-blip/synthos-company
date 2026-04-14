@@ -88,9 +88,9 @@ REMOTE_NODES = {
     'pi2w_monitor': {
         'ssh_host': 'pi0-2monitor',
         'label': 'Monitor Node (pi2w)',
-        'log_dir': '/home/pi-02w/synthos-monitor/logs',
+        'log_dir': '/home/pi-02w/synthos/logs',
         'services': [],
-        'processes': ['node_heartbeat.py'],
+        'processes': ['synthos_monitor.py'],
     },
 }
 
@@ -481,6 +481,16 @@ def scan_all_logs() -> dict:
             })
 
     summary = _dedup_and_store(all_issues)
+
+    # Periodic WAL checkpoint — prevent company.db WAL from growing unbounded
+    try:
+        company_db = os.getenv('COMPANY_DB_PATH', str(_PROJECT_DIR / 'data' / 'company.db'))
+        _wal_conn = sqlite3.connect(company_db, timeout=5)
+        _wal_conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+        _wal_conn.close()
+    except Exception:
+        pass  # non-critical — checkpoint will happen next cycle
+
     return summary
 
 

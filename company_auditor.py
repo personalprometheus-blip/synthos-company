@@ -90,7 +90,14 @@ REMOTE_NODES = {
         'label': 'Monitor Node (pi2w)',
         'log_dir': '/home/pi-02w/synthos/logs',
         'services': [],
-        'processes': ['synthos_monitor.py'],
+        'processes': ['node_heartbeat.py'],
+    },
+    'pi2w_sentinel': {
+        'ssh_host': 'Sentineldisplay',
+        'label': 'Sentinel Display (pi2w)',
+        'log_dir': '/home/pi-02w/sentinel/logs',
+        'services': [],
+        'processes': ['sentinel_display.py'],
     },
 }
 

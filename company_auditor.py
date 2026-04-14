@@ -480,6 +480,13 @@ def scan_all_logs() -> dict:
                 'count': 1,
             })
 
+    # Customer database health checks (negative cash, BIL, orphans, stale activity)
+    try:
+        db_issues = check_customer_db_health()
+        all_issues.extend(db_issues)
+    except Exception as e:
+        log.warning(f"Customer DB health check failed: {e}")
+
     summary = _dedup_and_store(all_issues)
 
     # Periodic WAL checkpoint — prevent company.db WAL from growing unbounded
@@ -523,6 +530,59 @@ def _notify_scoop(subject: str, body: str, severity: str = 'high'):
 
 
 # ── SCAN CYCLE ────────────────────────────────────────────────────────────
+
+
+
+# ── CUSTOMER DATABASE HEALTH CHECKS ──────────────────────────────────────
+
+def check_customer_db_health() -> list[dict]:
+    """
+    SSH into pi5, scan ALL customer databases for data anomalies:
+    - Negative cash (margin overuse)
+    - BIL over-allocation (value > 50% of equity)
+    - Orphan positions (in DB but not on Alpaca, or vice versa)
+    - Missing customer_settings
+    - Portfolio value mismatch (DB vs Alpaca)
+    - Stale heartbeats (no agent activity in 24h)
+    """
+    issues = []
+    host = 'SentinelRetail'
+
+    # Run a single SSH command that checks all customers at once
+
+
+    ok, output = _ssh_run(host, "python3 /home/pi516gb/synthos/synthos_build/src/customer_health_check.py", timeout=30)
+    if not ok:
+        issues.append({
+            'source_file': 'customer_db::unreachable',
+            'severity': 'high',
+            'pattern': 'CUSTOMER_DB_CHECK_FAILED',
+            'context': f'Could not run customer DB health check: {output[:80]}',
+            'line_num': 0,
+            'count': 1,
+        })
+        return issues
+
+    try:
+        import json as _json
+        results = _json.loads(output.strip())
+        for r in results:
+            issues.append({
+                'source_file': f"customer_db::{r['cid']}",
+                'severity': r['severity'],
+                'pattern': r['issue'],
+                'context': r['detail'],
+                'line_num': 0,
+                'count': 1,
+            })
+        if results:
+            log.warning(f"Customer DB health: {len(results)} issue(s) found")
+        else:
+            log.info("Customer DB health: all accounts clean")
+    except Exception as e:
+        log.warning(f"Customer DB health parse error: {e}")
+
+    return issues
 
 def run_scan() -> dict:
     """Run one audit scan. Returns summary dict."""

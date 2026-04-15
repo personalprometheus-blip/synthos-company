@@ -2199,7 +2199,7 @@ function renderNodeRoster() {
       + '<button class="mute-btn' + (pi.silenced ? ' muted' : '') + '" '
       + 'onclick="event.stopPropagation();toggleSilence(\'' + escHtml(pi.pi_id) + '\')" '
       + 'title="' + (pi.silenced ? 'Unmute alerts' : 'Mute alerts') + '">'
-      + (pi.silenced ? '\uD83D\uDD07' : '\uD83D\uDD14')
+      + (pi.silenced ? '\U0001F507' : '\U0001F514')
       + '</button>'
       + '<button class="pwr-btn" title="Reboot" data-piid="' + pi.pi_id + '" data-act="reboot" onclick="nodePower(this.dataset.piid,this.dataset.act,event)">'
         + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>'
@@ -2790,7 +2790,7 @@ async function toggleSilence(piId) {
     if (piData[piId]) piData[piId].silenced = d.silenced;
     renderNodeRoster();
     const lbl = (piData[piId] && piData[piId].label) || piId;
-    toast(d.silenced ? '\uD83D\uDD07 Alerts muted for ' + lbl : '\uD83D\uDD14 Alerts unmuted for ' + lbl, 'ok');
+    toast(d.silenced ? '\U0001F507 Alerts muted for ' + lbl : '\U0001F514 Alerts unmuted for ' + lbl, 'ok');
   } catch(e) { toast('Error: ' + e, 'err'); }
 }
 function cancelDelete() {

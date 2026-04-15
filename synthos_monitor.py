@@ -3229,6 +3229,7 @@ function buildMktChart() {
                 return line;
               }
               var v=Math.abs(c.parsed.y);
+              if(!v) return null;
               return c.dataset.label+': $'+v.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
             },
             afterBody:function(items){

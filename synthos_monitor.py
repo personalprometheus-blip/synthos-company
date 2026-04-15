@@ -310,9 +310,11 @@ commands_lock    = threading.Lock()
 
 
 def save_registry():
-    """Persist registry to disk so Pi state survives monitor restarts."""
+    """Persist registry to disk so Pi state survives monitor restarts.
+    Uses atomic write (temp file + rename) to prevent corruption on crash/restart."""
     try:
         import json as _json
+        import tempfile
         serializable = {}
         for pi_id, data in pi_registry.items():
             entry = dict(data)
@@ -321,8 +323,18 @@ def save_registry():
             if 'last_report' in entry:
                 entry['last_report'] = entry['last_report']  # already serializable
             serializable[pi_id] = entry
-        with open(REGISTRY_FILE, 'w') as f:
-            _json.dump(serializable, f, indent=2)
+        # Atomic write: write to temp file, then rename (POSIX rename is atomic)
+        reg_dir = os.path.dirname(REGISTRY_FILE)
+        fd, tmp_path = tempfile.mkstemp(dir=reg_dir, suffix='.tmp')
+        try:
+            with os.fdopen(fd, 'w') as f:
+                _json.dump(serializable, f, indent=2)
+            os.replace(tmp_path, REGISTRY_FILE)
+        except Exception:
+            # Clean up temp file on failure
+            try: os.unlink(tmp_path)
+            except OSError: pass
+            raise
     except Exception as e:
         print(f"[Registry] Save failed: {e}")
 

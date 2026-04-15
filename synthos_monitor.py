@@ -96,9 +96,10 @@ os.makedirs(DISPLAY_DROP_DIR, exist_ok=True)
 @contextmanager
 def _db_conn():
     """Thread-safe SQLite connection with WAL mode."""
-    conn = sqlite3.connect(DB_PATH, timeout=10, check_same_thread=False)
+    conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=15000")
     conn.execute("PRAGMA foreign_keys=ON")
     try:
         yield conn
@@ -108,6 +109,103 @@ def _db_conn():
         raise
     finally:
         conn.close()
+
+
+# ── Support DB (separate from company.db to avoid daemon lock contention) ──
+SUPPORT_DB_PATH = os.path.join(DATA_DIR, "support.db")
+
+@contextmanager
+def _support_conn():
+    """Dedicated connection for support/admin tools — never competes with daemon agents."""
+    conn = sqlite3.connect(SUPPORT_DB_PATH, timeout=30, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=15000")
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def init_support_db():
+    """Create support database schema. Separate from company.db."""
+    with _support_conn() as conn:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS beta_tests (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL,
+                required_confirmations INTEGER NOT NULL DEFAULT 2,
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT NOT NULL,
+                cleared_at TEXT,
+                cancelled_at TEXT,
+                archived_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS company_expenses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category TEXT NOT NULL,
+                description TEXT NOT NULL,
+                amount REAL NOT NULL,
+                date TEXT NOT NULL,
+                recurring INTEGER NOT NULL DEFAULT 0,
+                frequency TEXT DEFAULT 'one-time',
+                next_renewal TEXT,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS api_key_metadata (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                node TEXT NOT NULL,
+                key_name TEXT NOT NULL,
+                expires_at TEXT,
+                backup_value TEXT,
+                notes TEXT,
+                updated_at TEXT NOT NULL,
+                UNIQUE(node, key_name)
+            );
+        """)
+    # Migrate data from company.db if support.db tables are empty
+    try:
+        with _support_conn() as sconn:
+            count = sconn.execute("SELECT COUNT(*) FROM beta_tests").fetchone()[0]
+        if count == 0:
+            with _db_conn() as cconn:
+                try:
+                    rows = cconn.execute("SELECT * FROM beta_tests").fetchall()
+                    if rows:
+                        with _support_conn() as sconn:
+                            for r in rows:
+                                try:
+                                    sconn.execute(
+                                        "INSERT OR IGNORE INTO beta_tests (id,title,description,required_confirmations,status,created_at,cleared_at) VALUES (?,?,?,?,?,?,?)",
+                                        (r['id'],r['title'],r['description'],r['required_confirmations'],r['status'],r['created_at'],r['cleared_at']))
+                                except Exception:
+                                    pass
+                        print(f"[Support DB] Migrated {len(rows)} beta tests from company.db")
+                except Exception:
+                    pass
+            with _db_conn() as cconn:
+                try:
+                    rows = cconn.execute("SELECT * FROM company_expenses").fetchall()
+                    if rows:
+                        with _support_conn() as sconn:
+                            for r in rows:
+                                try:
+                                    sconn.execute(
+                                        "INSERT OR IGNORE INTO company_expenses (id,category,description,amount,date,recurring,frequency,next_renewal,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                                        (r['id'],r['category'],r['description'],r['amount'],r['date'],r['recurring'],r['frequency'],r['next_renewal'],r['created_at']))
+                                except Exception:
+                                    pass
+                        print(f"[Support DB] Migrated {len(rows)} expenses from company.db")
+                except Exception:
+                    pass
+    except Exception as e:
+        print(f"[Support DB] Migration check: {e}")
+    print(f"[Support DB] Initialized: {SUPPORT_DB_PATH}")
 
 
 def init_db():
@@ -153,28 +251,6 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_pi_events_pi   ON pi_events(pi_id, recorded_at);
             CREATE INDEX IF NOT EXISTS idx_pi_events_type ON pi_events(event_type, recorded_at);
 
-            CREATE TABLE IF NOT EXISTS company_expenses (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                category TEXT NOT NULL,
-                description TEXT NOT NULL,
-                amount REAL NOT NULL,
-                date TEXT NOT NULL,
-                recurring INTEGER NOT NULL DEFAULT 0,
-                frequency TEXT DEFAULT 'one-time',
-                next_renewal TEXT,
-                created_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS beta_tests (
-                id TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
-                description TEXT NOT NULL,
-                required_confirmations INTEGER NOT NULL DEFAULT 2,
-                status TEXT NOT NULL DEFAULT 'active',
-                created_at TEXT NOT NULL,
-                cleared_at TEXT
-            );
-
             CREATE TABLE IF NOT EXISTS api_key_metadata (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 node TEXT NOT NULL,
@@ -198,6 +274,7 @@ def init_db():
             ("subject",           "ALTER TABLE scoop_queue ADD COLUMN subject TEXT NOT NULL DEFAULT ''"),
             ("body",              "ALTER TABLE scoop_queue ADD COLUMN body TEXT NOT NULL DEFAULT ''"),
             ("source_agent",      "ALTER TABLE scoop_queue ADD COLUMN source_agent TEXT NOT NULL DEFAULT ''"),
+            ("started_at",        "ALTER TABLE scoop_queue ADD COLUMN started_at TEXT"),
             ("queued_at",         "ALTER TABLE scoop_queue ADD COLUMN queued_at TEXT"),
             ("dispatched_at",     "ALTER TABLE scoop_queue ADD COLUMN dispatched_at TEXT"),
             ("dispatch_attempts", "ALTER TABLE scoop_queue ADD COLUMN dispatch_attempts INTEGER NOT NULL DEFAULT 0"),
@@ -223,6 +300,8 @@ def init_db():
 # ── State ─────────────────────────────────────────────────────────────────────
 pi_registry   = {}
 registry_lock = threading.Lock()
+OVERRIDES_FILE = os.path.join(DATA_DIR, ".admin_overrides.json")
+admin_overrides = {"trading_gate": "ALL", "operating_mode": "ALL"}
 
 # ── Global Commands ──────────────────────────────────────────────────────────
 # Pending commands are stored per-pi_id and popped on next heartbeat response.
@@ -268,6 +347,26 @@ def load_registry():
         print(f"[Registry] Loaded {len(pi_registry)} Pi(s) from disk")
     except Exception as e:
         print(f"[Registry] Load failed (starting fresh): {e}")
+
+
+# ── Admin Overrides ──────────────────────────────────────────────────────────
+def save_overrides():
+    try:
+        import json as _json
+        with open(OVERRIDES_FILE, 'w') as f:
+            _json.dump(admin_overrides, f)
+    except Exception as e:
+        print(f"[Overrides] Save failed: {e}")
+
+def load_overrides():
+    global admin_overrides
+    try:
+        import json as _json
+        with open(OVERRIDES_FILE, 'r') as f:
+            admin_overrides.update(_json.load(f))
+        print(f"[Overrides] Loaded: trading_gate={admin_overrides['trading_gate']} operating_mode={admin_overrides['operating_mode']}")
+    except Exception:
+        pass
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -365,7 +464,8 @@ def silence_detector():
             for pi_id, data in pi_registry.items():
                 age_hours = (now_utc() - data["last_seen"]).total_seconds() / 3600
                 if age_hours >= SILENCE_WINDOW_HOURS and not data["alerted"]:
-                    send_alert(pi_id, data["last_seen"])
+                    if not data.get("silenced"):
+                        send_alert(pi_id, data["last_seen"])
                     data["alerted"] = True
                 elif age_hours < SILENCE_WINDOW_HOURS and data["alerted"]:
                     data["alerted"] = False
@@ -387,7 +487,9 @@ def heartbeat():
             "last_seen":         now_utc(),
             "first_seen":        existing.get("first_seen", now_utc()),
             "alerted":           False,
-            # Identity
+            "silenced":          existing.get("silenced", False),
+            # Identity + network
+            "ip":                request.remote_addr or existing.get("ip", ""),
             "label":             data.get("label",          existing.get("label", pi_id)),
             "email":             data.get("email",          existing.get("email", "")),
             "pi_id":             pi_id,
@@ -404,7 +506,7 @@ def heartbeat():
             "agents":            {**existing.get("agents", {}), **data.get("agents", {})},
             "uptime":            data.get("uptime",         existing.get("uptime", None)),
             "uptime_secs":       data.get("uptime_secs",    existing.get("uptime_secs", 0)),
-            "operating_mode":    data.get("operating_mode", existing.get("operating_mode", "SUPERVISED")),
+            "operating_mode":    data.get("operating_mode", existing.get("operating_mode", "MANAGED")),
             "trading_mode":      data.get("trading_mode",   existing.get("trading_mode", "PAPER")),
             "kill_switch":       data.get("kill_switch",    existing.get("kill_switch", False)),
             "last_errors":       data.get("last_errors",    existing.get("last_errors", [])),
@@ -461,6 +563,9 @@ def api_pi_detail(pi_id):
 
 @app.route("/api/status", methods=["GET"])
 def api_status():
+    token = request.headers.get("X-Token", "")
+    if token != SECRET_TOKEN and not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
     with registry_lock:
         out = {}
         for pi_id, data in pi_registry.items():
@@ -481,7 +586,7 @@ def api_status():
                 "trades_today":      data.get("trades_today", 0),
                 "agents":            data.get("agents", {}),
                 "uptime":            data.get("uptime", None),
-                "operating_mode":    data.get("operating_mode", "SUPERVISED"),
+                "operating_mode":    data.get("operating_mode", "MANAGED"),
                 "trading_mode":      data.get("trading_mode", "PAPER"),
                 "kill_switch":       data.get("kill_switch", False),
                 "cpu_percent":    data.get("cpu_percent"),
@@ -500,6 +605,7 @@ def api_status():
                 "net_bytes_recv": data.get("net_bytes_recv"),
                 "cpu_temp":       data.get("cpu_temp"),
                 "history":        data.get("history", []),
+                "silenced":       data.get("silenced", False),
             }
     return jsonify(out), 200
 
@@ -553,6 +659,7 @@ def receive_report():
                 "email":      "",
                 "label":      pi_id,
                 "alerted":    False,
+                "silenced":   False,
                 "first_seen": now_utc(),
             }
         pi_registry[pi_id]["last_report"] = {
@@ -573,6 +680,8 @@ def receive_report():
 @app.route("/api/reports", methods=["GET"])
 def api_reports():
     """Return latest daily report for each Pi."""
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
     with registry_lock:
         out = {}
         for pi_id, data in pi_registry.items():
@@ -693,8 +802,8 @@ def cmd_operating_mode():
         return jsonify({"error": "unauthorized"}), 401
     data = request.get_json(silent=True) or {}
     mode = data.get("mode", "").upper()
-    if mode not in ("SUPERVISED", "AUTONOMOUS"):
-        return jsonify({"error": "mode must be SUPERVISED or AUTONOMOUS"}), 400
+    if mode not in ("MANAGED", "AUTOMATIC"):
+        return jsonify({"error": "mode must be MANAGED or AUTOMATIC"}), 400
     targets = _queue_command("set_operating_mode", mode, data.get("targets", "all"))
     return jsonify({"ok": True, "command": "set_operating_mode", "value": mode,
                     "queued_for": targets}), 200
@@ -776,6 +885,9 @@ def cmd_wave_override():
         "override": data.get("override", False),
         "color": data.get("color"),
         "amplitude": data.get("amplitude"),
+        "speed": data.get("speed"),
+        "frequency": data.get("frequency"),
+        "direction": data.get("direction"),
     })
     import subprocess as _sp
     try:
@@ -816,6 +928,76 @@ def cmd_agent_status():
         return jsonify({"ok": True, "events": []}), 200
     except Exception as e:
         return jsonify({"ok": True, "events": [], "error": str(e)}), 200
+
+# ── Admin Override API ────────────────────────────────────────────────────────
+@app.route("/api/admin-override", methods=["GET", "POST"])
+def api_admin_override():
+    if request.method == "GET":
+        return jsonify(admin_overrides), 200
+
+    token = request.headers.get("X-Token", "")
+    if token != SECRET_TOKEN and not (request.cookies.get("auth") == SECRET_TOKEN):
+        return jsonify({"error": "unauthorized"}), 401
+
+    data = request.get_json(silent=True) or {}
+    tg = data.get("trading_gate", admin_overrides["trading_gate"]).upper()
+    om = data.get("operating_mode", admin_overrides["operating_mode"]).upper()
+
+    if tg not in ("PAPER", "LIVE", "ALL"):
+        return jsonify({"ok": False, "error": "trading_gate must be PAPER, LIVE, or ALL"}), 400
+    if om not in ("MANAGED", "AUTOMATIC", "ALL"):
+        return jsonify({"ok": False, "error": "operating_mode must be MANAGED, AUTOMATIC, or ALL"}), 400
+
+    admin_overrides["trading_gate"] = tg
+    admin_overrides["operating_mode"] = om
+    admin_overrides["updated_at"] = now_utc().isoformat()
+    save_overrides()
+
+    # Push to all registered retail Pis
+    import requests as _req
+    pushed = []
+    errors = []
+    with registry_lock:
+        pis = list(pi_registry.items())
+    for pi_id, pi_data in pis:
+        if pi_id == os.environ.get("PI_ID", ""):
+            continue
+        ip = pi_data.get("ip", "")
+        if not ip:
+            continue
+        port = 5001
+        try:
+            r = _req.post(
+                f"http://{ip}:{port}/api/admin-override",
+                headers={"X-Token": SECRET_TOKEN, "Content-Type": "application/json"},
+                json={"trading_gate": tg, "operating_mode": om},
+                timeout=5,
+            )
+            if r.ok:
+                pushed.append(pi_id)
+            else:
+                errors.append(f"{pi_id}: {r.status_code}")
+        except Exception as e:
+            errors.append(f"{pi_id}: {e}")
+
+    print(f"[Override] trading_gate={tg} operating_mode={om} pushed={pushed} errors={errors}")
+    return jsonify({"ok": True, "pushed_to": pushed, "errors": errors}), 200
+
+
+# ── Silence Toggle API ────────────────────────────────────────────────────────
+@app.route("/api/silence/<pi_id>", methods=["POST"])
+def api_silence_toggle(pi_id):
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    with registry_lock:
+        if pi_id not in pi_registry:
+            return jsonify({"error": "not found"}), 404
+        pi_registry[pi_id]["silenced"] = not pi_registry[pi_id].get("silenced", False)
+        silenced = pi_registry[pi_id]["silenced"]
+        save_registry()
+    print(f"[Silence] {pi_id} silenced={silenced}")
+    return jsonify({"ok": True, "silenced": silenced}), 200
+
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 DASHBOARD = """<!DOCTYPE html>
@@ -905,6 +1087,7 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 .cmd-btn.active-teal{border-color:var(--teal);color:var(--teal);background:rgba(0,245,212,0.1);box-shadow:0 0 8px rgba(0,245,212,0.15)}
 .cmd-btn.active-amber{border-color:var(--amber);color:var(--amber);background:rgba(255,179,71,0.1);box-shadow:0 0 8px rgba(255,179,71,0.15)}
 .cmd-btn.active-pink{border-color:var(--pink);color:var(--pink);background:rgba(255,75,110,0.1);box-shadow:0 0 8px rgba(255,75,110,0.15)}
+.cmd-btn.active-purple{border-color:var(--purple);color:var(--purple);background:rgba(123,97,255,0.1);box-shadow:0 0 8px rgba(123,97,255,0.15)}
 .cmd-btn.danger{border-color:rgba(255,75,110,0.3);color:var(--pink)}
 .cmd-btn.danger:hover{background:rgba(255,75,110,0.12);border-color:var(--pink)}
 .cmd-btn.danger.active-pink{background:rgba(255,75,110,0.18);animation:pulse-pink 2s infinite}
@@ -1152,6 +1335,9 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 .pwr-btn:hover svg{color:var(--amber)}
 .pwr-btn.danger:hover{border-color:var(--pink);background:rgba(255,75,110,0.08)}
 .pwr-btn.danger:hover svg{color:var(--pink)}
+.mute-btn{background:none;border:none;cursor:pointer;font-size:13px;padding:2px 3px;border-radius:6px;opacity:0.4;transition:opacity 0.15s;line-height:1}
+.mute-btn:hover{opacity:1}
+.mute-btn.muted{opacity:1}
 /* GRAPH CARDS */
 .graph-card{border-radius:14px;border:1px solid var(--border);background:var(--surface);
             padding:16px 16px 10px;margin-bottom:14px}
@@ -1445,6 +1631,7 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
 </div>
 
 <!-- TOAST -->
+</div><!-- /controls-wrap -->
 <div class="toast" id="toast"></div>
 
 
@@ -1592,16 +1779,20 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
         <div class="cmd-section">
           <div class="cmd-label">Trading Mode Gate</div>
           <div class="cmd-row">
-            <button class="cmd-btn" id="cmd-paper" onclick="sendGlobalCmd('trading-mode','PAPER')">Paper</button>
-            <button class="cmd-btn" id="cmd-live" onclick="confirmCmd('trading-mode','LIVE','Switch ALL nodes to LIVE trading?')">Live</button>
+            <button class="cmd-btn" id="cmd-paper" onclick="setAdmOverride('trading_gate','PAPER')">Paper</button>
+            <button class="cmd-btn" id="cmd-live" onclick="confirmCmd('trading_gate','LIVE','Switch ALL nodes to LIVE trading?')">Live</button>
+            <button class="cmd-btn" id="cmd-gate-all" onclick="setAdmOverride('trading_gate','ALL')">All</button>
           </div>
+          <div style="font-size:9px;color:var(--dim);margin-top:4px" id="adm-gate-sub">Customers choose</div>
         </div>
         <div class="cmd-section">
           <div class="cmd-label">Operating Mode</div>
           <div class="cmd-row">
-            <button class="cmd-btn" id="cmd-supervised" onclick="sendGlobalCmd('operating-mode','SUPERVISED')">Supervised</button>
-            <button class="cmd-btn" id="cmd-autonomous" onclick="confirmCmd('operating-mode','AUTONOMOUS','Grant AUTONOMOUS mode to ALL nodes?')">Autonomous</button>
+            <button class="cmd-btn" id="cmd-managed" onclick="setAdmOverride('operating_mode','MANAGED')">Managed</button>
+            <button class="cmd-btn" id="cmd-automatic" onclick="confirmCmd('operating_mode','AUTOMATIC','Grant AUTOMATIC mode to ALL nodes?')">Automatic</button>
+            <button class="cmd-btn" id="cmd-mode-all" onclick="setAdmOverride('operating_mode','ALL')">All</button>
           </div>
+          <div style="font-size:9px;color:var(--dim);margin-top:4px" id="adm-mode-sub">Customers choose</div>
         </div>
         <div class="cmd-section">
           <div class="cmd-label">Emergency</div>
@@ -2005,6 +2196,11 @@ function renderNodeRoster() {
       + '<div class="node-cell mc-na">' + (pi.uptime || '\u2014') + '</div>'
       + '<div class="node-cell mc-na">' + ageSince(pi.last_seen) + '</div>'
     + '<div class="node-power">'
+      + '<button class="mute-btn' + (pi.silenced ? ' muted' : '') + '" '
+      + 'onclick="event.stopPropagation();toggleSilence(\'' + escHtml(pi.pi_id) + '\')" '
+      + 'title="' + (pi.silenced ? 'Unmute alerts' : 'Mute alerts') + '">'
+      + (pi.silenced ? '\uD83D\uDD07' : '\uD83D\uDD14')
+      + '</button>'
       + '<button class="pwr-btn" title="Reboot" data-piid="' + pi.pi_id + '" data-act="reboot" onclick="nodePower(this.dataset.piid,this.dataset.act,event)">'
         + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>'
       + '</button>'
@@ -2218,7 +2414,7 @@ function renderModalTab(tab, pi) {
             + '<div style="border-top:1px solid var(--border);padding-top:10px">'
                 + '<div style="font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:4px">Uptime</div>'
                 + '<div style="font-size:16px;font-weight:600;color:var(--text);font-family:var(--mono)">' + (pi.uptime||'N/A') + '</div>'
-                + '<div style="font-size:9px;color:var(--dim);margin-top:6px">Mode: ' + (pi.operating_mode||'SUPERVISED') + ' &nbsp;&middot;&nbsp; ' + (pi.trading_mode||'PAPER') + '</div>'
+                + '<div style="font-size:9px;color:var(--dim);margin-top:6px">Mode: ' + (pi.operating_mode||'MANAGED') + ' &nbsp;&middot;&nbsp; ' + (pi.trading_mode||'PAPER') + '</div>'
             + '</div>'
         + '</div>'
 
@@ -2548,16 +2744,9 @@ async function sendGlobalCmd(type, value) {
 }
 
 function updateCommandState(pis) {
-  // Highlight buttons based on customer trading mode data from market activity API
-  var _tm = (_mktData && _mktData.trading_modes) || {};
-  var custTotal = _tm.total || 0;
-  var allPaper = custTotal > 0 && (_tm.PAPER || 0) === custTotal;
-  var allLive  = custTotal > 0 && (_tm.LIVE || 0) === custTotal;
-
-  // Operating mode — still read from Pi heartbeat data for now
-  var om = pis.map(function(p) { return p.operating_mode || 'SUPERVISED'; });
-  var allSup  = om.length > 0 && om.every(function(m) { return m === 'SUPERVISED'; });
-  var allAuto = om.length > 0 && om.every(function(m) { return m === 'AUTONOMOUS'; });
+  // Admin override state drives button highlights
+  var tg = admOverrides.trading_gate || 'ALL';
+  var om = admOverrides.operating_mode || 'ALL';
 
   // Kill switch from Pi data
   var ks = pis.map(function(p) { return !!p.kill_switch; });
@@ -2567,16 +2756,24 @@ function updateCommandState(pis) {
   var cls = function(id, c, on) {
     var el = document.getElementById(id);
     if (el) {
-      el.classList.remove('active-teal','active-amber','active-pink');
+      el.classList.remove('active-teal','active-amber','active-pink','active-purple');
       if (on) el.classList.add(c);
     }
   };
-  cls('cmd-paper',      'active-teal',  allPaper);
-  cls('cmd-live',       'active-amber', allLive);
-  cls('cmd-supervised', 'active-teal',  allSup);
-  cls('cmd-autonomous', 'active-amber', allAuto);
-  cls('cmd-kill-on',    'active-pink',  anyKill);
-  cls('cmd-kill-off',   'active-teal',  noKill && pis.length > 0);
+  cls('cmd-paper',      'active-teal',   tg === 'PAPER');
+  cls('cmd-live',       'active-amber',  tg === 'LIVE');
+  cls('cmd-gate-all',   'active-purple', tg === 'ALL');
+  cls('cmd-managed',    'active-teal',   om === 'MANAGED');
+  cls('cmd-automatic',  'active-amber',  om === 'AUTOMATIC');
+  cls('cmd-mode-all',   'active-purple', om === 'ALL');
+  cls('cmd-kill-on',    'active-pink',   anyKill);
+  cls('cmd-kill-off',   'active-teal',   noKill && pis.length > 0);
+
+  // Subtitle text
+  var gs = document.getElementById('adm-gate-sub');
+  var ms = document.getElementById('adm-mode-sub');
+  if (gs) gs.textContent = tg === 'ALL' ? 'Customers choose' : 'Forced: ' + tg;
+  if (ms) ms.textContent = om === 'ALL' ? 'Customers choose' : 'Forced: ' + om;
 }
 
 // ── DELETE ──
@@ -2584,6 +2781,17 @@ function promptDelete(piId) {
   pendingDelete = piId;
   document.getElementById('confirm-msg').textContent = 'Remove "' + piId + '" from the registry?';
   document.getElementById('confirm-overlay').classList.add('show');
+}
+async function toggleSilence(piId) {
+  try {
+    const r = await fetch('/api/silence/' + encodeURIComponent(piId), {method:'POST'});
+    if (!r.ok) { toast('Failed to toggle silence', 'err'); return; }
+    const d = await r.json();
+    if (piData[piId]) piData[piId].silenced = d.silenced;
+    renderNodeRoster();
+    const lbl = (piData[piId] && piData[piId].label) || piId;
+    toast(d.silenced ? '\uD83D\uDD07 Alerts muted for ' + lbl : '\uD83D\uDD14 Alerts unmuted for ' + lbl, 'ok');
+  } catch(e) { toast('Error: ' + e, 'err'); }
 }
 function cancelDelete() {
   pendingDelete=null;
@@ -2597,7 +2805,11 @@ async function confirmDelete() {
     const t = cmdConfirmType, v = cmdConfirmValue;
     cmdConfirmType = null; cmdConfirmValue = null;
     document.getElementById('confirm-overlay').classList.remove('show');
-    await sendGlobalCmd(t, v);
+    if (t === 'trading_gate' || t === 'operating_mode') {
+      await setAdmOverride(t, v);
+    } else {
+      await sendGlobalCmd(t, v);
+    }
     return;
   }
   // Handle Pi delete confirmation
@@ -2941,12 +3153,11 @@ function buildMktChart() {
     if (custIds.length > 0) {
       custIds.forEach(function(cid, i) {
         var c = customers[cid];
-        var color = custColors[i % custColors.length];
         var negSells = c.sells.map(function(v){return -v;});
         datasets.push({
           type:'bar', label:c.name+' sells', data:negSells, stack:'sells',
-          backgroundColor:colorWithAlpha(color,0.35), borderColor:color,
-          borderWidth:1, borderRadius:2, borderDash:[2,2], yAxisID:'y', order:2
+          backgroundColor:colorWithAlpha('#ff4b6e',0.5), borderColor:'#ff4b6e',
+          borderWidth:1, borderRadius:2, yAxisID:'y', order:2
         });
       });
     } else {
@@ -2971,7 +3182,7 @@ function buildMktChart() {
       type:'line', label:'Active Sessions', data:_mktData.sessions,
       borderWidth:3, tension:0.35, pointRadius:2, pointHitRadius:8,
       pointBackgroundColor:_mktData.sessions.map(function(v){
-        if(v>=10)return '#ff4b6e'; if(v>=3)return '#ffb347'; return '#00f5d4';
+        if(v>=10)return '#ff4b6e'; if(v>=3)return '#ffb347'; return '#ffb347';
       }),
       fill:false, yAxisID:'y1', order:1,
       segment:{
@@ -2979,10 +3190,10 @@ function buildMktChart() {
           var v=c.p0.parsed.y;
           if(v>=10)return '#ff4b6e';
           if(v>=3)return '#ffb347';
-          return '#00f5d4';
+          return '#ffb347';
         }
       },
-      borderColor:'#00f5d4'
+      borderColor:'#ffb347'
     });
   }
 
@@ -3087,17 +3298,58 @@ function loadWaveControls(){
     +'<div style="font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Amplitude</div>'
     +'<input type="range" id="wave-amp" min="5" max="40" value="'+(window._waveAmpOverride||30)+'" oninput="setWaveAmp(this.value)" style="width:100%;accent-color:var(--teal)">'
     +'<div style="display:flex;justify-content:space-between;font-size:9px;color:var(--dim);margin-top:2px"><span>Idle</span><span id="wave-amp-val">'+(window._waveAmpOverride||30)+'</span><span>Max</span></div>'
+    +'<div style="font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-top:14px;margin-bottom:8px">Speed</div>'
+    +'<input type="range" id="wave-speed" min="3" max="30" value="'+(window._waveSpeedOverride||10)+'" oninput="setWaveSpeed(this.value)" style="width:100%;accent-color:var(--teal)">'
+    +'<div style="display:flex;justify-content:space-between;font-size:9px;color:var(--dim);margin-top:2px"><span>Slow</span><span id="wave-speed-val">'+(window._waveSpeedOverride||10)+'</span><span>Fast</span></div>'
+    +'<div style="font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-top:14px;margin-bottom:8px">Frequency</div>'
+    +'<input type="range" id="wave-freq" min="3" max="30" value="'+(window._waveFreqOverride||10)+'" oninput="setWaveFreq(this.value)" style="width:100%;accent-color:var(--teal)">'
+    +'<div style="display:flex;justify-content:space-between;font-size:9px;color:var(--dim);margin-top:2px"><span>Low</span><span id="wave-freq-val">'+(window._waveFreqOverride||10)+'</span><span>High</span></div>'
+    +'<div style="font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-top:14px;margin-bottom:8px">Direction</div>'
+    +'<div style="display:flex;gap:8px">'
+    +'<button onclick="setWaveDir(1)" style="flex:1;padding:8px;border-radius:8px;border:1px solid rgba(0,245,212,0.3);background:rgba(0,245,212,0.1);color:#00f5d4;font-size:10px;font-weight:700;cursor:pointer">&#x25B6; Forward</button>'
+    +'<button onclick="setWaveDir(-1)" style="flex:1;padding:8px;border-radius:8px;border:1px solid rgba(255,75,110,0.3);background:rgba(255,75,110,0.1);color:#ff4b6e;font-size:10px;font-weight:700;cursor:pointer">&#x25C0; Reverse</button>'
+    +'</div>'
     +'</div>';
 }
-window._waveOverride=false;window._waveColorOverride=null;window._waveAmpOverride=null;
+window._waveOverride=false;window._waveColorOverride=null;window._waveAmpOverride=null;window._waveSpeedOverride=10;window._waveFreqOverride=10;window._waveDirOverride=1;
 function toggleWaveOverride(){window._waveOverride=document.getElementById('wave-override').checked;if(!window._waveOverride){window._waveColorOverride=null;window._waveAmpOverride=null;}pushWaveOverride();}
 function setWaveAgent(color){window._waveColorOverride=color;window._waveOverride=true;var cb=document.getElementById('wave-override');if(cb)cb.checked=true;pushWaveOverride();toast('Wave: '+color,'ok');}
 function setWaveAmp(val){window._waveAmpOverride=parseInt(val);document.getElementById('wave-amp-val').textContent=val;pushWaveOverride();}
-function pushWaveOverride(){fetch('/api/command/wave-override',{method:'POST',headers:{'X-Token':SECRET_TOKEN,'Content-Type':'application/json'},body:JSON.stringify({override:window._waveOverride,color:window._waveColorOverride,amplitude:window._waveAmpOverride})}).catch(function(){});}
+function setWaveSpeed(val){window._waveSpeedOverride=parseInt(val);document.getElementById('wave-speed-val').textContent=val;pushWaveOverride();}
+function setWaveFreq(val){window._waveFreqOverride=parseInt(val);document.getElementById('wave-freq-val').textContent=val;pushWaveOverride();}
+function setWaveDir(d){window._waveDirOverride=d;window._waveOverride=true;var cb=document.getElementById('wave-override');if(cb)cb.checked=true;pushWaveOverride();loadWaveControls();}
+function pushWaveOverride(){fetch('/api/command/wave-override',{method:'POST',headers:{'X-Token':SECRET_TOKEN,'Content-Type':'application/json'},body:JSON.stringify({override:window._waveOverride,color:window._waveColorOverride,amplitude:window._waveAmpOverride,speed:window._waveSpeedOverride/10,frequency:window._waveFreqOverride/10,direction:window._waveDirOverride})}).catch(function(){});}
+
+// ── ADMIN OVERRIDES ──
+let admOverrides = {trading_gate:'ALL', operating_mode:'ALL'};
+async function fetchAdminOverrides() {
+  try {
+    const r = await fetch('/api/admin-override');
+    if (r.ok) { admOverrides = await r.json(); updateCommandState(Object.values(piData)); }
+  } catch(e) {}
+}
+async function setAdmOverride(field, val) {
+  var payload = Object.assign({}, admOverrides);
+  payload[field] = val;
+  try {
+    var r = await fetch('/api/admin-override', {
+      method:'POST',
+      headers:{'Content-Type':'application/json', 'X-Token': SECRET_TOKEN},
+      body: JSON.stringify(payload)
+    });
+    var d = await r.json();
+    if (d.ok) {
+      admOverrides = payload;
+      updateCommandState(Object.values(piData));
+      toast((field==='trading_gate'?(val==='ALL'?'Trading gate unlocked':'Trading forced to '+val):(val==='ALL'?'Operating mode unlocked':'Mode forced to '+val))+' · pushed to '+(d.pushed_to?d.pushed_to.length:0)+' node(s)', 'ok');
+    }
+  } catch(e) { toast('Override push failed', 'err'); }
+}
 
 fetchStatus();
 fetchTodos();
 fetchMktActivity();
+fetchAdminOverrides();
 setInterval(tickCountdown, 1000);
 setInterval(fetchTodos, 30000);
 setInterval(fetchMktActivity, 60000);
@@ -4947,12 +5199,27 @@ h2{font-size:0.88rem;font-weight:600;margin:1.5rem 0 0.5rem;letter-spacing:0.05e
 .toast{position:fixed;bottom:1.5rem;right:1.5rem;padding:0.6rem 1.2rem;border-radius:8px;background:#1e1e1e;border:1px solid var(--border);color:var(--text);font-size:0.78rem;opacity:0;transition:opacity 0.3s;z-index:999;pointer-events:none}
 .toast.show{opacity:1}
 select{background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.3rem 0.5rem;font-family:var(--font);font-size:0.78rem}
+#wave-fullscreen{position:fixed;inset:0;z-index:500;background:#080b12;display:flex;flex-direction:column;align-items:center;justify-content:center;transform:rotate(0deg)}
+#wave-fullscreen canvas{width:100%;height:100%;display:block}
+#wave-label{position:absolute;bottom:20px;left:50%;transform:translateX(-50%);font-size:11px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;font-family:var(--font);pointer-events:none}
+#wave-exit{position:absolute;top:12px;right:12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:4px 12px;font-size:10px;color:rgba(255,255,255,0.3);cursor:pointer;font-family:var(--font);z-index:501}
+#wave-exit:hover{color:rgba(255,255,255,0.7);border-color:rgba(255,255,255,0.3)}
+.controls-wrap{transition:opacity 0.3s}
 </style>
 </head>
 <body>
 {{ subpage_hdr|safe }}
 
 
+<div id="wave-fullscreen">
+  <canvas id="sentinel-wave"></canvas>
+  <div id="wave-label" style="color:rgba(0,245,212,0.5)">MONITORING</div>
+  <button id="wave-exit" onclick="exitWaveMode()">EXIT WAVE</button>
+  <button id="wave-sleep-btn" onclick="_wvSleepOn=!_wvSleepOn;this.textContent=_wvSleepOn?'SLEEP 9PM-9AM: ON':'SLEEP: OFF';this.style.color=_wvSleepOn?'rgba(0,245,212,0.5)':'rgba(255,75,110,0.5)'" style="position:absolute;top:12px;right:130px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:4px 12px;font-size:10px;color:rgba(0,245,212,0.5);cursor:pointer;font-family:var(--font);z-index:501">SLEEP 9PM-9AM: ON</button>
+</div>
+
+<div class="controls-wrap" id="controls-wrap" style="display:none">
+<div style="margin-bottom:0.8rem"><button class="btn" onclick="enterWaveMode()" style="background:rgba(0,245,212,0.08);border-color:rgba(0,245,212,0.2);color:#4fc3f7">&#x25B6; Wave Mode</button></div>
 <h1>Sentinel Display Control</h1>
 
 <div class="status-row" id="statusRow">
@@ -5153,7 +5420,124 @@ async function uploadFiles(files){
   loadStatus();
 }
 
-// Auto-refresh
+// ── WAVE MODE ──
+var _wvFrame=0,_wvId=null,_wvRunning=null;
+var _wvColors={teal:{r:0,g:245,b:212},purple:{r:123,g:97,b:255},amber:{r:255,g:179,b:71},pink:{r:255,g:75,b:110}};
+var _wvCur={r:0,g:245,b:212};
+var _wvNames={'retail_trade_logic_agent.py':'Trade Logic','retail_news_agent.py':'News','retail_market_sentiment_agent.py':'Sentiment','retail_sector_screener.py':'Screener'};
+
+function enterWaveMode(){
+  document.getElementById('wave-fullscreen').style.display='flex';
+  document.getElementById('controls-wrap').style.display='none';
+  if(!_wvId)_wvId=requestAnimationFrame(drawWave);
+  pollAgentPulse();
+}
+function exitWaveMode(){
+  document.getElementById('wave-fullscreen').style.display='none';
+  document.getElementById('controls-wrap').style.display='';
+  if(_wvId){cancelAnimationFrame(_wvId);_wvId=null;}
+}
+
+function drawWave(){
+  var canvas=document.getElementById('sentinel-wave');
+  if(!canvas){_wvId=requestAnimationFrame(drawWave);return;}
+  var ctx=canvas.getContext('2d');
+  var dpr=window.devicePixelRatio||1;
+  var w=canvas.clientWidth,h=canvas.clientHeight;
+  canvas.width=w*dpr;canvas.height=h*dpr;
+  ctx.scale(dpr,dpr);ctx.clearRect(0,0,w,h);
+
+  var active=!!_wvRunning;
+  var colorKey=active?(_wvRunning.color||'teal'):'teal';
+  var tgt=_wvColors[colorKey]||_wvColors.teal;
+  _wvCur.r+=((tgt.r-_wvCur.r)*0.04);
+  _wvCur.g+=((tgt.g-_wvCur.g)*0.04);
+  _wvCur.b+=((tgt.b-_wvCur.b)*0.04);
+  var c={r:Math.round(_wvCur.r),g:Math.round(_wvCur.g),b:Math.round(_wvCur.b)};
+
+  var ovSpeed=(active&&_wvRunning.speed)?_wvRunning.speed:1;
+  var ovDir=(active&&_wvRunning.direction)?_wvRunning.direction:1;
+  var t=_wvFrame*0.015*ovDir*ovSpeed;
+  var heartbeat=Math.sin(t*0.4)*0.5+0.5;
+  var ampOverride=(active&&_wvRunning.amplitude)?_wvRunning.amplitude:null;
+  var baseAmp=ampOverride?ampOverride:(active?50:(6+heartbeat*20));
+  var numWaves=active?9:5;
+  var speed=active?1.0:0.2;
+  var midY=h/2;
+  var freqMult=(active&&_wvRunning.frequency)?_wvRunning.frequency:1.0;
+
+  for(var i=0;i<numWaves;i++){
+    var alpha=active?(0.1+(i/numWaves)*0.2):(0.04+heartbeat*0.03+(i/numWaves)*0.1);
+    var amp=baseAmp*(0.4+(i/numWaves)*0.6);
+    var freq=(0.006+i*0.002)*freqMult;
+    var phase=t*speed+i*0.8;
+    ctx.beginPath();ctx.moveTo(0,midY);
+    for(var x=0;x<=w;x+=2){
+      var y=midY+Math.sin(x*freq-phase)*amp+Math.sin(x*freq*1.5-phase*0.7)*amp*0.3;
+      ctx.lineTo(x,y);
+    }
+    ctx.strokeStyle='rgba('+c.r+','+c.g+','+c.b+','+alpha+')';
+    ctx.lineWidth=active?2.0:1.5;ctx.stroke();
+    if(i===numWaves-1){
+      ctx.lineTo(w,h);ctx.lineTo(0,h);ctx.closePath();
+      var grad=ctx.createLinearGradient(0,midY,0,h);
+      grad.addColorStop(0,'rgba('+c.r+','+c.g+','+c.b+',0.05)');
+      grad.addColorStop(1,'rgba('+c.r+','+c.g+','+c.b+',0)');
+      ctx.fillStyle=grad;ctx.fill();
+    }
+  }
+
+  // Label
+  var lbl=document.getElementById('wave-label');
+  if(lbl){
+    if(active&&_wvRunning.agent){
+      var name=_wvNames[_wvRunning.agent]||_wvRunning.agent;
+      lbl.textContent=name.toUpperCase()+' \u00B7 SCANNING';
+      lbl.style.color='rgba('+c.r+','+c.g+','+c.b+',0.6)';
+    }else{
+      lbl.textContent='MONITORING';
+      lbl.style.color='rgba('+c.r+','+c.g+','+c.b+','+(0.15+heartbeat*0.1)+')';
+    }
+  }
+
+  _wvFrame++;
+  _wvId=requestAnimationFrame(drawWave);
+}
+
+var _wvSleepOn=true; // auto sleep 21:00-09:00 ET
+function isWvSleepTime(){
+  if(!_wvSleepOn)return false;
+  var now=new Date();
+  var et=new Date(now.toLocaleString('en-US',{timeZone:'America/New_York'}));
+  var h=et.getHours();
+  return h>=21||h<9;
+}
+
+async function pollAgentPulse(){
+  if(document.getElementById('wave-fullscreen').style.display==='none')return;
+  // Sleep schedule: dim screen 21:00-09:00 ET
+  var canvas=document.getElementById('sentinel-wave');
+  var lbl=document.getElementById('wave-label');
+  if(isWvSleepTime()){
+    if(canvas)canvas.style.opacity='0';
+    if(lbl)lbl.style.opacity='0';
+    setTimeout(pollAgentPulse,30000);
+    return;
+  }else{
+    if(canvas)canvas.style.opacity='1';
+    if(lbl)lbl.style.opacity='1';
+  }
+  try{
+    var r=await fetch('/api/proxy/agent-pulse');
+    if(r.ok){var d=await r.json();_wvRunning=d.running||null;}
+  }catch(e){}
+  setTimeout(pollAgentPulse,5000);
+}
+
+// Start in wave mode by default
+enterWaveMode();
+
+// Auto-refresh (controls mode)
 loadStatus();
 setInterval(loadStatus,10000);
 </script>
@@ -5165,6 +5549,19 @@ setInterval(loadStatus,10000);
 def _render_display_html():
     token = request.args.get("token", "") or request.cookies.get("company_token", "")
     return DISPLAY_HTML.replace("{{TOKEN}}", token).replace("{{ subpage_hdr|safe }}", _subpage_header("Sentinel Display"))
+
+
+@app.route("/api/proxy/agent-pulse")
+def proxy_agent_pulse():
+    """Proxy agent pulse from retail portal for sentinel display."""
+    import requests as _req
+    try:
+        cookie = _get_admin_session_cookie()
+        r = _req.get(f"{RETAIL_PORTAL_URL}/api/agent-pulse",
+                     cookies={"synthos_s": cookie}, timeout=8)
+        return jsonify(r.json()), r.status_code
+    except Exception as e:
+        return jsonify({"running": None, "error": str(e)}), 502
 
 
 @app.route("/display")
@@ -5425,6 +5822,39 @@ def api_auditor_findings():
             'scan_state': [], 'morning_report': None,
             'error': str(e),
         })
+
+@app.route("/api/auditor/resolve", methods=["POST"])
+def api_auditor_resolve():
+    """Mark auditor issues as resolved. Accepts {ids: [1,2,3]} or {all: true} or {pattern: 'STALE_ACTIVITY'}."""
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    data = request.get_json(force=True)
+    try:
+        conn = sqlite3.connect(_AUDITOR_DB_PATH, timeout=10)
+        if data.get('all'):
+            conn.execute("UPDATE detected_issues SET resolved = 1")
+            msg = "all issues resolved"
+        elif data.get('ids'):
+            ids = data['ids']
+            conn.execute(f"UPDATE detected_issues SET resolved = 1 WHERE id IN ({','.join('?' * len(ids))})", ids)
+            msg = f"{len(ids)} issues resolved"
+        elif data.get('pattern'):
+            conn.execute("UPDATE detected_issues SET resolved = 1 WHERE pattern = ?", (data['pattern'],))
+            msg = f"pattern '{data['pattern']}' resolved"
+        elif data.get('source'):
+            conn.execute("UPDATE detected_issues SET resolved = 1 WHERE source_file LIKE ?", ('%' + data['source'] + '%',))
+            msg = f"source '{data['source']}' resolved"
+        else:
+            conn.close()
+            return jsonify({"ok": False, "error": "Provide ids, all, pattern, or source"}), 400
+        conn.commit()
+        remaining = conn.execute("SELECT COUNT(*) FROM detected_issues WHERE resolved = 0").fetchone()[0]
+        conn.close()
+        return jsonify({"ok": True, "message": msg, "remaining": remaining})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 
 
 # ── Retention ─────────────────────────────────────────────────────────────────
@@ -6084,6 +6514,8 @@ _TODO_PATH = os.path.join(os.path.dirname(_HERE), 'TODO.md')
 
 @app.route("/api/todos", methods=["GET"])
 def api_todos():
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
     """Parse TODO.md from the repo and return unresolved items as JSON."""
     import re as _re
     try:
@@ -6561,6 +6993,11 @@ function kmAddRow(node) {
   var name = prompt('Enter the env var name (e.g. NEW_API_KEY):');
   if (!name) return;
   name = name.trim().toUpperCase();
+  if (!kmData[node]) kmData[node] = [];
+  if (!kmData[node].find(function(k) { return k.key_name === name; })) {
+    kmData[node].push({key_name: name, value_obfuscated: '', has_value: false, expires_at: null, countdown_days: null, has_backup: false, notes: ''});
+    kmRender(node);
+  }
   kmEdit(node, name);
 }
 
@@ -6696,28 +7133,6 @@ def api_node_power(pi_id):
         return jsonify({"error": f"SSH failed: {str(e)[:200]}"}), 502
 
 
-# ── AUDITOR RESOLVE API ──────────────────────────────────────────────────────
-
-@app.route("/api/auditor/resolve/<int:issue_id>", methods=["POST"])
-def api_auditor_resolve(issue_id):
-    """Mark an auditor issue as resolved."""
-    token = request.headers.get("X-Token", "")
-    if token != SECRET_TOKEN and not _authorized():
-        return jsonify({"error": "unauthorized"}), 401
-
-    import sqlite3 as _sq
-    try:
-        db = _sq.connect(str(_AUDITOR_DB_PATH), timeout=5)
-        db.execute("UPDATE detected_issues SET resolved=1 WHERE id=?", (issue_id,))
-        db.commit()
-        db.close()
-        return jsonify({"ok": True})
-    except Exception as e:
-        return jsonify({"error": str(e)[:200]}), 500
-
-
-
-
 # ── KEY MANAGEMENT API ────────────────────────────────────────────────────────
 
 _KEY_FILTER = {
@@ -6772,7 +7187,7 @@ def _read_pi2w_keys():
 def _get_key_metadata():
     """Get all expiration metadata from DB."""
     try:
-        with _db_conn() as conn:
+        with _support_conn() as conn:
             rows = conn.execute(
                 "SELECT node, key_name, expires_at, backup_value, notes, updated_at "
                 "FROM api_key_metadata"
@@ -6844,11 +7259,8 @@ def api_node_keys_update(node):
     backup_value = data.get('backup_value')
     notes = data.get('notes')
 
-    allowed = _KEY_FILTER.get(node)
-    if allowed is None:
+    if node not in _KEY_FILTER:
         return jsonify({"error": f"Unknown node: {node}"}), 404
-    if key_name not in allowed:
-        return jsonify({"error": f"Key {key_name} not allowed for {node}"}), 400
 
     # Write key value to the node's .env
     write_ok = False
@@ -6882,7 +7294,7 @@ def api_node_keys_update(node):
     from datetime import datetime as _dt, timezone as _tz
     now_iso = _dt.now(_tz.utc).isoformat()
     try:
-        with _db_conn() as conn:
+        with _support_conn() as conn:
             conn.execute("""
                 INSERT INTO api_key_metadata (node, key_name, expires_at, backup_value, notes, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?)
@@ -6922,7 +7334,7 @@ def api_node_keys_rotate(node):
 
     # Get backup from metadata
     try:
-        with _db_conn() as conn:
+        with _support_conn() as conn:
             row = conn.execute(
                 "SELECT backup_value FROM api_key_metadata WHERE node=? AND key_name=?",
                 (node, key_name)).fetchone()
@@ -6954,7 +7366,7 @@ def api_node_keys_rotate(node):
 
     # Move old primary to backup
     from datetime import datetime as _dt, timezone as _tz
-    with _db_conn() as conn:
+    with _support_conn() as conn:
         conn.execute(
             "UPDATE api_key_metadata SET backup_value=?, updated_at=? WHERE node=? AND key_name=?",
             (current_val, _dt.now(_tz.utc).isoformat(), node, key_name))
@@ -6986,7 +7398,7 @@ def api_company_expenses():
     if not _authorized():
         return jsonify({"error": "unauthorized"}), 401
     try:
-        with _db_conn() as conn:
+        with _support_conn() as conn:
             rows = conn.execute(
                 "SELECT * FROM company_expenses ORDER BY date DESC LIMIT 100"
             ).fetchall()
@@ -7026,7 +7438,7 @@ def api_company_expenses_add():
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat()
     try:
-        with _db_conn() as conn:
+        with _support_conn() as conn:
             conn.execute(
                 "INSERT INTO company_expenses (category, description, amount, date, recurring, frequency, next_renewal, created_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -7042,7 +7454,7 @@ def api_company_expenses_delete(expense_id):
     if not _authorized():
         return jsonify({"error": "unauthorized"}), 401
     try:
-        with _db_conn() as conn:
+        with _support_conn() as conn:
             conn.execute("DELETE FROM company_expenses WHERE id=?", (expense_id,))
         return jsonify({"ok": True})
     except Exception as e:
@@ -7064,7 +7476,7 @@ def api_company_expenses_update(expense_id):
         return jsonify({"error": "no fields to update"}), 400
     values.append(expense_id)
     try:
-        with _db_conn() as conn:
+        with _support_conn() as conn:
             conn.execute(f"UPDATE company_expenses SET {','.join(fields)} WHERE id=?", values)
         return jsonify({"ok": True})
     except Exception as e:
@@ -7161,7 +7573,7 @@ def api_beta_tests():
     if not _authorized():
         return jsonify({"error": "unauthorized"}), 401
     try:
-        with _db_conn() as conn:
+        with _support_conn() as conn:
             rows = conn.execute("SELECT * FROM beta_tests ORDER BY created_at DESC").fetchall()
             return jsonify({"tests": [dict(r) for r in rows]})
     except Exception as e:
@@ -7185,7 +7597,7 @@ def api_beta_tests_create():
     now = datetime.now(timezone.utc).isoformat()
 
     try:
-        with _db_conn() as conn:
+        with _support_conn() as conn:
             conn.execute(
                 "INSERT INTO beta_tests (id, title, description, required_confirmations, status, created_at) "
                 "VALUES (?, ?, ?, ?, 'active', ?)",
@@ -7209,25 +7621,96 @@ def api_beta_tests_create():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/beta-tests/<test_id>/status", methods=["POST"])
+def api_beta_test_status(test_id):
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    data = request.get_json(force=True)
+    status = data.get('status', '').lower()
+    if status not in ('cleared', 'cancelled', 'archived', 'active'):
+        return jsonify({"error": "status must be cleared, cancelled, archived, or active"}), 400
+    from datetime import datetime as _dt, timezone as _tz
+    now = _dt.now(_tz.utc).isoformat()
+    try:
+        with _support_conn() as conn:
+            ts_col = {'cleared': 'cleared_at', 'cancelled': 'cancelled_at', 'archived': 'archived_at'}.get(status)
+            conn.execute("UPDATE beta_tests SET status = ? WHERE id = ?", (status, test_id))
+            if ts_col:
+                try:
+                    conn.execute(f"UPDATE beta_tests SET {ts_col} = ? WHERE id = ?", (now, test_id))
+                except Exception:
+                    pass  # column may not exist yet
+        return jsonify({"ok": True, "test_id": test_id, "status": status})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/proxy/direct-message", methods=["POST"])
+def proxy_direct_message():
+    """Send a direct message to a customer — creates a ticket in their portal DB."""
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    data = request.get_json(silent=True) or {}
+    import requests as _req
+    try:
+        cookie = _get_admin_session_cookie()
+        r = _req.post(
+            f"{RETAIL_PORTAL_URL}/api/support/direct-message",
+            json=data,
+            cookies={'synthos_s': cookie},
+            timeout=15,
+        )
+        return jsonify(r.json()), r.status_code
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/support-queue")
 def support_queue_page():
     if not _authorized():
         return redirect(url_for("login"))
-    return _subpage_header('Customer Support') + _SUPPORT_QUEUE_BODY
+    resp = make_response(
+        '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<title>Synthos — Customer Support</title>'
+        '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">'
+        '</head><body>'
+        + _subpage_header('Customer Support')
+        + _SUPPORT_QUEUE_BODY
+        + '</body></html>'
+    )
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    return resp
 
 
-_SUPPORT_QUEUE_BODY = """
+_SUPPORT_QUEUE_BODY = r"""
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#0a0c14;color:rgba(255,255,255,0.88);font-family:'Inter',system-ui,sans-serif;font-size:14px;min-height:100vh}
 ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:99px}
 .sq-page{max-width:1000px;margin:0 auto;padding:20px 24px}
-.sq-title{font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.4);margin-bottom:14px}
+.sq-title{font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.4);margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.sq-title::after{content:'';flex:1;height:1px;background:rgba(255,255,255,0.07)}
+.sq-stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+.sq-stat{border-radius:12px;padding:14px 16px;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.02)}
+.sq-stat-label{font-size:9px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:4px}
+.sq-stat-val{font-size:28px;font-weight:700;font-family:'JetBrains Mono',monospace;line-height:1}
+.sq-stat-sub{font-size:9px;color:rgba(255,255,255,0.25);margin-top:4px}
+.sq-stat.amber .sq-stat-label{color:#f5a623}.sq-stat.amber .sq-stat-val{color:#f5a623}
+.sq-stat.purple .sq-stat-label{color:#7b61ff}.sq-stat.purple .sq-stat-val{color:#7b61ff}
+.sq-stat.pink .sq-stat-label{color:#ff4b6e}.sq-stat.pink .sq-stat-val{color:#ff4b6e}
+.sq-stat.teal .sq-stat-label{color:#00f5d4}.sq-stat.teal .sq-stat-val{color:#00f5d4}
 .sq-filters{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap}
-.sq-f{padding:5px 14px;border-radius:8px;font-size:11px;font-weight:600;background:transparent;border:1px solid rgba(255,255,255,0.07);color:rgba(255,255,255,0.4);cursor:pointer;font-family:inherit}
+.sq-f{padding:5px 14px;border-radius:8px;font-size:11px;font-weight:600;background:transparent;border:1px solid rgba(255,255,255,0.07);color:rgba(255,255,255,0.4);cursor:pointer;font-family:inherit;transition:all .15s}
 .sq-f.active{background:rgba(0,245,212,0.06);border-color:rgba(0,245,212,0.15);color:#00f5d4}
-.sq-card{background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px 16px;margin-bottom:8px;cursor:pointer;transition:border-color .15s}
+.sq-f.f-archived.active{background:rgba(255,255,255,0.04);border-color:rgba(255,255,255,0.12);color:rgba(255,255,255,0.5)}
+.sq-card{background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px 16px;margin-bottom:8px;cursor:pointer;transition:border-color .15s;border-left:3px solid rgba(255,255,255,0.08)}
 .sq-card:hover{border-color:rgba(255,255,255,0.15)}
+.sq-card.st-open{border-left-color:#f5a623}
+.sq-card.st-in_progress{border-left-color:#7b61ff}
+.sq-card.st-resolved{border-left-color:#00f5d4}
+.sq-card.st-archived{border-left-color:rgba(255,255,255,0.15);opacity:0.6}
+.sq-card.st-closed{border-left-color:rgba(255,255,255,0.1)}
 .sq-card-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
 .sq-subj{font-size:13px;font-weight:600}
 .sq-badge{font-size:8px;font-weight:700;padding:2px 8px;border-radius:99px;text-transform:uppercase;letter-spacing:0.06em}
@@ -7235,12 +7718,18 @@ body{background:#0a0c14;color:rgba(255,255,255,0.88);font-family:'Inter',system-
 .sq-badge.account{background:rgba(123,97,255,0.08);color:#7b61ff}
 .sq-badge.suggestion{background:rgba(245,166,35,0.08);color:#f5a623}
 .sq-badge.beta_test{background:rgba(255,75,110,0.08);color:#ff4b6e}
+.sq-badge.direct_message{background:rgba(123,97,255,0.08);color:#7b61ff}
+.sq-badge.system{background:rgba(255,255,255,0.05);color:rgba(255,255,255,0.5)}
 .sq-status{font-size:8px;font-weight:700;padding:2px 8px;border-radius:99px;text-transform:uppercase}
 .sq-status.open{background:rgba(245,166,35,0.1);color:#f5a623}
 .sq-status.in_progress{background:rgba(123,97,255,0.1);color:#7b61ff}
 .sq-status.resolved{background:rgba(0,245,212,0.1);color:#00f5d4}
+.sq-status.archived{background:rgba(255,255,255,0.05);color:rgba(255,255,255,0.35)}
+.sq-status.closed{background:rgba(255,255,255,0.05);color:rgba(255,255,255,0.3)}
 .sq-meta{font-size:10px;color:rgba(255,255,255,0.35);margin-top:2px}
 .sq-preview{font-size:11px;color:rgba(255,255,255,0.25);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sq-archive-btn{padding:3px 10px;border-radius:6px;font-size:9px;font-weight:600;border:1px solid rgba(255,255,255,0.08);background:transparent;color:rgba(255,255,255,0.3);cursor:pointer;margin-left:6px;transition:all .15s}
+.sq-archive-btn:hover{border-color:rgba(255,255,255,0.2);color:rgba(255,255,255,0.6)}
 .sq-detail{background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:16px;margin-bottom:16px}
 .sq-msg{padding:8px 10px;border-radius:8px;margin-bottom:6px}
 .sq-msg.customer{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06)}
@@ -7250,262 +7739,357 @@ body{background:#0a0c14;color:rgba(255,255,255,0.88);font-family:'Inter',system-
 .sq-reply-box{width:100%;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 10px;color:rgba(255,255,255,0.88);font-size:12px;font-family:'Inter',sans-serif;min-height:60px;resize:vertical;outline:none;margin-top:8px}
 .sq-reply-btn{padding:6px 16px;border-radius:6px;border:none;background:#00f5d4;color:#000;font-size:11px;font-weight:700;cursor:pointer;margin-top:6px}
 .sq-status-btns{display:flex;gap:6px;margin-top:8px}
-.sq-st-btn{padding:4px 10px;border-radius:6px;font-size:9px;font-weight:600;border:1px solid rgba(255,255,255,0.1);background:transparent;color:rgba(255,255,255,0.4);cursor:pointer}
+.sq-st-btn{padding:4px 10px;border-radius:6px;font-size:9px;font-weight:600;border:1px solid rgba(255,255,255,0.1);background:transparent;color:rgba(255,255,255,0.4);cursor:pointer;transition:all .15s}
 .sq-st-btn:hover{border-color:rgba(255,255,255,0.2);color:rgba(255,255,255,0.7)}
-.sq-section{margin-top:28px}
-.sq-create{display:flex;flex-direction:column;gap:8px;margin-bottom:16px}
-.sq-input{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:rgba(255,255,255,0.88);font-size:12px;outline:none;font-family:'Inter',sans-serif}
+.sq-panel-tab{position:fixed;right:0;top:50%;transform:translateY(-50%);z-index:300;background:#0d1120;border:1px solid rgba(255,255,255,0.1);border-right:none;border-radius:10px 0 0 10px;padding:12px 8px;cursor:pointer;transition:transform .15s;display:flex;flex-direction:column;align-items:center;gap:6px}
+.sq-panel-tab:hover{transform:translateY(-50%) translateX(-4px)}
+.sq-panel-tab svg{width:16px;height:16px;opacity:0.5}
+.sq-panel-tab span{writing-mode:vertical-rl;text-orientation:mixed;font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.4)}
+.sq-panel-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.5);backdrop-filter:blur(4px);z-index:350;opacity:0;pointer-events:none;transition:opacity .2s}
+.sq-panel-overlay.open{opacity:1;pointer-events:all}
+.sq-panel{position:fixed;right:0;top:0;bottom:0;width:min(480px,90vw);background:#0d1120;border-left:1px solid rgba(255,255,255,0.1);z-index:400;transform:translateX(100%);transition:transform .3s cubic-bezier(0.4,0,0.2,1);display:flex;flex-direction:column}
+.sq-panel.open{transform:translateX(0)}
+.sq-panel-hdr{padding:16px 20px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.07)}
+.sq-panel-close{width:28px;height:28px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:transparent;color:rgba(255,255,255,0.5);cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center}
+.sq-panel-close:hover{border-color:rgba(255,255,255,0.2);color:rgba(255,255,255,0.8)}
+.sq-tab-bar{display:flex;border-bottom:1px solid rgba(255,255,255,0.07);padding:0 20px}
+.sq-tab{padding:10px 16px;font-size:11px;font-weight:600;color:rgba(255,255,255,0.35);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s}
+.sq-tab.active{color:#00f5d4;border-bottom-color:#00f5d4}
+.sq-tab:hover{color:rgba(255,255,255,0.7)}
+.sq-tab-body{flex:1;overflow-y:auto;padding:16px 20px}
+.sq-tab-content{display:none}.sq-tab-content.active{display:block}
+.sq-input{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:rgba(255,255,255,0.88);font-size:12px;outline:none;font-family:'Inter',sans-serif;width:100%}
 .sq-input:focus{border-color:rgba(0,245,212,0.3)}
-.sq-create-btn{padding:8px 16px;border-radius:8px;border:none;background:rgba(255,75,110,0.08);border:1px solid rgba(255,75,110,0.2);color:#ff4b6e;font-size:11px;font-weight:700;cursor:pointer}
-.sq-test-card{padding:12px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;margin-bottom:6px}
+.sq-create-btn{padding:8px 16px;border-radius:8px;border:none;font-size:11px;font-weight:700;cursor:pointer;transition:all .15s}
+.sq-create-btn.pink{background:rgba(255,75,110,0.08);border:1px solid rgba(255,75,110,0.2);color:#ff4b6e}
+.sq-create-btn.teal{background:rgba(0,245,212,0.06);border:1px solid rgba(0,245,212,0.15);color:#00f5d4}
+.sq-create-btn:hover{filter:brightness(1.2)}
+.sq-test-card{padding:12px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;margin-bottom:8px}
 .sq-test-title{font-size:12px;font-weight:600}
 .sq-test-desc{font-size:11px;color:rgba(255,255,255,0.4);margin-top:3px}
-.sq-test-progress{font-size:10px;color:rgba(255,255,255,0.3);margin-top:4px}
+.sq-test-meta{font-size:10px;color:rgba(255,255,255,0.3);margin-top:4px}
+.sq-test-actions{display:flex;gap:6px;margin-top:8px}
+.sq-test-btn{padding:4px 12px;border-radius:6px;font-size:9px;font-weight:600;cursor:pointer;border:1px solid;transition:all .15s}
+.sq-test-btn.archive{border-color:rgba(255,255,255,0.1);background:transparent;color:rgba(255,255,255,0.4)}
+.sq-test-btn.archive:hover{border-color:rgba(255,255,255,0.25);color:rgba(255,255,255,0.7)}
+.sq-test-btn.cancel{border-color:rgba(255,75,110,0.2);background:rgba(255,75,110,0.06);color:#ff4b6e}
+.sq-test-btn.cancel:hover{background:rgba(255,75,110,0.12)}
+.sq-test-btn.clear{border-color:rgba(0,245,212,0.2);background:rgba(0,245,212,0.06);color:#00f5d4}
+.sq-test-btn.clear:hover{background:rgba(0,245,212,0.12)}
+.sq-resp{padding:10px 12px;border:1px solid rgba(255,255,255,0.06);border-radius:8px;margin-bottom:6px;cursor:pointer;transition:border-color .15s}
+.sq-resp:hover{border-color:rgba(255,255,255,0.15)}
+.sq-resp-head{font-size:10px;color:rgba(255,255,255,0.35);margin-bottom:3px}
+.sq-resp-body{font-size:11px;color:rgba(255,255,255,0.7);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sq-toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);padding:8px 20px;border-radius:8px;font-size:12px;font-weight:600;z-index:999;opacity:0;transition:opacity .3s;pointer-events:none}
-.sq-toast.show{opacity:1}
-.sq-toast.ok{background:#00f5d4;color:#000}
-.sq-toast.err{background:#ff4b6e;color:#fff}
+.sq-toast.show{opacity:1}.sq-toast.ok{background:#00f5d4;color:#000}.sq-toast.err{background:#ff4b6e;color:#fff}
 </style>
 <div class="sq-page">
-  <div class="sq-title">Support Tickets</div>
+  <div class="sq-stat-grid">
+    <div class="sq-stat amber"><div class="sq-stat-label">Open</div><div class="sq-stat-val" id="sq-s-open">0</div><div class="sq-stat-sub">awaiting review</div></div>
+    <div class="sq-stat purple"><div class="sq-stat-label">In Progress</div><div class="sq-stat-val" id="sq-s-progress">0</div><div class="sq-stat-sub">being handled</div></div>
+    <div class="sq-stat pink"><div class="sq-stat-label">Beta Tests</div><div class="sq-stat-val" id="sq-s-beta">0</div><div class="sq-stat-sub">active tests</div></div>
+    <div class="sq-stat teal"><div class="sq-stat-label">Resolved</div><div class="sq-stat-val" id="sq-s-resolved">0</div><div class="sq-stat-sub">completed</div></div>
+  </div>
   <div class="sq-filters">
-    <button class="sq-f active" onclick="sqFilter(null,this)">All</button>
-    <button class="sq-f" onclick="sqFilter('open',this)">Open</button>
-    <button class="sq-f" onclick="sqFilter('in_progress',this)">In Progress</button>
-    <button class="sq-f" onclick="sqFilter('resolved',this)">Resolved</button>
-    <button class="sq-f" onclick="sqFilter(null,this,'beta_test')">Beta Tests</button>
+    <button class="sq-f active" data-filter="all">All</button>
+    <button class="sq-f" data-filter="open">Open</button>
+    <button class="sq-f" data-filter="in_progress">In Progress</button>
+    <button class="sq-f" data-filter="resolved">Resolved</button>
+    <button class="sq-f" data-filter="beta_test" data-cat="beta_test">Beta Tests</button>
+    <button class="sq-f f-archived" data-filter="archived">Archived</button>
   </div>
   <div id="sq-list"><div style="color:rgba(255,255,255,0.3);text-align:center;padding:30px">Loading...</div></div>
   <div id="sq-detail"></div>
-
-  <div class="sq-section">
-    <div class="sq-title">Beta Test Management</div>
-    <div class="sq-create">
-      <input class="sq-input" id="bt-title" placeholder="Test title (e.g. Signup flow verification)">
-      <textarea class="sq-input" id="bt-desc" placeholder="Description of what to test..." style="min-height:60px;resize:vertical"></textarea>
-      <div style="display:flex;gap:8px;align-items:center">
-        <span style="font-size:10px;color:rgba(255,255,255,0.35)">Required confirmations:</span>
-        <input class="sq-input" id="bt-required" type="number" value="2" min="1" max="10" style="width:50px">
-        <button type="button" class="sq-create-btn" onclick="sqCreateBetaTest()">Create & Broadcast</button>
+</div>
+<div class="sq-panel-tab" id="sq-panel-tab">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
+  <span>Tools</span>
+</div>
+<div class="sq-panel-overlay" id="sq-panel-overlay"></div>
+<div class="sq-panel" id="sq-panel">
+  <div class="sq-panel-hdr"><div style="font-size:14px;font-weight:700">Support Tools</div><button class="sq-panel-close" id="sq-panel-close-btn">&times;</button></div>
+  <div class="sq-tab-bar" id="sq-tab-bar">
+    <div class="sq-tab active" data-tab="beta">Beta Tests</div>
+    <div class="sq-tab" data-tab="dm">Direct Message</div>
+    <div class="sq-tab" data-tab="resp">Responses</div>
+  </div>
+  <div class="sq-tab-body">
+    <div class="sq-tab-content active" id="sq-tc-beta">
+      <div style="margin-bottom:16px">
+        <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.4);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:10px">Create New Test</div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <input class="sq-input" id="bt-title" placeholder="Test title (e.g. Signup flow verification)">
+          <textarea class="sq-input" id="bt-desc" placeholder="Description of what to test..." style="min-height:60px;resize:vertical"></textarea>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span style="font-size:10px;color:rgba(255,255,255,0.35)">Required:</span>
+            <input class="sq-input" id="bt-required" type="number" value="2" min="1" max="10" style="width:50px">
+            <button type="button" class="sq-create-btn pink" id="bt-create-btn">Create &amp; Broadcast</button>
+          </div>
+        </div>
+      </div>
+      <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.4);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px">Active Tests</div>
+      <div id="bt-list"><div style="font-size:11px;color:rgba(255,255,255,0.2);text-align:center;padding:20px">Loading...</div></div>
+    </div>
+    <div class="sq-tab-content" id="sq-tc-dm">
+      <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.4);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:10px">Send Direct Message</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <select class="sq-input" id="dm-customer"><option value="">Loading customers...</option></select>
+        <select class="sq-input" id="dm-category"><option value="account">Account</option><option value="system">System</option><option value="alert">Alert</option><option value="daily">Daily</option></select>
+        <input class="sq-input" id="dm-title" placeholder="Message title">
+        <textarea class="sq-input" id="dm-body" placeholder="Message body..." style="min-height:80px;resize:vertical"></textarea>
+        <button type="button" class="sq-create-btn teal" id="dm-send-btn">Send to Customer</button>
       </div>
     </div>
-    <div id="bt-list"></div>
-  </div>
-
-  <div class="sq-section">
-    <div class="sq-title">Direct Message</div>
-    <div class="sq-create">
-      <select class="sq-input" id="dm-customer" style="width:100%">
-        <option value="">Loading customers...</option>
-      </select>
-      <select class="sq-input" id="dm-category">
-        <option value="account">Account</option>
-        <option value="system">System</option>
-        <option value="alert">Alert</option>
-        <option value="daily">Daily</option>
-      </select>
-      <input class="sq-input" id="dm-title" placeholder="Message title">
-      <textarea class="sq-input" id="dm-body" placeholder="Message body..." style="min-height:60px;resize:vertical"></textarea>
-      <button type="button" class="sq-create-btn" onclick="sqSendDirect();return false" style="background:rgba(0,245,212,0.06);border-color:rgba(0,245,212,0.15);color:#00f5d4">Send to Customer</button>
+    <div class="sq-tab-content" id="sq-tc-resp">
+      <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.4);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:10px">Recent Customer Messages</div>
+      <div id="resp-list"><div style="font-size:11px;color:rgba(255,255,255,0.2);text-align:center;padding:20px">Loading...</div></div>
     </div>
   </div>
 </div>
 <div class="sq-toast" id="sq-toast"></div>
-
 <script>
-var _sqFilter = null;
-var _sqCatFilter = null;
+var _sqFilter=null,_sqCatFilter=null,_allTickets=[];
 
-function sqToast(msg, type) {
-  var t = document.getElementById('sq-toast');
-  t.textContent = msg;
-  t.className = 'sq-toast show ' + (type||'ok');
-  setTimeout(function(){t.className='sq-toast'},3000);
+function sqToast(m,t){var e=document.getElementById("sq-toast");e.textContent=m;e.className="sq-toast show "+(t||"ok");setTimeout(function(){e.className="sq-toast"},3000)}
+
+// ── PANEL ──
+function openSqPanel(){document.getElementById("sq-panel").classList.add("open");document.getElementById("sq-panel-overlay").classList.add("open");document.getElementById("sq-panel-tab").style.display="none";sqLoadBetaTests();sqLoadCustomerList()}
+function closeSqPanel(){document.getElementById("sq-panel").classList.remove("open");document.getElementById("sq-panel-overlay").classList.remove("open");document.getElementById("sq-panel-tab").style.display=""}
+document.getElementById("sq-panel-tab").addEventListener("click",openSqPanel);
+document.getElementById("sq-panel-overlay").addEventListener("click",closeSqPanel);
+document.getElementById("sq-panel-close-btn").addEventListener("click",closeSqPanel);
+
+// ── TABS ──
+document.getElementById("sq-tab-bar").addEventListener("click",function(e){
+  var tab=e.target.dataset.tab;if(!tab)return;
+  document.querySelectorAll(".sq-tab").forEach(function(t){t.classList.remove("active")});
+  document.querySelectorAll(".sq-tab-content").forEach(function(t){t.classList.remove("active")});
+  e.target.classList.add("active");
+  document.getElementById("sq-tc-"+tab).classList.add("active");
+  if(tab==="resp")sqLoadResponses();if(tab==="beta")sqLoadBetaTests();
+});
+
+// ── FILTERS ──
+document.querySelector(".sq-filters").addEventListener("click",function(e){
+  var btn=e.target.closest(".sq-f");if(!btn)return;
+  var f=btn.dataset.filter;
+  _sqFilter=(f==="all")?null:(f==="beta_test"?null:f);
+  _sqCatFilter=btn.dataset.cat||null;
+  document.querySelectorAll(".sq-f").forEach(function(b){b.classList.remove("active")});
+  btn.classList.add("active");
+  document.getElementById("sq-detail").innerHTML="";
+  sqRenderTickets();
+});
+
+// ── STATS ──
+function sqUpdateStats(){var o=0,p=0,r=0;_allTickets.forEach(function(t){if(t.status==="open")o++;else if(t.status==="in_progress")p++;else if(t.status==="resolved")r++});document.getElementById("sq-s-open").textContent=o;document.getElementById("sq-s-progress").textContent=p;document.getElementById("sq-s-resolved").textContent=r}
+
+// ── TICKETS ──
+async function sqLoadTickets(){
+  var el=document.getElementById("sq-list");
+  try{
+    var r=await fetch("/api/proxy/support/all-tickets");
+    var d=await r.json();
+    _allTickets=d.tickets||[];
+    sqUpdateStats();
+    sqRenderTickets();
+  }catch(e){el.innerHTML="<div style='color:#ff4b6e;padding:20px;text-align:center'>Error loading tickets: "+e.message+"</div>"}
 }
 
-async function sqLoadTickets() {
-  var el = document.getElementById('sq-list');
-  try {
-    var url = '/api/proxy/support/all-tickets';
-    var params = [];
-    if (_sqFilter) params.push('status=' + _sqFilter);
-    if (_sqCatFilter) params.push('category=' + _sqCatFilter);
-    if (params.length) url += '?' + params.join('&');
-    var r = await fetch(url);
-    var d = await r.json();
-    var tickets = d.tickets || [];
-    if (!tickets.length) {
-      el.innerHTML = '<div style="color:rgba(255,255,255,0.3);text-align:center;padding:30px">No tickets found</div>';
-      return;
-    }
-    el.innerHTML = tickets.map(function(t) {
-      var last = t.last_message ? t.last_message.message.slice(0,80) : '';
-      var name = t.customer_name || t.customer_email || t.customer_id.slice(0,8);
-      return '<div class="sq-card" onclick="sqViewTicket(\\'' + t.ticket_id + '\\',\\'' + t.customer_id + '\\')">'
-        + '<div class="sq-card-top">'
-        + '<div class="sq-subj">' + t.subject + '</div>'
-        + '<div style="display:flex;gap:4px"><span class="sq-badge ' + t.category + '">' + t.category + '</span>'
-        + '<span class="sq-status ' + t.status + '">' + t.status + '</span></div></div>'
-        + '<div class="sq-meta">' + name + ' &middot; ' + (t.updated_at||'').slice(0,16) + ' &middot; ' + (t.message_count||0) + ' messages</div>'
-        + (last ? '<div class="sq-preview">' + last + '</div>' : '')
-        + '</div>';
-    }).join('');
-  } catch(e) { el.innerHTML = '<div style="color:#ff4b6e;padding:20px;text-align:center">Error loading tickets</div>'; }
-}
-
-function sqFilter(status, btn, cat) {
-  _sqFilter = status;
-  _sqCatFilter = cat || null;
-  document.querySelectorAll('.sq-f').forEach(function(b){b.classList.remove('active')});
-  btn.classList.add('active');
-  document.getElementById('sq-detail').innerHTML = '';
-  sqLoadTickets();
-}
-
-async function sqViewTicket(ticketId, customerId) {
-  var el = document.getElementById('sq-detail');
-  try {
-    var r = await fetch('/api/proxy/support/ticket/' + ticketId + '?customer_id=' + customerId);
-    var d = await r.json();
-    if (!d.ticket) { el.innerHTML = 'Ticket not found'; return; }
-    var t = d.ticket;
-    var msgs = d.messages || [];
-    var html = '<div class="sq-detail">';
-    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
-    html += '<div style="font-size:14px;font-weight:700">' + t.subject + '</div>';
-    html += '<span class="sq-status ' + t.status + '">' + t.status + '</span></div>';
-    html += '<div style="font-size:10px;color:rgba(255,255,255,0.35);margin-bottom:12px">' + t.ticket_id + ' &middot; ' + t.category + '</div>';
-    msgs.forEach(function(m) {
-      var cls = m.sender === 'admin' ? 'admin' : 'customer';
-      html += '<div class="sq-msg ' + cls + '">';
-      html += '<div class="sq-msg-head">' + (m.sender==='admin'?'You':'Customer') + ' &middot; ' + (m.created_at||'').slice(0,16) + '</div>';
-      html += '<div class="sq-msg-body">' + m.message + '</div></div>';
-    });
-    html += '<textarea class="sq-reply-box" id="sq-reply" placeholder="Write a reply..."></textarea>';
-    html += '<div style="display:flex;justify-content:space-between;align-items:center">';
-    html += '<button class="sq-reply-btn" onclick="sqReply(\\'' + ticketId + '\\',\\'' + customerId + '\\')">Send Reply</button>';
-    html += '<div class="sq-status-btns">';
-    html += '<button class="sq-st-btn" data-tid="' + ticketId + '" data-cid="' + customerId + '" data-st="in_progress" onclick="sqSetStatus(this.dataset.tid,this.dataset.cid,this.dataset.st)">In Progress</button>';
-    html += '<button class="sq-st-btn" data-tid="' + ticketId + '" data-cid="' + customerId + '" data-st="resolved" onclick="sqSetStatus(this.dataset.tid,this.dataset.cid,this.dataset.st)">Resolved</button>';
-    html += '<button class="sq-st-btn" data-tid="' + ticketId + '" data-cid="' + customerId + '" data-st="closed" onclick="sqSetStatus(this.dataset.tid,this.dataset.cid,this.dataset.st)">Close</button>';
-    html += '</div></div></div>';
-    el.innerHTML = html;
-    el.scrollIntoView({behavior:'smooth'});
-  } catch(e) { el.innerHTML = 'Error loading ticket'; }
-}
-
-async function sqReply(ticketId, customerId) {
-  var msg = document.getElementById('sq-reply').value.trim();
-  if (!msg) return;
-  await fetch('/api/proxy/support/reply/' + ticketId, {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({message: msg, customer_id: customerId})
+function sqRenderTickets(){
+  var el=document.getElementById("sq-list");
+  var tickets=_allTickets.filter(function(t){
+    if(_sqFilter==="archived")return t.status==="archived";
+    if(_sqFilter&&t.status!==_sqFilter)return false;
+    if(_sqCatFilter&&t.category!==_sqCatFilter)return false;
+    if(!_sqFilter&&!_sqCatFilter&&t.status==="archived")return false;
+    return true;
   });
-  sqToast('Reply sent');
-  sqViewTicket(ticketId, customerId);
+  if(!tickets.length){el.innerHTML="<div style='color:rgba(255,255,255,0.3);text-align:center;padding:30px'>No tickets found</div>";return}
+  el.innerHTML=tickets.map(function(t){
+    var last=t.last_message?t.last_message.message.slice(0,80):"";
+    var name=t.customer_name||t.customer_email||(t.customer_id||"").slice(0,8);
+    var archBtn=t.status!=="archived"?" <button class='sq-archive-btn' data-action='archive' data-tid='"+t.ticket_id+"' data-cid='"+(t.customer_id||"")+"'>Archive</button>":"";
+    return "<div class='sq-card st-"+t.status+"' data-action='view' data-tid='"+t.ticket_id+"' data-cid='"+(t.customer_id||"")+"'>"
+      +"<div class='sq-card-top'>"
+      +"<div class='sq-subj'>"+(t.subject||"")+"</div>"
+      +"<div style='display:flex;gap:4px;align-items:center'><span class='sq-badge "+t.category+"'>"+t.category+"</span>"
+      +"<span class='sq-status "+t.status+"'>"+t.status.replace("_"," ")+"</span>"+archBtn+"</div></div>"
+      +"<div class='sq-meta'>"+name+" &middot; "+(t.updated_at||"").slice(0,16)+" &middot; "+(t.message_count||0)+" msg</div>"
+      +(last?"<div class='sq-preview'>"+last+"</div>":"")
+      +"</div>";
+  }).join("");
 }
 
-async function sqSetStatus(ticketId, customerId, status) {
-  await fetch('/api/proxy/support/status/' + ticketId, {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({status: status, customer_id: customerId})
-  });
-  sqToast('Status: ' + status);
-  sqLoadTickets();
-  sqViewTicket(ticketId, customerId);
+// ── EVENT DELEGATION for tickets ──
+document.getElementById("sq-list").addEventListener("click",function(e){
+  var archBtn=e.target.closest("[data-action='archive']");
+  if(archBtn){e.stopPropagation();sqArchive(archBtn.dataset.tid,archBtn.dataset.cid);return}
+  var card=e.target.closest("[data-action='view']");
+  if(card)sqViewTicket(card.dataset.tid,card.dataset.cid);
+});
+
+async function sqArchive(tid,cid){
+  await fetch("/api/proxy/support/status/"+tid,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:"archived",customer_id:cid})});
+  sqToast("Archived: "+tid);sqLoadTickets();
 }
 
-async function sqCreateBetaTest() {
-  var title = document.getElementById('bt-title').value.trim();
-  var desc = document.getElementById('bt-desc').value.trim();
-  var req = parseInt(document.getElementById('bt-required').value) || 2;
-  if (!title || !desc) { sqToast('Title and description required', 'err'); return; }
-  var r = await fetch('/api/beta-tests', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({title: title, description: desc, required_confirmations: req})
-  });
-  var d = await r.json();
-  if (d.ok) {
-    sqToast('Beta test created: ' + d.test_id);
-    document.getElementById('bt-title').value = '';
-    document.getElementById('bt-desc').value = '';
-    sqLoadBetaTests();
-  } else { sqToast(d.error || 'Failed', 'err'); }
-}
-
-async function sqLoadBetaTests() {
-  var el = document.getElementById('bt-list');
-  try {
-    var r = await fetch('/api/beta-tests');
-    var d = await r.json();
-    var tests = d.tests || [];
-    if (!tests.length) { el.innerHTML = '<div style="font-size:11px;color:rgba(255,255,255,0.3);padding:12px 0;text-align:center">No beta tests yet</div>'; return; }
-    el.innerHTML = tests.map(function(t) {
-      var stColor = t.status === 'cleared' ? '#00f5d4' : t.status === 'cancelled' ? '#ff4b6e' : '#f5a623';
-      return '<div class="sq-test-card">'
-        + '<div style="display:flex;justify-content:space-between;align-items:center">'
-        + '<div class="sq-test-title">' + t.id + ': ' + t.title + '</div>'
-        + '<span style="font-size:9px;font-weight:700;color:' + stColor + ';text-transform:uppercase">' + t.status + '</span></div>'
-        + '<div class="sq-test-desc">' + t.description.slice(0,100) + '</div>'
-        + '<div class="sq-test-progress">Required: ' + t.required_confirmations + ' confirmations</div>'
-        + '</div>';
-    }).join('');
-  } catch(e) {}
-}
-
-
-// ── Direct Message to Customer ──
-async function sqSendDirect() {
-  var cid = document.getElementById('dm-customer').value;
-  var title = document.getElementById('dm-title').value.trim();
-  var body = document.getElementById('dm-body').value.trim();
-  if (!cid) { sqToast('Select a customer first', 'err'); return; }
-  if (!title) { sqToast('Enter a message title', 'err'); return; }
-  if (!body) { sqToast('Enter a message body', 'err'); return; }
-  try {
-    // Create a direct_message ticket in customer's DB
-    var r = await fetch('/api/proxy/direct-message', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({customer_id: cid, title: title, message: body})
+async function sqViewTicket(ticketId,customerId){
+  var el=document.getElementById("sq-detail");
+  try{
+    var r=await fetch("/api/proxy/support/ticket/"+ticketId+"?customer_id="+customerId);
+    var d=await r.json();
+    if(!d.ticket){el.innerHTML="Ticket not found";return}
+    var t=d.ticket;var msgs=d.messages||[];
+    var html="<div class='sq-detail'>";
+    html+="<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px'>";
+    html+="<div style='font-size:14px;font-weight:700'>"+t.subject+"</div>";
+    html+="<div style='display:flex;gap:4px;align-items:center'><span class='sq-status "+t.status+"'>"+t.status.replace("_"," ")+"</span>";
+    if(t.status!=="archived")html+="<button class='sq-archive-btn' data-action='detail-archive' data-tid='"+ticketId+"' data-cid='"+customerId+"'>Archive</button>";
+    html+="</div></div>";
+    html+="<div style='font-size:10px;color:rgba(255,255,255,0.35);margin-bottom:12px'>"+t.ticket_id+" &middot; "+t.category+"</div>";
+    msgs.forEach(function(m){
+      var cls=m.sender==="admin"?"admin":"customer";
+      html+="<div class='sq-msg "+cls+"'>";
+      html+="<div class='sq-msg-head'>"+(m.sender==="admin"?"You":"Customer")+" &middot; "+(m.created_at||"").slice(0,16)+"</div>";
+      html+="<div class='sq-msg-body'>"+m.message+"</div></div>";
     });
-    if (!r.ok) { sqToast('Server error: HTTP ' + r.status, 'err'); return; }
-    var d = await r.json();
-    if (d.ok) {
-      sqToast('Message sent', 'ok');
-      document.getElementById('dm-title').value = '';
-      document.getElementById('dm-body').value = '';
-      sqLoadTickets();
-    } else { sqToast(d.error || 'Send failed', 'err'); }
-  } catch(e) {
-    sqToast('Network error: ' + e.message, 'err');
-    console.error('sqSendDirect error:', e);
-  }
+    html+="<textarea class='sq-reply-box' id='sq-reply' placeholder='Write a reply...'></textarea>";
+    html+="<div style='display:flex;justify-content:space-between;align-items:center'>";
+    html+="<button class='sq-reply-btn' data-action='reply' data-tid='"+ticketId+"' data-cid='"+customerId+"'>Send Reply</button>";
+    html+="<div class='sq-status-btns'>";
+    html+="<button class='sq-st-btn' data-action='status' data-tid='"+ticketId+"' data-cid='"+customerId+"' data-st='in_progress'>In Progress</button>";
+    html+="<button class='sq-st-btn' data-action='status' data-tid='"+ticketId+"' data-cid='"+customerId+"' data-st='resolved'>Resolved</button>";
+    html+="<button class='sq-st-btn' data-action='status' data-tid='"+ticketId+"' data-cid='"+customerId+"' data-st='archived'>Archive</button>";
+    html+="</div></div></div>";
+    el.innerHTML=html;
+    el.scrollIntoView({behavior:"smooth"});
+  }catch(e){el.innerHTML="Error loading ticket"}
 }
 
-async function sqLoadCustomerList() {
-  try {
-    var r = await fetch('/api/proxy/billing/all-customers');
-    var d = await r.json();
-    var sel = document.getElementById('dm-customer');
-    if (!sel) return;
-    var custs = d.customers || [];
-    sel.innerHTML = '<option value="">Select customer...</option>';
-    custs.forEach(function(c) {
-      var opt = document.createElement('option');
-      opt.value = c.id;
-      opt.textContent = (c.name || c.email || c.id.slice(0,8));
-      sel.appendChild(opt);
-    });
-  } catch(e) {}
+// ── EVENT DELEGATION for detail view ──
+document.getElementById("sq-detail").addEventListener("click",function(e){
+  var btn=e.target.closest("[data-action]");if(!btn)return;
+  var action=btn.dataset.action;
+  if(action==="detail-archive"){sqArchive(btn.dataset.tid,btn.dataset.cid);return}
+  if(action==="reply"){var msg=document.getElementById("sq-reply").value.trim();if(msg)sqReply(btn.dataset.tid,btn.dataset.cid,msg);return}
+  if(action==="status"){sqSetStatus(btn.dataset.tid,btn.dataset.cid,btn.dataset.st);return}
+});
+
+async function sqReply(tid,cid,msg){
+  await fetch("/api/proxy/support/reply/"+tid,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:msg,customer_id:cid})});
+  sqToast("Reply sent");sqViewTicket(tid,cid);
 }
 
+async function sqSetStatus(tid,cid,st){
+  await fetch("/api/proxy/support/status/"+tid,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:st,customer_id:cid})});
+  sqToast("Status: "+st.replace("_"," "));sqLoadTickets();
+  if(st!=="archived")sqViewTicket(tid,cid);else document.getElementById("sq-detail").innerHTML="";
+}
+
+// ── BETA TESTS ──
+document.getElementById("bt-create-btn").addEventListener("click",sqCreateBetaTest);
+async function sqCreateBetaTest(){
+  var title=document.getElementById("bt-title").value.trim();
+  var desc=document.getElementById("bt-desc").value.trim();
+  var req=parseInt(document.getElementById("bt-required").value)||2;
+  if(!title||!desc){sqToast("Title and description required","err");return}
+  var r=await fetch("/api/beta-tests",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title:title,description:desc,required_confirmations:req})});
+  var d=await r.json();
+  if(d.ok){sqToast("Beta test created: "+d.test_id);document.getElementById("bt-title").value="";document.getElementById("bt-desc").value="";sqLoadBetaTests()}
+  else{sqToast(d.error||"Failed","err")}
+}
+
+async function sqLoadBetaTests(){
+  var el=document.getElementById("bt-list");
+  try{
+    var r=await fetch("/api/beta-tests");var d=await r.json();var tests=d.tests||[];
+    var active=tests.filter(function(t){return t.status==="active"}).length;
+    document.getElementById("sq-s-beta").textContent=active;
+    if(!tests.length){el.innerHTML="<div style='font-size:11px;color:rgba(255,255,255,0.2);text-align:center;padding:20px'>No beta tests yet</div>";return}
+    el.innerHTML=tests.map(function(t){
+      var stColor=t.status==="cleared"?"#00f5d4":t.status==="cancelled"?"#ff4b6e":t.status==="archived"?"rgba(255,255,255,0.35)":"#f5a623";
+      var actions="";
+      if(t.status==="active"){
+        actions="<div class='sq-test-actions'>"
+          +"<button class='sq-test-btn clear' data-action='beta-status' data-id='"+t.id+"' data-st='cleared'>Clear Test</button>"
+          +"<button class='sq-test-btn archive' data-action='beta-status' data-id='"+t.id+"' data-st='archived'>Archive</button>"
+          +"<button class='sq-test-btn cancel' data-action='beta-status' data-id='"+t.id+"' data-st='cancelled'>Cancel Test</button>"
+          +"</div>";
+      }
+      return "<div class='sq-test-card'>"
+        +"<div style='display:flex;justify-content:space-between;align-items:center'>"
+        +"<div class='sq-test-title'>"+t.id+": "+t.title+"</div>"
+        +"<span style='font-size:9px;font-weight:700;color:"+stColor+";text-transform:uppercase'>"+t.status+"</span></div>"
+        +"<div class='sq-test-desc'>"+(t.description||"").slice(0,100)+"</div>"
+        +"<div class='sq-test-meta'>Required: "+t.required_confirmations+" confirmations</div>"
+        +actions+"</div>";
+    }).join("");
+  }catch(e){}
+}
+
+document.getElementById("bt-list").addEventListener("click",function(e){
+  var btn=e.target.closest("[data-action='beta-status']");if(!btn)return;
+  sqBetaStatus(btn.dataset.id,btn.dataset.st);
+});
+
+async function sqBetaStatus(testId,status){
+  try{var r=await fetch("/api/beta-tests/"+testId+"/status",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:status})});
+  var d=await r.json();if(d.ok){sqToast("Test "+testId+": "+status);sqLoadBetaTests()}else{sqToast(d.error||"Failed","err")}}
+  catch(e){sqToast("Error: "+e.message,"err")}
+}
+
+// ── DIRECT MESSAGE ──
+document.getElementById("dm-send-btn").addEventListener("click",sqSendDirect);
+async function sqSendDirect(){
+  var cid=document.getElementById("dm-customer").value;
+  var title=document.getElementById("dm-title").value.trim();
+  var body=document.getElementById("dm-body").value.trim();
+  if(!cid){sqToast("Select a customer first","err");return}
+  if(!title){sqToast("Enter a message title","err");return}
+  if(!body){sqToast("Enter a message body","err");return}
+  try{var r=await fetch("/api/proxy/direct-message",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({customer_id:cid,title:title,message:body})});
+  if(!r.ok){sqToast("Server error: HTTP "+r.status,"err");return}
+  var d=await r.json();if(d.ok){sqToast("Message sent");document.getElementById("dm-title").value="";document.getElementById("dm-body").value="";sqLoadTickets()}
+  else{sqToast(d.error||"Send failed","err")}}catch(e){sqToast("Network error: "+e.message,"err")}
+}
+
+async function sqLoadCustomerList(){
+  try{var r=await fetch("/api/proxy/billing/all-customers");var d=await r.json();
+  var sel=document.getElementById("dm-customer");if(!sel)return;
+  var custs=d.customers||[];sel.innerHTML="<option value=''>Select customer...</option>";
+  custs.forEach(function(c){var opt=document.createElement("option");opt.value=c.id;opt.textContent=(c.name||c.email||c.id.slice(0,8));sel.appendChild(opt)})}catch(e){}
+}
+
+// ── RESPONSES ──
+async function sqLoadResponses(){
+  var el=document.getElementById("resp-list");
+  try{var r=await fetch("/api/proxy/support/all-tickets");var d=await r.json();var tickets=d.tickets||[];
+  var responses=[];
+  tickets.forEach(function(t){if(t.last_message&&t.last_message.sender==="customer"){
+    responses.push({ticket_id:t.ticket_id,customer_id:t.customer_id,subject:t.subject,message:t.last_message.message,time:t.last_message.created_at,name:t.customer_name||t.customer_email||(t.customer_id||"").slice(0,8)})}});
+  responses.sort(function(a,b){return(b.time||"").localeCompare(a.time||"")});
+  if(!responses.length){el.innerHTML="<div style='font-size:11px;color:rgba(255,255,255,0.2);text-align:center;padding:20px'>No customer messages yet</div>";return}
+  el.innerHTML=responses.slice(0,20).map(function(r){
+    return "<div class='sq-resp' data-action='view-resp' data-tid='"+r.ticket_id+"' data-cid='"+r.customer_id+"'>"
+      +"<div class='sq-resp-head'>"+r.name+" &middot; "+r.subject+" &middot; "+(r.time||"").slice(0,16)+"</div>"
+      +"<div class='sq-resp-body'>"+(r.message||"").slice(0,120)+"</div></div>";
+  }).join("")}catch(e){el.innerHTML="<div style='color:#ff4b6e;text-align:center;padding:20px'>Error</div>"}
+}
+
+document.getElementById("resp-list").addEventListener("click",function(e){
+  var el=e.target.closest("[data-action='view-resp']");if(!el)return;
+  closeSqPanel();sqViewTicket(el.dataset.tid,el.dataset.cid);
+});
+
+// ── INIT ──
 sqLoadTickets();
 sqLoadBetaTests();
-sqLoadCustomerList();
-setInterval(sqLoadTickets, 10000);
+setInterval(sqLoadTickets,15000);
 </script>
 """
+
+
 
 
 
@@ -8166,6 +8750,8 @@ setInterval(() => loadNode(currentNode), 15000);
 
 @app.route("/audit")
 def audit_page():
+    if not _authorized():
+        return redirect(url_for("login"))
     return AUDIT_PAGE_HTML.replace("{{ subpage_hdr|safe }}", _subpage_header("Auditor"))
 
 
@@ -8178,7 +8764,9 @@ if __name__ == "__main__":
         print("[Synthos Monitor]   Run install_monitor.py to generate one.")
         raise SystemExit(1)
 
-    load_registry()  # restore Pi state from last run
+    load_registry()   # restore Pi state from last run
+    load_overrides()  # restore admin override state
+    init_support_db()  # support/admin tools DB (separate from company.db)
 
     # Register digest agent blueprint
     try:
@@ -8226,7 +8814,7 @@ if __name__ == "__main__":
                     "pi_id":          self_pi_id,
                     "label":          self_pi_label,
                     "agents":         {"synthos_monitor": "active"},
-                    "operating_mode": "SUPERVISED",
+                    "operating_mode": "MANAGED",
                     "trading_mode":   "PAPER",
                     "kill_switch":    False,
                     # CPU

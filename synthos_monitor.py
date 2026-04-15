@@ -2197,7 +2197,7 @@ function renderNodeRoster() {
       + '<div class="node-cell mc-na">' + ageSince(pi.last_seen) + '</div>'
     + '<div class="node-power">'
       + '<button class="mute-btn' + (pi.silenced ? ' muted' : '') + '" '
-      + 'onclick="event.stopPropagation();toggleSilence(\'' + escHtml(pi.pi_id) + '\')" '
+      + 'onclick="event.stopPropagation();toggleSilence(\\'' + escHtml(pi.pi_id) + '\\')" '
       + 'title="' + (pi.silenced ? 'Unmute alerts' : 'Mute alerts') + '">'
       + (pi.silenced ? '\U0001F507' : '\U0001F514')
       + '</button>'

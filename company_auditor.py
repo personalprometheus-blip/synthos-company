@@ -170,9 +170,10 @@ CREATE INDEX IF NOT EXISTS idx_issues_dedup ON detected_issues(source_file, patt
 @contextmanager
 def _db():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    c = sqlite3.connect(str(DB_PATH), timeout=10)
+    c = sqlite3.connect(str(DB_PATH), timeout=30)
     c.row_factory = sqlite3.Row
     c.execute("PRAGMA journal_mode=WAL")
+    c.execute("PRAGMA busy_timeout=15000")
     try:
         yield c
         c.commit()
@@ -363,7 +364,7 @@ def scan_remote_logs(node_id: str, node_cfg: dict) -> list[dict]:
     for remote_path in log_files:
         fname = os.path.basename(remote_path)
         # Fetch last 200 lines of each log (avoid pulling huge files)
-        ok, content = _ssh_run(host, f'tail -200 {remote_path}', timeout=10)
+        ok, content = _ssh_run(host, f'tail -200 {remote_path}', timeout=30)
         if not ok:
             continue
 
@@ -520,7 +521,7 @@ def _notify_scoop(subject: str, body: str, severity: str = 'high'):
         priority  = 0 if severity == 'critical' else 1
         queued_at = datetime.now(timezone.utc).isoformat()
 
-        conn = sqlite3.connect(company_db, timeout=10)
+        conn = sqlite3.connect(company_db, timeout=30)
         conn.execute(
             "INSERT INTO scoop_queue "
             "(id, event_type, priority, subject, body, source_agent, "

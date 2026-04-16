@@ -7408,6 +7408,23 @@ def proxy_billing_all():
         return jsonify({"error": str(e)}), 502
 
 
+@app.route("/api/proxy/customer/<customer_id>/trading-mode", methods=["POST"])
+def proxy_customer_trading_mode(customer_id):
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    import requests as _req
+    data = request.get_json(silent=True) or {}
+    try:
+        cookie = _get_admin_session_cookie()
+        r = _req.post(
+            f"{RETAIL_PORTAL_URL}/api/admin/customers/{customer_id}/trading-mode",
+            json=data, cookies={'synthos_s': cookie}, timeout=15
+        )
+        return jsonify(r.json()), r.status_code
+    except Exception as e:
+        return jsonify({"error": str(e)}), 502
+
+
 @app.route("/api/company-expenses", methods=["GET"])
 def api_company_expenses():
     if not _authorized():
@@ -8446,6 +8463,7 @@ async function loadCustBilling() {
       + '<th style="padding:8px;text-align:center">Status</th>'
       + '<th style="padding:8px;text-align:center">Tier</th>'
       + '<th style="padding:8px;text-align:center">Alpaca</th>'
+      + '<th style="padding:8px;text-align:center">Trading</th>'
       + '<th style="padding:8px;text-align:right">Since</th></tr>'
       + custs.map(function(c) {
         var st = c.subscription_status || 'inactive';
@@ -8456,10 +8474,27 @@ async function loadCustBilling() {
           + '<td style="padding:8px;text-align:center"><span style="font-size:9px;font-weight:700;padding:2px 8px;border-radius:99px;background:' + col + '20;color:' + col + '">' + st + '</span></td>'
           + '<td style="padding:8px;text-align:center;font-size:11px;color:rgba(255,255,255,0.5)">' + (c.pricing_tier||'standard') + '</td>'
           + '<td style="padding:8px;text-align:center">' + (c.has_alpaca?'<span style="color:#00f5d4">\u2713</span>':'<span style="color:rgba(255,255,255,0.2)">\u2014</span>') + '</td>'
+          + '<td style="padding:8px;text-align:center"><span style="font-size:9px;font-weight:700;padding:2px 8px;border-radius:99px;cursor:pointer;' + ((c.trading_mode||'PAPER')==='LIVE' ? 'background:rgba(0,245,212,0.15);color:#00f5d4;border:1px solid rgba(0,245,212,0.3)' : 'background:rgba(255,255,255,0.05);color:rgba(255,255,255,0.4);border:1px solid rgba(255,255,255,0.1)') + '" onclick="toggleTradingMode(\'' + c.id + '\',\'' + (c.trading_mode||'PAPER') + '\',\'' + (c.name||'').replace(/'/g,'') + '\')">' + (c.trading_mode||'PAPER') + '</span></td>'
           + '<td style="padding:8px;text-align:right;font-size:10px;color:rgba(255,255,255,0.35)">' + (c.created_at||'').slice(0,10) + '</td></tr>';
       }).join('')
       + '</table>';
   } catch(e) { document.getElementById('cb-list').innerHTML = '<div style="color:#ff4b6e;text-align:center;padding:20px">Error loading billing data</div>'; }
+}
+async function toggleTradingMode(id, current, name) {
+  var next = current === 'LIVE' ? 'PAPER' : 'LIVE';
+  var warning = next === 'LIVE'
+    ? 'Switch ' + name + ' to LIVE trading? Real money will be used.'
+    : 'Switch ' + name + ' back to PAPER trading?';
+  if (!confirm(warning)) return;
+  try {
+    var r = await fetch('/api/proxy/customer/' + id + '/trading-mode', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({mode: next})
+    });
+    var d = await r.json();
+    if (d.ok) { loadCustBilling(); }
+    else { alert(d.error || 'Failed'); }
+  } catch(e) { alert('Error: ' + e); }
 }
 loadCustBilling();
 </script>

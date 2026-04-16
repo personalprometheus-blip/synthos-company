@@ -49,6 +49,7 @@ import signal
 import logging
 import argparse
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -121,11 +122,20 @@ def now_iso() -> str:
 
 # -- DATABASE -----------------------------------------------------------------
 
-def get_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(DB_PATH), timeout=10)
+@contextmanager
+def get_db():
+    conn = sqlite3.connect(str(DB_PATH), timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
-    return conn
+    conn.execute("PRAGMA busy_timeout=15000")
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def get_customer_email(pi_id: str):

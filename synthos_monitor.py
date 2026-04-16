@@ -6616,6 +6616,7 @@ async function loadInvites(){
         +sentBadge
         +'<button onclick="promptSendEmail(&#39;'+c.code+'&#39;)" style="padding:3px 10px;border-radius:6px;font-size:10px;font-weight:600;background:rgba(138,92,246,0.08);border:1px solid rgba(138,92,246,0.2);color:#8a5cf6;cursor:pointer;font-family:inherit;white-space:nowrap">Send To Email</button>'
         +'<input id="note-'+c.code+'" value="'+noteTxt.replace(/"/g,'&quot;')+'" placeholder="Recipient note\u2026" onblur="saveInviteNote(&#39;'+c.code+'&#39;)" style="flex:1;min-width:140px;padding:4px 10px;border-radius:6px;font-size:11px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);color:rgba(255,255,255,0.8);font-family:inherit;outline:none">'
+        +'<span id="note-status-'+c.code+'" style="font-size:9px;font-weight:600;min-width:50px;opacity:0;transition:opacity .3s"></span>'
         +'</div>';
     }).join('');
   }catch(e){console.error(e)}
@@ -6648,16 +6649,20 @@ async function saveInviteNote(code){
   var note=el.value.trim();
   var prev=(_inviteNotes[code]||{}).note||(_inviteNotes[code]||{}).recipient_name||'';
   if(note===prev) return;
+  var st=document.getElementById('note-status-'+code);
   try{
     const r=await fetch('/api/invite-note',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code,note:note})});
     const d=await r.json();
     if(d.ok){
       if(!_inviteNotes[code]) _inviteNotes[code]={};
       _inviteNotes[code].note=note;
-      el.style.borderColor='rgba(0,245,212,0.3)';
-      setTimeout(function(){el.style.borderColor='rgba(255,255,255,0.08)'},1200);
+      if(st){st.textContent='Saved \u2713';st.style.color='rgba(0,245,212,0.7)';st.style.opacity='1';setTimeout(function(){st.style.opacity='0'},2500)}
+    } else {
+      if(st){st.textContent='Error';st.style.color='rgba(255,75,110,0.7)';st.style.opacity='1';setTimeout(function(){st.style.opacity='0'},3000)}
     }
-  }catch(e){}
+  }catch(e){
+    if(st){st.textContent='Error';st.style.color='rgba(255,75,110,0.7)';st.style.opacity='1';setTimeout(function(){st.style.opacity='0'},3000)}
+  }
 }
 
 loadApprovals();

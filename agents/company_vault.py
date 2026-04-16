@@ -49,6 +49,7 @@ import hashlib
 import logging
 import argparse
 import sqlite3
+from contextlib import contextmanager
 import subprocess
 import tarfile
 import tempfile
@@ -132,12 +133,21 @@ log = logging.getLogger("vault")
 
 # ── DATABASE ──────────────────────────────────────────────────────────────────
 
-def get_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(DB_PATH), timeout=10)
+@contextmanager
+def get_db():
+    conn = sqlite3.connect(str(DB_PATH), timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=15000")
     conn.execute("PRAGMA foreign_keys=ON")
-    return conn
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def ensure_schema() -> None:

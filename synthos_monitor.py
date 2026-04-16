@@ -167,6 +167,15 @@ def init_support_db():
                 updated_at TEXT NOT NULL,
                 UNIQUE(node, key_name)
             );
+            CREATE TABLE IF NOT EXISTS invite_notes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT NOT NULL UNIQUE,
+                recipient_name TEXT,
+                recipient_email TEXT,
+                sent_at TEXT,
+                note TEXT,
+                created_at TEXT NOT NULL
+            );
         """)
     # Migrate data from company.db if support.db tables are empty
     try:
@@ -260,6 +269,15 @@ def init_db():
                 notes TEXT,
                 updated_at TEXT NOT NULL,
                 UNIQUE(node, key_name)
+            );
+            CREATE TABLE IF NOT EXISTS invite_notes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT NOT NULL UNIQUE,
+                recipient_name TEXT,
+                recipient_email TEXT,
+                sent_at TEXT,
+                note TEXT,
+                created_at TEXT NOT NULL
             );
         """)
         # Migration: add columns to scoop_queue that may be missing from older schemas
@@ -4251,6 +4269,109 @@ def proxy_invite_codes():
 
 
 
+# ── Invite Code Notes + Email ─────────────────────────────────────────────────
+
+@app.route("/api/invite-notes")
+def api_invite_notes():
+    """Return all invite code notes."""
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    try:
+        with _support_conn() as conn:
+            rows = conn.execute(
+                "SELECT code, recipient_name, recipient_email, sent_at, note, created_at "
+                "FROM invite_notes ORDER BY created_at DESC"
+            ).fetchall()
+        return jsonify({"ok": True, "notes": {r["code"]: dict(r) for r in rows}})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/invite-note", methods=["POST"])
+def api_invite_note_save():
+    """Save or update a note for an invite code."""
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    data = request.get_json(force=True) or {}
+    code = (data.get("code") or "").strip()
+    note = (data.get("note") or "").strip()
+    if not code:
+        return jsonify({"error": "code required"}), 400
+    from datetime import datetime as _dt
+    try:
+        with _support_conn() as conn:
+            existing = conn.execute("SELECT id FROM invite_notes WHERE code=?", (code,)).fetchone()
+            if existing:
+                conn.execute("UPDATE invite_notes SET note=? WHERE code=?", (note, code))
+            else:
+                conn.execute(
+                    "INSERT INTO invite_notes (code, note, created_at) VALUES (?,?,?)",
+                    (code, note, _dt.now().strftime("%Y-%m-%d %H:%M:%S")))
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/invite-send-email", methods=["POST"])
+def api_invite_send_email():
+    """Send an invite code to a recipient via Resend."""
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    data = request.get_json(force=True) or {}
+    code = (data.get("code") or "").strip()
+    email = (data.get("email") or "").strip()
+    recipient_name = (data.get("recipient_name") or "").strip()
+    if not code or not email:
+        return jsonify({"error": "code and email required"}), 400
+    if not RESEND_API_KEY:
+        return jsonify({"error": "Resend API key not configured"}), 500
+    import requests as _req
+    from datetime import datetime as _dt
+    try:
+        greeting = f"Hi {recipient_name}," if recipient_name else "Hi,"
+        r = _req.post(
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {RESEND_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "from": ALERT_FROM,
+                "to": [email],
+                "subject": "Your Synthos Access Code",
+                "html": (
+                    '<div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:24px">'
+                    '<h2 style="color:#0a0c14;margin-bottom:8px">Synthos Invite</h2>'
+                    f"<p>{greeting}</p>"
+                    "<p>You&#39;ve been invited to join Synthos. Use the code below when signing up:</p>"
+                    '<div style="background:#0a0c14;color:#00f5d4;font-family:monospace;font-size:22px;'
+                    'font-weight:700;letter-spacing:0.08em;padding:16px 24px;border-radius:10px;'
+                    f'text-align:center;margin:16px 0">{code}</div>'
+                    '<p style="color:#666;font-size:13px">This code is single-use and will expire once redeemed.</p>'
+                    "</div>"
+                ),
+            },
+            timeout=10,
+        )
+        if r.status_code in (200, 201):
+            now_str = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+            with _support_conn() as conn:
+                existing = conn.execute("SELECT id FROM invite_notes WHERE code=?", (code,)).fetchone()
+                if existing:
+                    conn.execute(
+                        "UPDATE invite_notes SET recipient_email=?, recipient_name=?, sent_at=? WHERE code=?",
+                        (email, recipient_name, now_str, code))
+                else:
+                    conn.execute(
+                        "INSERT INTO invite_notes (code, recipient_email, recipient_name, sent_at, created_at) VALUES (?,?,?,?,?)",
+                        (code, email, recipient_name, now_str, now_str))
+            return jsonify({"ok": True, "message": f"Sent to {email}"})
+        else:
+            return jsonify({"error": f"Resend API error {r.status_code}: {r.text}"}), 502
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/proxy/market-activity")
 def proxy_market_activity():
     """Proxy market activity data from retail portal for the dashboard chart."""
@@ -6460,8 +6581,19 @@ function copyCode(){
   if(code) navigator.clipboard.writeText(code).then(function(){toast('Copied to clipboard','ok')});
 }
 
+var _inviteNotes={};
+
+async function loadInviteNotes(){
+  try{
+    const r=await fetch('/api/invite-notes');
+    const d=await r.json();
+    if(d.ok) _inviteNotes=d.notes||{};
+  }catch(e){}
+}
+
 async function loadInvites(){
   try{
+    await loadInviteNotes();
     const r=await fetch('/api/proxy/invite-codes');
     const d=await r.json();
     const el=document.getElementById('invite-list');
@@ -6474,12 +6606,57 @@ async function loadInvites(){
       var bg=used?'rgba(255,255,255,0.02)':'rgba(0,245,212,0.04)';
       var stTxt=used?'Used':'Available';
       var stClr=used?'rgba(255,75,110,0.7)':'rgba(0,245,212,0.7)';
-      return '<div style="display:flex;align-items:center;gap:14px;padding:10px 16px;border:1px solid rgba(255,255,255,0.05);border-radius:10px;margin-bottom:6px;background:'+bg+'">'
+      var n=_inviteNotes[c.code]||{};
+      var noteTxt=n.note||n.recipient_name||'';
+      var sentBadge=n.sent_at?'<span style="font-size:9px;color:rgba(0,245,212,0.6);background:rgba(0,245,212,0.08);padding:1px 6px;border-radius:99px;margin-left:4px">&check; Sent'+(n.recipient_email?' to '+n.recipient_email:'')+'</span>':'';
+      return '<div style="display:flex;align-items:center;gap:10px;padding:10px 16px;border:1px solid rgba(255,255,255,0.05);border-radius:10px;margin-bottom:6px;background:'+bg+';flex-wrap:wrap">'
         +'<span style="font-family:monospace;font-size:13px;font-weight:700;color:'+sc+';letter-spacing:0.04em;min-width:120px">'+c.code+'</span>'
-        +'<span style="font-size:10px;color:rgba(255,255,255,0.3)">'+ts+'</span>'
-        +'<span style="font-size:10px;color:'+stClr+'">'+stTxt+'</span>'
+        +'<span style="font-size:10px;color:rgba(255,255,255,0.3);min-width:90px">'+ts+'</span>'
+        +'<span style="font-size:10px;color:'+stClr+';min-width:55px">'+stTxt+'</span>'
+        +sentBadge
+        +'<button onclick="promptSendEmail(&#39;'+c.code+'&#39;)" style="padding:3px 10px;border-radius:6px;font-size:10px;font-weight:600;background:rgba(138,92,246,0.08);border:1px solid rgba(138,92,246,0.2);color:#8a5cf6;cursor:pointer;font-family:inherit;white-space:nowrap">Send To Email</button>'
+        +'<input id="note-'+c.code+'" value="'+noteTxt.replace(/"/g,'&quot;')+'" placeholder="Recipient note\u2026" onblur="saveInviteNote(&#39;'+c.code+'&#39;)" style="flex:1;min-width:140px;padding:4px 10px;border-radius:6px;font-size:11px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);color:rgba(255,255,255,0.8);font-family:inherit;outline:none">'
         +'</div>';
     }).join('');
+  }catch(e){console.error(e)}
+}
+
+function promptSendEmail(code){
+  var n=_inviteNotes[code]||{};
+  var defEmail=n.recipient_email||'';
+  var email=prompt('Send invite code '+code+' to email address:',defEmail);
+  if(!email) return;
+  email=email.trim();
+  if(!email||!email.includes('@')){toast('Invalid email address','err');return}
+  var name=document.getElementById('note-'+code)?.value||'';
+  sendInviteEmail(code,email,name);
+}
+
+async function sendInviteEmail(code,email,recipientName){
+  try{
+    toast('Sending\u2026','ok');
+    const r=await fetch('/api/invite-send-email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code,email:email,recipient_name:recipientName})});
+    const d=await r.json();
+    if(d.ok){toast('Invite sent to '+email,'ok');loadInvites()}
+    else toast('Error: '+(d.error||'Send failed'),'err');
+  }catch(e){toast('Network error','err')}
+}
+
+async function saveInviteNote(code){
+  var el=document.getElementById('note-'+code);
+  if(!el) return;
+  var note=el.value.trim();
+  var prev=(_inviteNotes[code]||{}).note||(_inviteNotes[code]||{}).recipient_name||'';
+  if(note===prev) return;
+  try{
+    const r=await fetch('/api/invite-note',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code,note:note})});
+    const d=await r.json();
+    if(d.ok){
+      if(!_inviteNotes[code]) _inviteNotes[code]={};
+      _inviteNotes[code].note=note;
+      el.style.borderColor='rgba(0,245,212,0.3)';
+      setTimeout(function(){el.style.borderColor='rgba(255,255,255,0.08)'},1200);
+    }
   }catch(e){}
 }
 

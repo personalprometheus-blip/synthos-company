@@ -66,6 +66,11 @@ POLL_SECS           = int(os.getenv('AUDITOR_POLL_SECS', '300'))
 REPORT_HOUR         = int(os.getenv('AUDITOR_REPORT_HOUR', '6'))
 ALERT_THRESHOLD     = int(os.getenv('AUDITOR_ALERT_THRESHOLD', '3'))
 DEDUP_WINDOW_MINS   = int(os.getenv('AUDITOR_DEDUP_WINDOW_MINS', '60'))
+# Rising hit_count on an existing pattern — alert when hits since
+# last alert reaches this value. Prevents 'silent treadmill' where
+# an ongoing issue (e.g. 180 portal crashes) accumulates forever
+# without ever showing in the daily summary.
+SURGE_THRESHOLD     = int(os.getenv('AUDITOR_SURGE_THRESHOLD', '5'))
 
 _SRC_DIR    = Path(__file__).resolve().parent
 DATA_DIR    = _SRC_DIR / 'data'
@@ -274,14 +279,27 @@ def _dedup_and_store(issues: list[dict]) -> dict:
     pattern was seen within DEDUP_WINDOW_MINS, increment hit_count instead
     of inserting a new row.
 
-    Returns summary: {severity: count_of_new_issues}
+    Also detects SURGES: when an existing pattern's hit_count rises by
+    SURGE_THRESHOLD or more since its last alert, log a WARNING and reset
+    the surge counter. Fixes the 'silent treadmill' where an ongoing
+    issue (e.g. 180 portal crashes) keeps bumping hit_count without ever
+    showing in the daily summary.
+
+    Returns summary: {severity: count_of_new_issues, 'surges': count_of_surge_alerts}
     """
     if not issues:
         return {}
 
+    # One-time migration: add hit_count_at_last_alert column if missing
+    with _db() as c:
+        cols = [r[1] for r in c.execute('PRAGMA table_info(detected_issues)')]
+        if 'hit_count_at_last_alert' not in cols:
+            c.execute('ALTER TABLE detected_issues ADD COLUMN hit_count_at_last_alert INTEGER DEFAULT 0')
+
     now_iso = datetime.now(timezone.utc).isoformat()
     cutoff  = (datetime.now(timezone.utc) - timedelta(minutes=DEDUP_WINDOW_MINS)).isoformat()
     summary = {}
+    surge_count = 0
 
     with _db() as c:
         for issue in issues:
@@ -291,27 +309,42 @@ def _dedup_and_store(issues: list[dict]) -> dict:
 
             # Check for existing unresolved issue with same file+pattern in window
             existing = c.execute(
-                "SELECT id FROM detected_issues "
+                "SELECT id, hit_count, hit_count_at_last_alert, severity FROM detected_issues "
                 "WHERE source_file = ? AND pattern = ? AND resolved = 0 AND last_seen >= ?",
                 (sf, pat, cutoff),
             ).fetchone()
 
             if existing:
-                # Bump hit count + timestamp
-                c.execute(
-                    "UPDATE detected_issues SET hit_count = hit_count + 1, last_seen = ? WHERE id = ?",
-                    (now_iso, existing['id']),
-                )
+                new_hit_count = existing['hit_count'] + 1
+                delta = new_hit_count - (existing['hit_count_at_last_alert'] or 0)
+                if delta >= SURGE_THRESHOLD:
+                    # Surge — log and reset counter
+                    log.warning(
+                        f"SURGE — [{existing['severity']}] {sf} pattern={pat[:40]!r} "
+                        f"hits={new_hit_count} (+{delta} since last alert)"
+                    )
+                    c.execute(
+                        "UPDATE detected_issues SET hit_count=?, last_seen=?, hit_count_at_last_alert=? WHERE id=?",
+                        (new_hit_count, now_iso, new_hit_count, existing['id']),
+                    )
+                    surge_count += 1
+                else:
+                    c.execute(
+                        "UPDATE detected_issues SET hit_count=?, last_seen=? WHERE id=?",
+                        (new_hit_count, now_iso, existing['id']),
+                    )
             else:
-                # New issue
+                # New issue — seed hit_count_at_last_alert=0 so the first surge threshold is full-sized
                 c.execute(
                     "INSERT INTO detected_issues "
-                    "(first_seen, last_seen, source_file, severity, pattern, context) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    "(first_seen, last_seen, source_file, severity, pattern, context, hit_count_at_last_alert) "
+                    "VALUES (?, ?, ?, ?, ?, ?, 0)",
                     (now_iso, now_iso, sf, sev, pat, issue.get('context', '')),
                 )
                 summary[sev] = summary.get(sev, 0) + 1
 
+    if surge_count:
+        summary['surges'] = surge_count
     return summary
 
 
@@ -592,6 +625,7 @@ def run_scan() -> dict:
     """Run one audit scan. Returns summary dict."""
     summary = scan_all_logs()
 
+    surges    = summary.pop('surges', 0) if isinstance(summary, dict) else 0
     total_new = sum(summary.values())
     crit_new  = summary.get('critical', 0)
     high_new  = summary.get('high', 0)
@@ -599,13 +633,18 @@ def run_scan() -> dict:
     result = {
         'scanned_at': datetime.now(timezone.utc).isoformat(),
         'new_issues': total_new,
+        'surges':     surges,
         'by_severity': summary,
     }
 
-    if total_new == 0:
+    if total_new == 0 and surges == 0:
         log.info("Scan complete — no new issues")
-    else:
+    elif total_new == 0 and surges > 0:
+        log.warning("Scan complete — %d rising issue(s) flagged (no new patterns)", surges)
+    elif surges == 0:
         log.warning("Scan found %d new issue(s): %s", total_new, summary)
+    else:
+        log.warning("Scan found %d new issue(s) + %d rising: %s", total_new, surges, summary)
 
     # Single batched notification if critical count exceeds threshold
     if crit_new >= ALERT_THRESHOLD:

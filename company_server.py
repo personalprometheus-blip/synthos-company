@@ -45,7 +45,7 @@ from werkzeug.utils import secure_filename
 load_dotenv()
 
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024  # 8 MB upload limit
+app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200 MB upload limit (backup archives grow with customer count)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 SECRET_TOKEN   = os.getenv("SECRET_TOKEN") or os.getenv("COMPANY_TOKEN", "")

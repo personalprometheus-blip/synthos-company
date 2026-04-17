@@ -5056,17 +5056,9 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
     </div>
   </div>
 
-  <!-- PI2W SENTINEL -->
-  <div class="node">
-    <div class="node-hdr"><div class="node-dot live"></div><div class="node-name">pi2w_sentinel</div><div class="node-role">Display Node</div></div>
-    <div class="node-body">
-      <div style="font-size:9px;color:var(--dim);margin-bottom:8px;font-family:var(--mono)">Pi Zero 2W · 10.0.0.87 · WiFi (SantaMcGuire)</div>
-      <div class="ag"><div class="ag-status live"></div><div class="ag-name">sentinel_display.py</div><div class="ag-desc">GeeekPi 3.5" TFT dashboard</div><div class="ag-how">systemd</div></div>
-      <div class="ag"><div class="ag-status cron"></div><div class="ag-name">node_heartbeat.py</div><div class="ag-desc">System metrics → pi4b monitor</div><div class="ag-how">cron 5m</div></div>
-      <div style="font-size:10px;color:var(--teal);margin-top:6px">Online — sidecar HTTP on port 5100</div>
-    </div>
-  </div>
-
+  <!-- PI2W SENTINEL — offline indefinitely as of 2026-04-17.
+       Card intentionally omitted from the architecture view until display
+       returns. Node still exists in the SSH map below for reference. -->
 </div></div>
 
 <!-- DATA FLOW DIAGRAM -->

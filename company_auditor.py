@@ -92,13 +92,9 @@ REMOTE_NODES = {
         'services': [],
         'processes': ['node_heartbeat.py'],
     },
-    'pi2w_sentinel': {
-        'ssh_host': 'Sentineldisplay',
-        'label': 'Sentinel Display (pi2w)',
-        'log_dir': '/home/pi-02w/sentinel/logs',
-        'services': [],
-        'processes': ['sentinel_display.py'],
-    },
+    # 'pi2w_sentinel' removed 2026-04-17 — display is offline indefinitely,
+    # leaving it in the monitor generated constant PROCESS_DOWN noise.
+    # Restore this entry when the display comes back online.
 }
 
 # ── ERROR PATTERNS ────────────────────────────────────────────────────────

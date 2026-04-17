@@ -5050,7 +5050,7 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
   <div class="node">
     <div class="node-hdr"><div class="node-dot live"></div><div class="node-name">pi2w_monitor_node</div><div class="node-role">Heartbeat Receiver</div></div>
     <div class="node-body">
-      <div style="font-size:9px;color:var(--dim);margin-bottom:8px;font-family:var(--mono)">Pi Zero 2W · 10.0.0.12 · eth0 static</div>
+      <div style="font-size:9px;color:var(--dim);margin-bottom:8px;font-family:var(--mono)">Pi Zero 2W · 10.0.0.121 · WiFi only (eth0 retired)</div>
       <div class="ag"><div class="ag-status cron"></div><div class="ag-name">node_heartbeat.py</div><div class="ag-desc">System metrics → pi4b monitor</div><div class="ag-how">cron 1m</div></div>
       <div style="font-size:10px;color:var(--teal);margin-top:6px">Consolidated — heartbeat only (legacy monitor removed)</div>
     </div>
@@ -5120,7 +5120,7 @@ pi4b: <span class="pink">Strongbox</span> → AES-256 encrypt → Cloudflare R2
 <div class="sec"><div class="sec-title">SSH Access Map</div>
 <div class="flow"><span class="text">From pi4b (~/.ssh/config):</span>
   <span class="teal">SentinelRetail</span>  → 10.0.0.11 (pi5, user: pi516gb)
-  <span class="purple">pi0-2monitor</span>    → 10.0.0.12 (pi2w_monitor, user: pi-02w)
+  <span class="purple">pi0-2monitor</span>    → 10.0.0.121 (pi2w_monitor, WiFi, user: pi-02w)
   <span class="amber">Sentineldisplay</span> → 192.168.201.146 (pi2w_sentinel, user: pi-02w)
 
 <span class="text">Agents with SSH capability:</span>

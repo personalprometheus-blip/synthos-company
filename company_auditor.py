@@ -87,15 +87,23 @@ REMOTE_NODES = {
         'ssh_host': 'SentinelRetail',
         'label': 'Retail Node (pi5)',
         'log_dir': '/home/pi516gb/synthos/synthos_build/logs',
+        # Portal + watchdog are both systemd units — track them via services.
+        # The prior 'processes' pgrep match broke when portal migrated to
+        # gunicorn (process name is 'gunicorn retail_portal:app', no .py).
+        # Liveness is already covered by the 'services' check below.
         'services': ['synthos-portal', 'synthos-watchdog'],
-        'processes': ['retail_portal.py', 'retail_watchdog.py'],
+        'processes': [],
     },
     'pi2w_monitor': {
         'ssh_host': 'pi0-2monitor',
         'label': 'Monitor Node (pi2w)',
         'log_dir': '/home/pi-02w/synthos/logs',
+        # node_heartbeat is a cron job, not a persistent process. Liveness
+        # is already covered by scan_remote_logs (NODE_UNREACHABLE if SSH
+        # fails). Leaving 'processes' populated caused 352+ false-positive
+        # PROCESS_DOWN flags per day.
         'services': [],
-        'processes': ['node_heartbeat.py'],
+        'processes': [],
     },
     # 'pi2w_sentinel' removed 2026-04-17 — display is offline indefinitely,
     # leaving it in the monitor generated constant PROCESS_DOWN noise.

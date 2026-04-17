@@ -5005,26 +5005,39 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
   <div class="node">
     <div class="node-hdr"><div class="node-dot live"></div><div class="node-name">retail_node (pi5)</div><div class="node-role">Trading Stack</div></div>
     <div class="node-body">
-      <div style="font-size:9px;color:var(--dim);margin-bottom:8px;font-family:var(--mono)">Pi 5 16GB · 10.0.0.11 · eth0 static</div>
-      <div class="ag"><div class="ag-status live"></div><div class="ag-name">retail_portal.py</div><div class="ag-desc">Customer dashboard + API</div><div class="ag-how">watchdog</div></div>
+            <div style="font-size:9px;color:var(--dim);margin-bottom:8px;font-family:var(--mono)">Pi 5 16GB · 10.0.0.11 · eth0 static</div>
+      <div class="ag"><div class="ag-status live"></div><div class="ag-name">retail_portal.py</div><div class="ag-desc">Customer dashboard + API (gunicorn, 2 workers × 2 threads)</div><div class="ag-how">systemd</div></div>
       <div class="ag"><div class="ag-status live"></div><div class="ag-name">retail_watchdog.py</div><div class="ag-desc">Crash monitor, auto-restart ×3</div><div class="ag-how">@reboot</div></div>
-      <div class="ag"><div class="ag-status live"></div><div class="ag-name">retail_scheduler.py</div><div class="ag-desc">Session orchestrator + DB locks</div><div class="ag-how">cron</div></div>
+      <div class="ag"><div class="ag-status live"></div><div class="ag-name">retail_market_daemon.py</div><div class="ag-desc">Market-hours orchestrator (replaces scheduler during open)</div><div class="ag-how">daemon</div></div>
+      <div class="ag"><div class="ag-status live"></div><div class="ag-name">retail_scheduler.py</div><div class="ag-desc">Session orchestrator (prep / overnight / recovery)</div><div class="ag-how">cron</div></div>
       <div class="ag"><div class="ag-status live"></div><div class="ag-name">retail_interrogation_listener.py</div><div class="ag-desc">UDP cross-validation, port 5556</div><div class="ag-how">boot seq</div></div>
-      <div class="ag"><div class="ag-status cron"></div><div class="ag-name">retail_trade_logic_agent.py</div><div class="ag-desc">14-gate trade execution</div><div class="ag-how">scheduler</div></div>
-      <div class="ag"><div class="ag-status cron"></div><div class="ag-name">retail_news_agent.py</div><div class="ag-desc">22-gate news classification</div><div class="ag-how">scheduler</div></div>
+      <div class="ag"><div class="ag-status cron"></div><div class="ag-name">retail_trade_logic_agent.py</div><div class="ag-desc">14-gate trade execution (per-customer, parallel dispatch)</div><div class="ag-how">scheduler</div></div>
+      <div class="ag"><div class="ag-status cron"></div><div class="ag-name">retail_news_agent.py</div><div class="ag-desc">22-gate news classification (incremental fetch via cursor)</div><div class="ag-how">scheduler</div></div>
       <div class="ag"><div class="ag-status cron"></div><div class="ag-name">retail_market_sentiment_agent.py</div><div class="ag-desc">27-gate deterioration detection</div><div class="ag-how">scheduler</div></div>
-      <div class="ag"><div class="ag-status cron"></div><div class="ag-name">retail_sector_screener.py</div><div class="ag-desc">Sector momentum scoring</div><div class="ag-how">scheduler</div></div>
+      <div class="ag"><div class="ag-status cron"></div><div class="ag-name">retail_macro_regime_agent.py</div><div class="ag-desc">Macro regime classifier (VIX, Treasuries, breadth)</div><div class="ag-how">scheduler</div></div>
+      <div class="ag"><div class="ag-status cron"></div><div class="ag-name">retail_market_state_agent.py</div><div class="ag-desc">Bull/bear/neutral state via SPY + breadth</div><div class="ag-how">scheduler</div></div>
+      <div class="ag"><div class="ag-status cron"></div><div class="ag-name">retail_bias_detection_agent.py</div><div class="ag-desc">Portfolio bias guard (concentration, loss aversion, etc.)</div><div class="ag-how">scheduler</div></div>
+      <div class="ag"><div class="ag-status cron"></div><div class="ag-name">retail_fault_detection_agent.py</div><div class="ag-desc">7-gate system health scan (heartbeats, staleness)</div><div class="ag-how">scheduler</div></div>
+      <div class="ag"><div class="ag-status cron"></div><div class="ag-name">retail_validator_stack_agent.py</div><div class="ag-desc">Cross-agent validator, produces BLOCK restrictions</div><div class="ag-how">scheduler</div></div>
+      <div class="ag"><div class="ag-status cron"></div><div class="ag-name">retail_sector_screener.py</div><div class="ag-desc">11 S&amp;P sectors × top-10 holdings, once daily (prep only)</div><div class="ag-how">scheduler</div></div>
+      <div class="ag"><div class="ag-status cron"></div><div class="ag-name">retail_sector_backfill_agent.py</div><div class="ag-desc">FMP ticker→sector resolver for orphan positions</div><div class="ag-how">cron daily</div></div>
       <div class="ag"><div class="ag-status cron"></div><div class="ag-name">retail_price_poller.py</div><div class="ag-desc">Shared live_prices for all customers</div><div class="ag-how">cron 1m</div></div>
       <div class="ag"><div class="ag-status cron"></div><div class="ag-name">retail_heartbeat.py</div><div class="ag-desc">POST agent status to pi4b</div><div class="ag-how">per agent</div></div>
       <div class="ag"><div class="ag-status cron"></div><div class="ag-name">node_heartbeat.py</div><div class="ag-desc">System metrics → monitor</div><div class="ag-how">cron 1m</div></div>
       <div class="ag"><div class="ag-status boot"></div><div class="ag-name">retail_boot_sequence.py</div><div class="ag-desc">Network wait, integrity check</div><div class="ag-how">@reboot</div></div>
       <div class="ag"><div class="ag-status boot"></div><div class="ag-name">retail_health_check.py</div><div class="ag-desc">Post-reboot DB + Alpaca verify</div><div class="ag-how">boot only</div></div>
+      <div class="ag"><div class="ag-status tool"></div><div class="ag-name">retail_dry_run.py</div><div class="ag-desc">Pre-market diagnostic harness — compressed market day</div><div class="ag-how">manual</div></div>
       <div class="ag"><div class="ag-status tool"></div><div class="ag-name">retail_patch.py</div><div class="ag-desc">Safe file updater, rollback</div><div class="ag-how">manual</div></div>
+      <div class="ag"><div class="ag-status tool"></div><div class="ag-name">notification_cleanup.py</div><div class="ag-desc">Dedupe historical notification spam (re-runnable)</div><div class="ag-how">manual</div></div>
       <div class="ag"><div class="ag-status cron"></div><div class="ag-name">retail_backup.py</div><div class="ag-desc">Nightly archive → pi4b staging</div><div class="ag-how">cron 1:30am</div></div>
       <div class="ag"><div class="ag-status cron"></div><div class="ag-name">retail_shutdown.py</div><div class="ag-desc">Graceful pre-maintenance shutdown</div><div class="ag-how">Sat 3:55</div></div>
       <div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border)">
         <div style="font-size:9px;font-weight:700;color:var(--dim);letter-spacing:0.06em;margin-bottom:4px">DATABASES</div>
-        <div style="font-size:10px;color:var(--muted);font-family:var(--mono)">auth.db · customers/*/signals.db · live_prices (shared)</div>
+        <div style="font-size:10px;color:var(--muted);font-family:var(--mono)">auth.db · customers/*/signals.db · ticker_sectors · fetch_cursors</div>
+      </div>
+      <div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border)">
+        <div style="font-size:9px;font-weight:700;color:var(--dim);letter-spacing:0.06em;margin-bottom:4px">EXTERNAL APIS</div>
+        <div style="font-size:10px;color:var(--muted);font-family:var(--mono)">Alpaca (bars/news/orders) · FMP (sector profile) · Yahoo (VIX/Treasury only)</div>
       </div>
       <div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border)">
         <div style="font-size:9px;font-weight:700;color:var(--dim);letter-spacing:0.06em;margin-bottom:4px">SERVICES</div>
@@ -5058,14 +5071,24 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 
 <!-- DATA FLOW DIAGRAM -->
 <div class="sec"><div class="sec-title">Data Flow</div>
-<div class="flow"><span class="text">TRADING PIPELINE (pi5)</span>
-<span class="teal">News Agent</span> → 22 gates → signals to shared DB
+<div class="flow"><span class="text">TRADING PIPELINE (pi5, per-customer parallel dispatch)</span>
+<span class="teal">News Agent</span> → 22 gates → signals to shared DB (incremental cursor)
       ↓
 <span class="purple">Sentiment Agent</span> → 27 gates → enriches signals (Finviz, EDGAR)
       ↓
-<span class="teal">Trade Logic Agent</span> → 14 gates → BUY / SKIP / WATCH
+<span class="amber">Macro Regime</span> + <span class="amber">Market State</span> → bull/bear/neutral classifier
+      ↓
+<span class="pink">Bias Detection</span> → portfolio concentration, loss aversion, overtrading
+      ↓
+<span class="pink">Fault Detection</span> + <span class="pink">Validator Stack</span> → heartbeat + BLOCK restrictions
+      ↓
+<span class="teal">Trade Logic Agent</span> → 14 gates → BUY / SKIP / WATCH / EVALUATED
       ↓
 <span class="amber">Alpaca API</span> → paper or live orders
+
+<span class="text">SECTOR &amp; TICKER INTELLIGENCE (once daily)</span>
+<span class="purple">Sector Screener</span> → all 11 S&amp;P sectors × top-10 → sector_screening table
+<span class="purple">Sector Backfill</span> → FMP /profile → ticker_sectors cache (long-tail coverage)
 
 <span class="text">SHARED DATA (pi5 master customer DB)</span>
 <span class="teal">Price Poller</span> → live_prices table → portal reads (no Alpaca per-request)
@@ -5086,13 +5109,19 @@ pi4b: <span class="pink">Strongbox</span> → AES-256 encrypt → Cloudflare R2
 
 <!-- KNOWN ISSUES -->
 <div class="sec"><div class="sec-title">Known Issues</div>
-  <div class="issue"><div class="issue-title">Strongbox → R2 not configured</div><div class="issue-desc">boto3 not installed, no R2 credentials. Backups stage on pi4b but don't reach cloud. Local copy only.</div></div>
+    <div class="issue"><div class="issue-title">Strongbox → R2 not configured</div><div class="issue-desc">boto3 not installed, no R2 credentials. Backups stage on pi4b but don't reach cloud. Local copy only.</div></div>
   <div class="issue"><div class="issue-title">pi2w_monitor SSH unreachable from auditor</div><div class="issue-desc">SSH to pi0-2monitor failing. May need key setup or the node is on a different network segment.</div></div>
+  <div class="issue"><div class="issue-title">Sentiment agent runtime 286–342s per run</div><div class="issue-desc">Biggest single-agent cost in the pipeline. Generates 1,245–1,560 API calls. Profiling + optimization pending.</div></div>
+  <div class="issue"><div class="issue-title">FMP /etf-holdings paywalled on free tier</div><div class="issue-desc">Sector screener uses hand-curated top-10 per sector (stable, quarterly review). TODO: swap to FMP when upgraded.</div></div>
+  <div class="issue issue-ok"><div class="issue-title">RESOLVED — Notification Center spam (2026-04-16)</div><div class="issue-desc">dedup_key column + widget-category filter + /notifications full-page archive. 125 historical dupes cleaned.</div></div>
+  <div class="issue issue-ok"><div class="issue-title">RESOLVED — Trade agent 300s timeouts (2026-04-16)</div><div class="issue-desc">Root cause: 643 stale QUEUED signals. Fixed via signal lifecycle (EVALUATED status) + 72h expiry + batch bar prefetch + negative bar cache.</div></div>
+  <div class="issue issue-ok"><div class="issue-title">RESOLVED — BLOCK_SECTOR_UNKNOWN (2026-04-16)</div><div class="issue-desc">Two-layer fix: retail_sector_map.py cascade (hardcoded → ticker_sectors → screener) + FMP-powered retail_sector_backfill_agent.py + bias detector stops treating Unknown as CRITICAL.</div></div>
+  <div class="issue issue-ok"><div class="issue-title">RESOLVED — Sector screener Energy-only (2026-04-16)</div><div class="issue-desc">Expanded to all 11 S&amp;P SPDR sectors × top-10 holdings. Moved from per-session to once-daily (prep) since sector momentum is multi-week.</div></div>
+  <div class="issue issue-ok"><div class="issue-title">RESOLVED — News agent re-fetching seen articles (2026-04-16)</div><div class="issue-desc">Persistent fetch_cursors table. News agent now pulls only articles created after the last run. Cascades through forwarding + per-ticker enrichment.</div></div>
+  <div class="issue issue-ok"><div class="issue-title">RESOLVED — API usage gauge wrong metric (2026-04-16)</div><div class="issue-desc">Was showing &quot;daily / 1000&quot; over-limit warnings. Alpaca has no daily cap. Gauge now reflects current 60s rate vs 200/min limit.</div></div>
+  <div class="issue issue-ok"><div class="issue-title">RESOLVED — Yahoo RSS in sentiment agent</div><div class="issue-desc">Removed. VIX + Treasury Yahoo calls kept (3 calls, irreplaceable).</div></div>
   <div class="issue issue-ok"><div class="issue-title">RESOLVED — Backup chain (pi5 → pi4b)</div><div class="issue-desc">retail_backup.py now runs nightly at 1:30am. Archives stage to pi4b.</div></div>
-  <div class="issue issue-ok"><div class="issue-title">RESOLVED — Ghost cron entries</div><div class="issue-desc">6 entries removed (5 ghost paths + patches @reboot). Clean crontab.</div></div>
-  <div class="issue issue-ok"><div class="issue-title">RESOLVED — Write-access protection</div><div class="issue-desc">company_lock.py provides fcntl-based locking. db_helpers.slot() now uses real locks.</div></div>
   <div class="issue issue-ok"><div class="issue-title">RESOLVED — Auditor cross-node scanning</div><div class="issue-desc">company_auditor.py now SSH-scans pi5 logs + checks process/service/disk health.</div></div>
-  <div class="issue issue-ok"><div class="issue-title">RESOLVED — Timekeeper + Patches</div><div class="issue-desc">Timekeeper deleted. Patches deleted (replaced by auditor). Blueprint archived to reference/.</div></div>
 </div>
 
 <!-- SSH MAP -->
@@ -5110,7 +5139,7 @@ pi4b: <span class="pink">Strongbox</span> → AES-256 encrypt → Cloudflare R2
 </div>
 
 <div style="text-align:center;padding:20px 0;font-size:10px;color:var(--dim)">
-  Last updated: 2026-04-13 16:20 ET · Synthos System Architecture Reference
+  Last updated: 2026-04-16 21:10 ET · Synthos System Architecture Reference
 </div>
 
 </div>

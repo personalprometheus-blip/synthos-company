@@ -44,7 +44,7 @@ _script_dir = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(_script_dir, "company.env"))
 
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024  # 8 MB upload limit
+app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200 MB upload limit (backup archives grow with customer count)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 RESEND_API_KEY       = os.getenv("RESEND_API_KEY")

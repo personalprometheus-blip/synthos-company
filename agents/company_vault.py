@@ -95,11 +95,11 @@ load_dotenv(ENV_PATH, override=True)
 KEY_SIGNING_SECRET = os.environ.get("KEY_SIGNING_SECRET", "")
 
 # Cloud storage config (Cloudflare R2 via rclone or boto3)
-# R2_BUCKET, R2_ENDPOINT, R2_ACCESS_KEY, R2_SECRET_KEY from .env
-R2_BUCKET       = os.environ.get("R2_BUCKET", "")
+# R2_BUCKET_NAME, R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY from .env
+R2_BUCKET_NAME       = os.environ.get("R2_BUCKET_NAME", "")
 R2_ENDPOINT     = os.environ.get("R2_ENDPOINT", "")
-R2_ACCESS_KEY   = os.environ.get("R2_ACCESS_KEY", "")
-R2_SECRET_KEY   = os.environ.get("R2_SECRET_KEY", "")
+R2_ACCESS_KEY_ID   = os.environ.get("R2_ACCESS_KEY_ID", "")
+R2_SECRET_ACCESS_KEY   = os.environ.get("R2_SECRET_ACCESS_KEY", "")
 
 # Encryption key path — project lead provides this file for backup/restore
 ENCRYPTION_KEY_PATH = Path(os.environ.get(
@@ -498,10 +498,10 @@ def _upload_to_r2(file_path: Path, pi_id: str, filename: str) -> bool:
     Uses boto3 with R2's S3-compatible API.
     Returns True on success.
     """
-    if not all([R2_BUCKET, R2_ENDPOINT, R2_ACCESS_KEY, R2_SECRET_KEY]):
+    if not all([R2_BUCKET_NAME, R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY]):
         log.warning(
             "R2 credentials not configured — backup not uploaded. "
-            "Set R2_BUCKET, R2_ENDPOINT, R2_ACCESS_KEY, R2_SECRET_KEY in .env"
+            "Set R2_BUCKET_NAME, R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY in .env"
         )
         return False
 
@@ -512,16 +512,16 @@ def _upload_to_r2(file_path: Path, pi_id: str, filename: str) -> bool:
         s3 = boto3.client(
             "s3",
             endpoint_url=R2_ENDPOINT,
-            aws_access_key_id=R2_ACCESS_KEY,
-            aws_secret_access_key=R2_SECRET_KEY,
+            aws_access_key_id=R2_ACCESS_KEY_ID,
+            aws_secret_access_key=R2_SECRET_ACCESS_KEY,
             config=Config(signature_version="s3v4"),
         )
 
         date_prefix = datetime.now().strftime("%Y-%m-%d")
         key         = f"backup/{pi_id}/{date_prefix}/{filename}"
 
-        s3.upload_file(str(file_path), R2_BUCKET, key)
-        log.info(f"Uploaded backup to R2: s3://{R2_BUCKET}/{key}")
+        s3.upload_file(str(file_path), R2_BUCKET_NAME, key)
+        log.info(f"Uploaded backup to R2: s3://{R2_BUCKET_NAME}/{key}")
         return True
 
     except ImportError:

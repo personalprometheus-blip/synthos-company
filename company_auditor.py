@@ -304,18 +304,26 @@ def _dedup_and_store(issues: list[dict]) -> dict:
         if 'hit_count_at_last_alert' not in cols:
             c.execute('ALTER TABLE detected_issues ADD COLUMN hit_count_at_last_alert INTEGER DEFAULT 0')
 
+    from collections import defaultdict
     now_iso = datetime.now(timezone.utc).isoformat()
     cutoff  = (datetime.now(timezone.utc) - timedelta(minutes=DEDUP_WINDOW_MINS)).isoformat()
     summary = {}
     surge_count = 0
 
-    with _db() as c:
-        for issue in issues:
-            sf  = issue['source_file']
-            pat = issue['pattern']
-            sev = issue['severity']
+    # Bucket this scan's issues by (source_file, pattern) so each bucket
+    # produces at most one DB update and at most one SURGE alert per scan.
+    buckets: dict[tuple, dict] = defaultdict(lambda: {'new_hits': 0, 'sev': None, 'ctx': ''})
+    for issue in issues:
+        key = (issue['source_file'], issue['pattern'])
+        b = buckets[key]
+        b['new_hits'] += 1
+        if b['sev'] is None:
+            b['sev'] = issue['severity']
+            b['ctx'] = issue.get('context', '')
 
-            # Check for existing unresolved issue with same file+pattern in window
+    with _db() as c:
+        for (sf, pat), b in buckets.items():
+            sev = b['sev']
             existing = c.execute(
                 "SELECT id, hit_count, hit_count_at_last_alert, severity FROM detected_issues "
                 "WHERE source_file = ? AND pattern = ? AND resolved = 0 AND last_seen >= ?",
@@ -323,10 +331,9 @@ def _dedup_and_store(issues: list[dict]) -> dict:
             ).fetchone()
 
             if existing:
-                new_hit_count = existing['hit_count'] + 1
+                new_hit_count = existing['hit_count'] + b['new_hits']
                 delta = new_hit_count - (existing['hit_count_at_last_alert'] or 0)
                 if delta >= SURGE_THRESHOLD:
-                    # Surge — log and reset counter
                     log.warning(
                         f"SURGE — [{existing['severity']}] {sf} pattern={pat[:40]!r} "
                         f"hits={new_hit_count} (+{delta} since last alert)"
@@ -342,12 +349,14 @@ def _dedup_and_store(issues: list[dict]) -> dict:
                         (new_hit_count, now_iso, existing['id']),
                     )
             else:
-                # New issue — seed hit_count_at_last_alert=0 so the first surge threshold is full-sized
+                # New pattern — set hit_count to the number of new hits and
+                # seed hit_count_at_last_alert to 0 so the first surge fires
+                # at SURGE_THRESHOLD relative to nothing.
                 c.execute(
                     "INSERT INTO detected_issues "
-                    "(first_seen, last_seen, source_file, severity, pattern, context, hit_count_at_last_alert) "
-                    "VALUES (?, ?, ?, ?, ?, ?, 0)",
-                    (now_iso, now_iso, sf, sev, pat, issue.get('context', '')),
+                    "(first_seen, last_seen, source_file, severity, pattern, context, hit_count, hit_count_at_last_alert) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
+                    (now_iso, now_iso, sf, sev, pat, b['ctx'], b['new_hits']),
                 )
                 summary[sev] = summary.get(sev, 0) + 1
 

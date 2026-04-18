@@ -78,7 +78,7 @@ from synthos_paths import (
 )
 from db_helpers import DB
 
-LOG_FILE   = LOGS_DIR / "control_agent.log"
+LOG_FILE   = LOGS_DIR / "vault.log"
 BACKUP_LOG = DATA_DIR / "backup_log.json"
 
 _db = DB()
@@ -125,7 +125,6 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
         logging.FileHandler(LOG_FILE),
-        logging.StreamHandler(sys.stdout),
     ]
 )
 log = logging.getLogger("vault")

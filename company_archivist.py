@@ -72,7 +72,10 @@ LOG_DIR    = os.path.join(_BUILD_DIR, "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 
 # ── Logging ───────────────────────────────────────────────────────────────────
-_log_handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
+# Start empty. synthos-archivist.service sets StandardOutput=append:
+# archivist.log, so stdout is already captured. A StreamHandler here
+# plus the conditional FileHandler below would duplicate every line.
+_log_handlers: list[logging.Handler] = []
 if ARCHIVIST_LOG:
     os.makedirs(os.path.dirname(os.path.abspath(ARCHIVIST_LOG)), exist_ok=True)
     _log_handlers.append(logging.FileHandler(ARCHIVIST_LOG))

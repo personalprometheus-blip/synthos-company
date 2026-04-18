@@ -71,7 +71,7 @@ from synthos_paths import (
 )
 from db_helpers import DB
 
-LOG_FILE       = LOGS_DIR   / "tool_agent.log"
+LOG_FILE       = LOGS_DIR   / "librarian.log"
 
 _db = DB()
 MANIFEST_FILE  = CONFIG_DIR / "package_manifest.json"
@@ -123,7 +123,6 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
         logging.FileHandler(LOG_FILE),
-        logging.StreamHandler(sys.stdout),
     ]
 )
 log = logging.getLogger("librarian")

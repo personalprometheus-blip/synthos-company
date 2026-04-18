@@ -1622,16 +1622,17 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
   </div>
 </div>
 
-  <!-- MARKET ACTIVITY CHART -->
+  <!-- MARKET ACTIVITY CHART — today's trading session, 10-min bins -->
   <div class="mkt-section">
-    <div class="sec-title">Market Activity <span style="font-size:9px;color:var(--dim);font-weight:400;margin-left:6px">24h</span></div>
+    <div class="sec-title">Market Activity
+      <span id="mkt-session-label" style="font-size:9px;color:var(--dim);font-weight:400;margin-left:6px">Session</span>
+    </div>
     <div class="mkt-card">
       <div class="mkt-header">
         <div class="mkt-toggles">
           <button class="mkt-tog on" id="mt-buys" onclick="mktToggle('buys',this,'on')">Buys</button>
           <button class="mkt-tog on-pink" id="mt-sells" onclick="mktToggle('sells',this,'on-pink')">Sells</button>
-          <button class="mkt-tog on-amber" id="mt-sessions" onclick="mktToggle('sessions',this,'on-amber')">Sessions</button>
-          <button class="mkt-tog" id="mt-net" onclick="mktToggle('net',this,'on-purple')">Net Flow</button>
+          <button class="mkt-tog on-purple" id="mt-net" onclick="mktToggle('net',this,'on-purple')">Net Flow</button>
         </div>
       </div>
       <div class="mkt-canvas"><canvas id="mkt-chart"></canvas></div>
@@ -1642,6 +1643,16 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
         <div class="mkt-stat"><div class="mkt-stat-label">Active Now</div><div class="mkt-stat-val" id="ms-active" style="color:var(--teal)">0</div></div>
         <div class="mkt-stat"><div class="mkt-stat-label">Peak Sessions</div><div class="mkt-stat-val" id="ms-peak" style="color:var(--amber)">0</div></div>
       </div>
+    </div>
+  </div>
+
+  <!-- USER SESSIONS CHART — 24h rolling -->
+  <div class="mkt-section">
+    <div class="sec-title">User Sessions
+      <span style="font-size:9px;color:var(--dim);font-weight:400;margin-left:6px">24h</span>
+    </div>
+    <div class="mkt-card">
+      <div class="mkt-canvas"><canvas id="sess-chart"></canvas></div>
     </div>
   </div>
 
@@ -3119,10 +3130,19 @@ async function loadCmdStatus() {
 }
 
 
-// ── MARKET ACTIVITY CHART ──
+// ── MARKET ACTIVITY + USER SESSIONS CHARTS ──
+//
+// The endpoint returns two separate visualizations in one response:
+//   market_activity — today's session (9:30-16:00 ET), 10-min bins,
+//                     buy / sell / net flow in dollars.
+//   user_sessions   — 24h rolling window, hourly bins, user-count only.
+// We render both from one fetch so the panel stays in sync.
 let _mktChart = null;
+let _sessChart = null;
 let _mktData = null;
-let _mktVis = {buys:true, sells:true, sessions:true, net:false};
+// Sessions stays on by default; the user-count line lives on its own
+// chart now, so the mkt toggles cover only the three money series.
+let _mktVis = {buys:true, sells:true, net:true};
 
 function mktToggle(key, btn, cls) {
   _mktVis[key] = !_mktVis[key];
@@ -3137,29 +3157,35 @@ async function fetchMktActivity() {
     if (!r.ok) return;
     _mktData = await r.json();
     buildMktChart();
+    buildSessionsChart();
     updateMktSummary();
   } catch(e) { console.error('fetchMktActivity:', e); }
 }
 
+// ── MARKET-HOURS CHART (today's session, 10-min bins) ──
 function buildMktChart() {
-  if (!_mktData || !_mktData.hours) return;
+  if (!_mktData || !_mktData.market_activity) return;
   var ctx = document.getElementById('mkt-chart');
   if (!ctx) return;
+  var ma = _mktData.market_activity;
 
-  var labels = _mktData.hours.map(function(h) {
-    var d = new Date(h + ':00');
-    var hr = d.getHours();
-    var ampm = hr >= 12 ? 'pm' : 'am';
-    hr = hr % 12 || 12;
-    return hr + ampm;
-  });
+  // Session label e.g. "Fri Apr 18, 9:30–16:00 ET"
+  try {
+    var dStr = ma.session_date;
+    var lblEl = document.getElementById('mkt-session-label');
+    if (lblEl && dStr) {
+      var d = new Date(dStr + 'T12:00');
+      var opts = {weekday:'short', month:'short', day:'numeric'};
+      lblEl.textContent = d.toLocaleDateString(undefined, opts) + ', 9:30–16:00 ET';
+    }
+  } catch(e) {}
 
+  var labels = ma.bins || [];
   var datasets = [];
-
-  // Per-customer stacked bars (buys above $0, sells below)
   var custColors = ['#00f5d4','#7b61ff','#22d3ee','#a78bfa','#67e8f9','#f0abfc','#fbbf24','#34d399'];
-  var customers = _mktData.customers || {};
-  var custIds = Object.keys(customers);
+  var customers  = ma.customers || {};
+  var custIds    = Object.keys(customers);
+
   if (_mktVis.buys) {
     if (custIds.length > 0) {
       custIds.forEach(function(cid, i) {
@@ -3173,7 +3199,7 @@ function buildMktChart() {
       });
     } else {
       datasets.push({
-        type:'bar', label:'Buys', data:_mktData.buys, stack:'buys',
+        type:'bar', label:'Buys', data:ma.buys, stack:'buys',
         backgroundColor:colorWithAlpha('#00f5d4',0.65), borderColor:'#00f5d4',
         borderWidth:1, borderRadius:3, yAxisID:'y', order:2
       });
@@ -3192,38 +3218,20 @@ function buildMktChart() {
       });
     } else {
       datasets.push({
-        type:'bar', label:'Sells', data:_mktData.sells.map(function(v){return -v;}), stack:'sells',
+        type:'bar', label:'Sells', data:ma.sells.map(function(v){return -v;}), stack:'sells',
         backgroundColor:colorWithAlpha('#ff4b6e',0.65), borderColor:'#ff4b6e',
         borderWidth:1, borderRadius:3, yAxisID:'y', order:2
       });
     }
   }
   if (_mktVis.net) {
-    var netD = _mktData.buys.map(function(b,i){return b - (_mktData.sells[i]||0);});
+    // Net series comes pre-computed from the backend now (buys - sells).
+    var netD = ma.net || [];
     datasets.push({
       type:'bar', label:'Net Flow', data:netD,
       backgroundColor:netD.map(function(v){return v>=0?colorWithAlpha('#7b61ff',0.6):colorWithAlpha('#ff4b6e',0.6);}),
       borderColor:netD.map(function(v){return v>=0?'#7b61ff':'#ff4b6e';}),
-      borderWidth:1, borderRadius:3, yAxisID:'y', order:2
-    });
-  }
-  if (_mktVis.sessions && _mktData.sessions) {
-    datasets.push({
-      type:'line', label:'Active Sessions', data:_mktData.sessions,
-      borderWidth:3, tension:0.35, pointRadius:2, pointHitRadius:8,
-      pointBackgroundColor:_mktData.sessions.map(function(v){
-        if(v>=10)return '#ff4b6e'; if(v>=3)return '#ffb347'; return '#ffb347';
-      }),
-      fill:false, yAxisID:'y1', order:1,
-      segment:{
-        borderColor:function(c){
-          var v=c.p0.parsed.y;
-          if(v>=10)return '#ff4b6e';
-          if(v>=3)return '#ffb347';
-          return '#ffb347';
-        }
-      },
-      borderColor:'#ffb347'
+      borderWidth:1, borderRadius:3, yAxisID:'y', order:1
     });
   }
 
@@ -3240,26 +3248,97 @@ function buildMktChart() {
           backgroundColor:'rgba(13,17,32,0.95)',borderColor:'rgba(255,255,255,0.1)',borderWidth:1,
           titleColor:'rgba(255,255,255,0.5)',bodyColor:'rgba(255,255,255,0.85)',
           callbacks:{
-            label:function(c){
-              if(c.dataset.yAxisID==='y1'){
-                var count = c.parsed.y;
-                var line = c.dataset.label+': '+count;
-                return line;
-              }
-              var v=Math.abs(c.parsed.y);
-              if(!v) return null;
-              return c.dataset.label+': $'+v.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+            title:function(items){
+              // Tooltip title shows the 10-min window, e.g. "10:30–10:40 ET"
+              if (!items.length) return '';
+              var idx = items[0].dataIndex;
+              var start = (ma.bins||[])[idx] || '';
+              var end   = (ma.bins||[])[idx+1] || '16:00';
+              return start + '–' + end + ' ET';
             },
+            label:function(c){
+              var v = c.parsed.y;
+              if (!v) return null;
+              return c.dataset.label+': $'+Math.abs(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+            }
+          }
+        }
+      },
+      scales:{
+        x:{
+          grid:{color:'rgba(255,255,255,0.04)'},
+          ticks:{color:'rgba(255,255,255,0.3)',font:{size:9},maxTicksLimit:14,autoSkip:true}
+        },
+        y:{
+          stacked:true,
+          position:'left', grid:{color:'rgba(255,255,255,0.04)'},
+          ticks:{color:'rgba(255,255,255,0.3)',font:{size:9},callback:function(v){return(v<0?'-':'')+'$'+Math.abs(v).toLocaleString();}},
+          title:{display:true,text:'Dollars',color:'rgba(255,255,255,0.15)',font:{size:8}}
+        }
+      }
+    }
+  });
+}
+
+// ── USER SESSIONS CHART (24h rolling, hourly bins) ──
+function buildSessionsChart() {
+  if (!_mktData || !_mktData.user_sessions) return;
+  var ctx = document.getElementById('sess-chart');
+  if (!ctx) return;
+  var us = _mktData.user_sessions;
+
+  var labels = (us.hours || []).map(function(h) {
+    var d = new Date(h + ':00');
+    var hr = d.getHours();
+    var ampm = hr >= 12 ? 'pm' : 'am';
+    hr = hr % 12 || 12;
+    return hr + ampm;
+  });
+  var counts = us.counts || [];
+
+  if (_sessChart) _sessChart.destroy();
+  _sessChart = new Chart(ctx, {
+    type:'line',
+    data:{
+      labels: labels,
+      datasets:[{
+        label:'Active Users',
+        data: counts,
+        borderWidth:3, tension:0.35, pointRadius:2, pointHitRadius:8,
+        fill:true,
+        backgroundColor: colorWithAlpha('#ffb347', 0.1),
+        pointBackgroundColor: counts.map(function(v){
+          if (v>=10) return '#ff4b6e';
+          if (v>=3)  return '#ffb347';
+          return '#ffb347';
+        }),
+        segment:{
+          borderColor:function(c){
+            var v=c.p0.parsed.y;
+            if (v>=10) return '#ff4b6e';
+            return '#ffb347';
+          }
+        },
+        borderColor:'#ffb347'
+      }]
+    },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{display:false},
+        tooltip:{
+          backgroundColor:'rgba(13,17,32,0.95)',borderColor:'rgba(255,255,255,0.1)',borderWidth:1,
+          titleColor:'rgba(255,255,255,0.5)',bodyColor:'rgba(255,255,255,0.85)',
+          callbacks:{
+            label:function(c){ return 'Users: ' + c.parsed.y; },
             afterBody:function(items){
-              if(!_mktData)return '';
-              // Find the hovered hour index
-              var idx = items[0] ? items[0].dataIndex : -1;
-              if(idx<0)return '';
-              // Show who was online during this hour
-              var hourKey = _mktData.hours[idx];
-              var users = (_mktData.session_users||{})[hourKey];
-              if(!users||!users.length)return '';
-              return ['','Active this hour:'].concat(users.map(function(n){return '  ● '+n;}));
+              if (!_mktData || !items.length) return '';
+              var idx = items[0].dataIndex;
+              var hourKey = (_mktData.user_sessions.hours || [])[idx];
+              var users = (_mktData.user_sessions.names || {})[hourKey];
+              if (!users || !users.length) return '';
+              return ['', 'Active this hour:'].concat(users.map(function(n){return '  ● '+n;}));
             }
           }
         }
@@ -3267,16 +3346,10 @@ function buildMktChart() {
       scales:{
         x:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'rgba(255,255,255,0.3)',font:{size:9},maxTicksLimit:12}},
         y:{
-          stacked:true,
-          position:'left',grid:{color:'rgba(255,255,255,0.04)'},
-          ticks:{color:'rgba(255,255,255,0.3)',font:{size:9},callback:function(v){return(v<0?'-':'')+'$'+Math.abs(v).toLocaleString();}},
-          title:{display:true,text:'Dollars',color:'rgba(255,255,255,0.15)',font:{size:8}}
-        },
-        y1:{
-          position:'right',grid:{drawOnChartArea:false},
-          ticks:{color:'rgba(255,255,255,0.25)',font:{size:9}},
-          title:{display:true,text:'Sessions',color:'rgba(255,255,255,0.15)',font:{size:8}},
-          min:0
+          beginAtZero:true,
+          grid:{color:'rgba(255,255,255,0.04)'},
+          ticks:{color:'rgba(255,255,255,0.3)',font:{size:9},stepSize:1,precision:0},
+          title:{display:true,text:'Users',color:'rgba(255,255,255,0.15)',font:{size:8}}
         }
       }
     }
@@ -4391,8 +4464,26 @@ def proxy_market_activity():
         return jsonify(r.json()), r.status_code
     except Exception as e:
         print(f"[Monitor] market-activity proxy error: {e}")
-        return jsonify({"error": str(e), "hours": [], "buys": [], "sells": [], "sessions": [],
-                        "summary": {"total_buys":0,"total_sells":0,"net_flow":0,"active_now":0,"peak_sessions":0}}), 502
+        # Empty fallback in the new split shape. Chart builders on the
+        # frontend handle empty arrays and render placeholder axes.
+        return jsonify({
+            "error": str(e),
+            "market_activity": {
+                "bins": [], "bin_starts": [], "buys": [], "sells": [], "net": [],
+                "customers": {},
+                "session_date": None,
+            },
+            "user_sessions": {
+                "hours": [], "counts": [], "names": {},
+                "active_now": 0, "active_customers": [], "peak": 0,
+            },
+            "summary": {
+                "total_buys": 0, "total_sells": 0, "net_flow": 0,
+                "buy_count": 0, "sell_count": 0,
+                "active_now": 0, "peak_sessions": 0,
+            },
+            "trading_modes": {"PAPER": 0, "LIVE": 0, "total": 0},
+        }), 502
 
 
 def _get_admin_session_cookie():

@@ -1657,10 +1657,11 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
     </div>
   </div>
 
-  <!-- USER SESSIONS CHART — 24h rolling -->
+  <!-- USER SESSIONS CHART — 24h rolling by default, prior-day when
+       the market card's date nav is on a previous session -->
   <div class="mkt-section">
     <div class="sec-title">User Sessions
-      <span style="font-size:9px;color:var(--dim);font-weight:400;margin-left:6px">24h</span>
+      <span id="sess-window-label" style="font-size:9px;color:var(--dim);font-weight:400;margin-left:6px">24h</span>
     </div>
     <div class="mkt-card">
       <div class="mkt-canvas"><canvas id="sess-chart"></canvas></div>
@@ -3358,12 +3359,32 @@ function buildMktChart() {
   });
 }
 
-// ── USER SESSIONS CHART (24h rolling, hourly bins) ──
+// ── USER SESSIONS CHART ──
+// Responds to the same date-nav as the Market Activity chart above.
+//   - no date selected → rolling last 24h (hours like "3am", "4am", …)
+//   - date selected    → ET 0:00-23:59 of that date, same hour labels,
+//                        data from the session_history DB table
 function buildSessionsChart() {
   if (!_mktData || !_mktData.user_sessions) return;
   var ctx = document.getElementById('sess-chart');
   if (!ctx) return;
   var us = _mktData.user_sessions;
+
+  // Label next to "User Sessions" reflects what we're looking at:
+  //   historical → localized short date (matches market chart label)
+  //   rolling    → "24h"
+  try {
+    var lbl = document.getElementById('sess-window-label');
+    if (lbl) {
+      if (us.mode === 'historical' && us.session_date) {
+        var d = new Date(us.session_date + 'T12:00');
+        lbl.textContent = d.toLocaleDateString(undefined,
+          {weekday:'short', month:'short', day:'numeric'}) + ', ET';
+      } else {
+        lbl.textContent = '24h';
+      }
+    }
+  } catch(e) {}
 
   var labels = (us.hours || []).map(function(h) {
     var d = new Date(h + ':00');

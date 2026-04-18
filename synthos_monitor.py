@@ -1513,6 +1513,12 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 .mkt-tog.on-pink{color:var(--pink);border-color:rgba(255,75,110,0.25);background:rgba(255,75,110,0.06)}
 .mkt-tog.on-amber{color:var(--amber);border-color:rgba(255,179,71,0.25);background:rgba(255,179,71,0.06)}
 .mkt-tog.on-purple{color:var(--purple);border-color:rgba(123,97,255,0.25);background:rgba(123,97,255,0.06)}
+.mkt-daynav{display:flex;gap:4px}
+.mkt-navbtn{padding:4px 10px;font-size:10px;font-weight:700;font-family:var(--mono);
+  border:1px solid var(--border);border-radius:6px;background:transparent;
+  color:var(--muted);cursor:pointer;transition:all .15s;letter-spacing:0.04em;min-width:30px}
+.mkt-navbtn:hover:not(:disabled){border-color:rgba(255,255,255,0.2);color:var(--text);background:rgba(255,255,255,0.03)}
+.mkt-navbtn:disabled{opacity:0.3;cursor:not-allowed}
 .mkt-canvas{height:220px;position:relative}
 .mkt-summary{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:12px}
 @media(max-width:800px){.mkt-summary{grid-template-columns:repeat(3,1fr)}}
@@ -1633,6 +1639,11 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
           <button class="mkt-tog on" id="mt-buys" onclick="mktToggle('buys',this,'on')">Buys</button>
           <button class="mkt-tog on-pink" id="mt-sells" onclick="mktToggle('sells',this,'on-pink')">Sells</button>
           <button class="mkt-tog on-purple" id="mt-net" onclick="mktToggle('net',this,'on-purple')">Net Flow</button>
+        </div>
+        <div class="mkt-daynav" style="display:flex;gap:4px;align-items:center;margin-left:auto">
+          <button class="mkt-navbtn" id="mkt-prev"  onclick="mktPrevDay()"  title="Previous session">&#x25C0;</button>
+          <button class="mkt-navbtn" id="mkt-today" onclick="mktToday()"    title="Jump to current session" style="display:none">Today</button>
+          <button class="mkt-navbtn" id="mkt-next"  onclick="mktNextDay()"  title="Next session">&#x25B6;</button>
         </div>
       </div>
       <div class="mkt-canvas"><canvas id="mkt-chart"></canvas></div>
@@ -3143,6 +3154,9 @@ let _mktData = null;
 // Sessions stays on by default; the user-count line lives on its own
 // chart now, so the mkt toggles cover only the three money series.
 let _mktVis = {buys:true, sells:true, net:true};
+// Session-date paging state. null = "current session" (default).
+// A YYYY-MM-DD string = view that historical session.
+let _mktViewDate = null;
 
 function mktToggle(key, btn, cls) {
   _mktVis[key] = !_mktVis[key];
@@ -3151,15 +3165,58 @@ function mktToggle(key, btn, cls) {
   buildMktChart();
 }
 
+// ── SESSION NAVIGATION ──
+// Prev / Today / Next buttons next to the session label. Backend
+// returns prev_session_date and next_session_date in each response so
+// we don't need to implement weekday-skip logic client-side. The
+// "Today" button is hidden when already on the current session.
+function mktPrevDay() {
+  var ma = _mktData && _mktData.market_activity;
+  // Prefer backend-provided prev_session_date; fall back to simple
+  // -1 day on client if payload is missing it (e.g. first render).
+  if (ma && ma.prev_session_date) {
+    _mktViewDate = ma.prev_session_date;
+  } else {
+    var base = _mktViewDate ? new Date(_mktViewDate) : new Date();
+    base.setDate(base.getDate() - 1);
+    _mktViewDate = base.toISOString().slice(0, 10);
+  }
+  fetchMktActivity();
+}
+
+function mktNextDay() {
+  var ma = _mktData && _mktData.market_activity;
+  if (!ma || !ma.next_session_date) return;  // already on current session
+  _mktViewDate = ma.next_session_date;
+  fetchMktActivity();
+}
+
+function mktToday() {
+  _mktViewDate = null;
+  fetchMktActivity();
+}
+
 async function fetchMktActivity() {
   try {
-    var r = await fetch('/api/proxy/market-activity?hours=24', {headers:{'X-Token':SECRET_TOKEN}});
+    var url = '/api/proxy/market-activity?hours=24';
+    if (_mktViewDate) url += '&date=' + encodeURIComponent(_mktViewDate);
+    var r = await fetch(url, {headers:{'X-Token':SECRET_TOKEN}});
     if (!r.ok) return;
     _mktData = await r.json();
     buildMktChart();
     buildSessionsChart();
     updateMktSummary();
+    updateSessionNav();
   } catch(e) { console.error('fetchMktActivity:', e); }
+}
+
+function updateSessionNav() {
+  var ma = _mktData && _mktData.market_activity;
+  if (!ma) return;
+  var nextBtn  = document.getElementById('mkt-next');
+  var todayBtn = document.getElementById('mkt-today');
+  if (nextBtn)  nextBtn.disabled  = !ma.next_session_date;
+  if (todayBtn) todayBtn.style.display = ma.is_current_session ? 'none' : '';
 }
 
 // ── MARKET-HOURS CHART (today's session, 10-min bins) ──
@@ -4454,10 +4511,18 @@ def proxy_market_activity():
     import requests as _req
     try:
         hours = request.args.get('hours', '24')
+        # Pass through ?date=YYYY-MM-DD when the client is paging
+        # backward through previous trading days. Omit from upstream
+        # request when not provided so the backend's default (current
+        # session) kicks in.
+        params = {"hours": hours}
+        date_arg = request.args.get('date', '').strip()
+        if date_arg:
+            params["date"] = date_arg
         cookie = _get_admin_session_cookie()
         r = _req.get(
             f"{RETAIL_PORTAL_URL}/api/admin/market-activity",
-            params={"hours": hours},
+            params=params,
             cookies={"synthos_s": cookie},
             timeout=15,
         )

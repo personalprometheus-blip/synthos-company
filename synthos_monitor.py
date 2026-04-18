@@ -1642,7 +1642,7 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
         </div>
         <div class="mkt-daynav" style="display:flex;gap:4px;align-items:center;margin-left:auto">
           <button class="mkt-navbtn" id="mkt-prev"  onclick="mktPrevDay()"  title="Previous session">&#x25C0;</button>
-          <button class="mkt-navbtn" id="mkt-today" onclick="mktToday()"    title="Jump to current session" style="display:none">Today</button>
+          <button class="mkt-navbtn" id="mkt-today" onclick="mktToday()"    title="Jump to current session" style="min-width:84px">Today</button>
           <button class="mkt-navbtn" id="mkt-next"  onclick="mktNextDay()"  title="Next session">&#x25B6;</button>
         </div>
       </div>
@@ -3211,12 +3211,33 @@ async function fetchMktActivity() {
 }
 
 function updateSessionNav() {
+  // Middle button always shows the session being viewed. When on the
+  // current session, text is "Today" and clicking is a no-op; when on
+  // a prior session, text is that date (e.g. "Thu Apr 17") and clicking
+  // returns to today. User asked for the middle button to reflect the
+  // day they're currently looking at rather than always reading "Today".
   var ma = _mktData && _mktData.market_activity;
   if (!ma) return;
   var nextBtn  = document.getElementById('mkt-next');
   var todayBtn = document.getElementById('mkt-today');
-  if (nextBtn)  nextBtn.disabled  = !ma.next_session_date;
-  if (todayBtn) todayBtn.style.display = ma.is_current_session ? 'none' : '';
+  if (nextBtn)  nextBtn.disabled = !ma.next_session_date;
+  if (todayBtn) {
+    if (ma.is_current_session) {
+      todayBtn.textContent = 'Today';
+      todayBtn.title       = 'Viewing current session';
+      todayBtn.disabled    = true;
+    } else if (ma.session_date) {
+      try {
+        var d = new Date(ma.session_date + 'T12:00');
+        todayBtn.textContent = d.toLocaleDateString(undefined,
+          {weekday:'short', month:'short', day:'numeric'});
+      } catch(e) {
+        todayBtn.textContent = ma.session_date;
+      }
+      todayBtn.title    = 'Click to return to current session';
+      todayBtn.disabled = false;
+    }
+  }
 }
 
 // ── MARKET-HOURS CHART (today's session, 10-min bins) ──

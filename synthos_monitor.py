@@ -8986,6 +8986,12 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 .empty-icon{font-size:28px;margin-bottom:10px}
 .error-bar{padding:12px 16px;font-size:11px;color:var(--pink);background:rgba(255,75,110,0.06);border-bottom:1px solid rgba(255,75,110,0.15)}
 .loading-bar{padding:12px 16px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border)}
+.auditor-resolve-btn{flex-shrink:0;align-self:flex-start;padding:4px 10px;border-radius:6px;
+  border:1px solid var(--border2);background:transparent;color:var(--muted);font-family:var(--sans);
+  font-size:10px;font-weight:600;letter-spacing:0.04em;cursor:pointer;transition:all 0.15s}
+.auditor-resolve-btn:hover{background:rgba(0,245,212,0.06);border-color:rgba(0,245,212,0.3);color:var(--teal)}
+.auditor-resolve-btn:disabled{opacity:0.4;cursor:wait}
+.issue-row.resolving{opacity:0.5}
 </style>
 </head>
 <body>
@@ -9123,13 +9129,22 @@ function render(d){
     issuesEl.innerHTML = issues.map(iss => {
       const sc = 'sev-' + (iss.severity||'low');
       const hits = iss.hit_count > 1 ? ' <span style="color:var(--dim)">×'+iss.hit_count+'</span>' : '';
-      return '<div class="issue-row">'
+      // Only company-side issues have a DB id we can resolve. Per-Pi live
+      // scans return synthetic ids that don't map to a stored row, so skip
+      // the button there (iss.id will be present but meaningless).
+      const canResolve = (currentNode === 'company') && iss.id != null;
+      const resolveBtn = canResolve
+        ? '<button class="auditor-resolve-btn" data-issid="'+CSS.escape(String(iss.id))+'" onclick="resolveAuditorIssue(this.dataset.issid,event)">Resolve</button>'
+        : '';
+      return '<div class="issue-row" data-issue-id="'+CSS.escape(String(iss.id || ''))+'">'
         + '<div class="sev-badge '+sc+'">'+escHtml(iss.severity)+'</div>'
         + '<div class="issue-body">'
           + '<div class="issue-file">'+escHtml(iss.source_file)+hits+'</div>'
           + '<div class="issue-ctx">'+escHtml(iss.context||'')+'</div>'
           + '<div class="issue-meta">first: '+ageSince(iss.first_seen)+' · last: '+ageSince(iss.last_seen)+'</div>'
-        + '</div></div>';
+        + '</div>'
+        + resolveBtn
+        + '</div>';
     }).join('');
   }
 
@@ -9188,6 +9203,45 @@ async function buildNodeTabs() {
       loadNode(pi_id);
     });
   } catch(e) { console.warn('Could not build node tabs', e); }
+}
+
+async function resolveAuditorIssue(issueId, ev) {
+  if (ev && ev.stopPropagation) ev.stopPropagation();
+  const idNum = parseInt(issueId, 10);
+  if (!idNum) return;
+  const btn = ev && ev.currentTarget;
+  const row = document.querySelector('.issue-row[data-issue-id="'+issueId+'"]');
+  if (btn) btn.disabled = true;
+  if (row) row.classList.add('resolving');
+  try {
+    // Use session-cookie auth (the TOKEN placeholder on this page is not
+    // substituted server-side). fetch default is credentials: 'same-origin'
+    // which sends the session cookie; _session_authorized accepts that.
+    const r = await fetch('/api/auditor/resolve', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      credentials: 'same-origin',
+      body: JSON.stringify({ids: [idNum]}),
+    });
+    const d = await r.json().catch(() => ({ok: false, error: 'invalid JSON'}));
+    if (!r.ok || !d.ok) {
+      if (btn) btn.disabled = false;
+      if (row) row.classList.remove('resolving');
+      alert('Resolve failed: ' + (d.error || r.statusText || 'unknown'));
+      return;
+    }
+    // Drop from local cache + re-render; also bust cache for currentNode
+    if (nodeCache[currentNode] && Array.isArray(nodeCache[currentNode].issues)) {
+      nodeCache[currentNode].issues = nodeCache[currentNode].issues.filter(i => i.id !== idNum);
+      if (nodeCache[currentNode].total_unresolved != null)
+        nodeCache[currentNode].total_unresolved = Math.max(0, nodeCache[currentNode].total_unresolved - 1);
+      render(nodeCache[currentNode]);
+    }
+  } catch(e) {
+    if (btn) btn.disabled = false;
+    if (row) row.classList.remove('resolving');
+    alert('Resolve failed: ' + e.message);
+  }
 }
 
 buildNodeTabs();

@@ -385,7 +385,14 @@ def _ssh_run(host: str, cmd: str, timeout: int = 15) -> tuple[bool, str]:
 
 
 def scan_remote_logs(node_id: str, node_cfg: dict) -> list[dict]:
-    """SSH into a remote node and scan its logs for errors."""
+    """SSH into a remote node and scan its logs for errors.
+
+    Uses byte-offset tracking in scan_state (keyed as '<node_id>::<fname>') so
+    each scan only processes bytes appended since the last run. Without this,
+    every 5-minute scan would re-match the same historical lines and inflate
+    hit_count indefinitely (we saw retail_backup.log hit 576 for a single real
+    error line before this fix).
+    """
     host = node_cfg['ssh_host']
     remote_log_dir = node_cfg['log_dir']
 
@@ -397,8 +404,7 @@ def scan_remote_logs(node_id: str, node_cfg: dict) -> list[dict]:
             'source_file': f'{node_id}::unreachable',
             'severity': 'high',
             'pattern': 'NODE_UNREACHABLE',
-            'line': f'Cannot SSH to {host}: {output[:60]}',
-            'line_num': 0,
+            'context': f'Cannot SSH to {host}: {output[:60]}',
             'count': 1,
         }]
 
@@ -406,39 +412,81 @@ def scan_remote_logs(node_id: str, node_cfg: dict) -> list[dict]:
     if not log_files:
         return []
 
+    now_iso = datetime.now(timezone.utc).isoformat()
     all_issues = []
+
     for remote_path in log_files:
         fname = os.path.basename(remote_path)
-        # Fetch last 200 lines of each log (avoid pulling huge files)
-        ok, content = _ssh_run(host, f'tail -200 {remote_path}', timeout=30)
+        source_key = f'{node_id}::{fname}'
+
+        # Current file size on the remote node
+        ok, size_out = _ssh_run(host, f'stat -c %s {remote_path}', timeout=10)
         if not ok:
             continue
+        try:
+            current_size = int(size_out.strip())
+        except ValueError:
+            continue
 
-        # Run same pattern matching as local scan
-        for line_num, line in enumerate(content.split('\n'), 1):
-            line = line.strip()
-            if not line:
+        # Look up prior offset for this remote file
+        with _db() as c:
+            row = c.execute(
+                "SELECT last_offset, file_size FROM scan_state WHERE log_file = ?",
+                (source_key,),
+            ).fetchone()
+
+        if row is None:
+            # First time we've seen this remote file — start at its current end
+            # so we don't ingest all historical errors as "just happened".
+            offset = current_size
+        elif current_size < row['last_offset']:
+            # File rotated / truncated → start over from 0
+            log.info("Remote log rotation detected for %s (was %d, now %d) — resetting",
+                     source_key, row['last_offset'], current_size)
+            offset = 0
+        else:
+            offset = row['last_offset']
+
+        if offset < current_size:
+            # Fetch only bytes since last scan. tail -c +N is 1-indexed from file
+            # start, so use offset+1. Content may contain a partial first line if
+            # last scan ended mid-line — that's acceptable; we'll re-match once.
+            byte_count = current_size - offset
+            ok, content = _ssh_run(
+                host,
+                f'tail -c {byte_count} {remote_path}',
+                timeout=30,
+            )
+            if not ok:
                 continue
-            # Skip known-good patterns
-            skip = False
-            for pat in IGNORE_PATTERNS:
-                if pat.search(line):
-                    skip = True
-                    break
-            if skip:
-                continue
-            # Match error patterns
-            for pat, severity in ERROR_PATTERNS:
-                if pat.search(line):
-                    all_issues.append({
-                        'source_file': f'{node_id}::{fname}',
-                        'severity': severity,
-                        'pattern': pat.pattern[:40],
-                        'line': line[:200],
-                        'line_num': line_num,
-                        'count': 1,
-                    })
-                    break
+
+            for line in content.split('\n'):
+                line = line.strip()
+                if not line:
+                    continue
+                # Skip known-good patterns
+                if any(p.search(line) for p in IGNORE_PATTERNS):
+                    continue
+                for pat, severity in ERROR_PATTERNS:
+                    if pat.search(line):
+                        all_issues.append({
+                            'source_file': source_key,
+                            'severity':    severity,
+                            'pattern':     pat.pattern[:40],
+                            # Use 'context' so _dedup_and_store stores the line
+                            # in the DB's context column (was 'line' before).
+                            'context':     line[:300],
+                            'count':       1,
+                        })
+                        break
+
+        # Persist new offset even when no new bytes so last_scanned stays fresh
+        with _db() as c:
+            c.execute(
+                "INSERT OR REPLACE INTO scan_state (log_file, last_offset, file_size, last_scanned) "
+                "VALUES (?, ?, ?, ?)",
+                (source_key, current_size, current_size, now_iso),
+            )
 
     log.info(f"Remote scan {node_id}: {len(log_files)} logs, {len(all_issues)} issues")
     return all_issues

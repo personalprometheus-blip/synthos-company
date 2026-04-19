@@ -815,14 +815,75 @@ def cmd_trading_mode():
 
 @app.route("/api/command/kill-switch", methods=["POST"])
 def cmd_kill_switch():
+    """Admin kill switch — halt v2.
+
+    Posts directly to each retail Pi's /api/admin/halt-agent endpoint so
+    the halt takes effect on the NEXT trader invocation (seconds). Also
+    queues a legacy set_kill_switch command for any retail Pi running
+    pre-halt-v2 code (backwards-compat; scheduled to be removed once
+    fleet is fully migrated).
+
+    Accepts:
+        active (bool)             required
+        reason (str)              optional, recorded in system_halt + log
+        expected_return (str)     optional, shown to customers in banner
+        targets (list|"all")      legacy — which Pis to target for queue
+    """
     token = request.headers.get("X-Token", "")
     if token != SECRET_TOKEN:
         return jsonify({"error": "unauthorized"}), 401
     data = request.get_json(silent=True) or {}
     active = bool(data.get("active", True))
-    targets = _queue_command("set_kill_switch", active, data.get("targets", "all"))
-    return jsonify({"ok": True, "command": "set_kill_switch", "value": active,
-                    "queued_for": targets}), 200
+    reason = (data.get("reason") or "").strip()[:300] or None
+    expected_return = (data.get("expected_return") or "").strip()[:80] or None
+
+    # Fire the direct halt-v2 POST to every known retail Pi
+    direct_results = []
+    try:
+        import requests as _req
+        with registry_lock:
+            _pis = dict(pi_registry)
+        for pi_id, pi in _pis.items():
+            pi_ip = pi.get("pi_ip")
+            if not pi_ip or pi_id.startswith("pi4b") or pi_id.startswith("pi2w"):
+                continue
+            try:
+                r = _req.post(
+                    f"http://{pi_ip}:5001/api/admin/halt-agent",
+                    json={
+                        "active": active,
+                        "reason": reason,
+                        "expected_return": expected_return,
+                        "admin_id": "monitor",
+                    },
+                    headers={"X-Token": SECRET_TOKEN},
+                    timeout=5,
+                )
+                direct_results.append({
+                    "pi_id": pi_id, "pi_ip": pi_ip,
+                    "status": r.status_code,
+                    "body":   (r.text or "")[:200],
+                })
+            except Exception as _e:
+                direct_results.append({
+                    "pi_id": pi_id, "pi_ip": pi_ip, "error": str(_e)[:120],
+                })
+    except Exception:
+        pass
+
+    # Legacy queue — backwards-compat for any Pi on old code
+    try:
+        targets = _queue_command("set_kill_switch", active, data.get("targets", "all"))
+    except Exception:
+        targets = []
+
+    return jsonify({
+        "ok": True,
+        "command": "set_kill_switch",
+        "value": active,
+        "direct": direct_results,        # halt-v2 POST results per Pi
+        "queued_for": targets,           # legacy queue, secondary
+    }), 200
 
 
 @app.route("/api/command/operating-mode", methods=["POST"])

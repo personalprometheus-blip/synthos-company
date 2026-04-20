@@ -738,7 +738,7 @@ const M = {
       { log:'Branch B: email fallback → Resend', agents:['market_daemon'], ext:['resend'], edges:[['market_daemon','resend']] },
       { log:'Resend delivers email to customer', ext:['resend','user_email'], edges:[['resend','user_email']] },
       { log:'Flag set so same-day midday/close don\'t re-notify', agents:['market_daemon'], dbs:['cust_dbs'] },
-      { log:'Repeats at 12:00 midday and 15:55 close', agents:['market_daemon'] },
+      { log:'Repeats at 12:00 midday and 15:30 close', agents:['market_daemon'] },
     ],
 
     account_approval: [
@@ -985,7 +985,7 @@ const M = {
     { time:'09:10', seq:'daemon_run', label:'retail_market_daemon START (Mon-Fri)', kind:'trading' },
     { time:'09:30', seq:'approval_notify', label:'Trade approval notification (open)', kind:'messaging', patch:true },
     { time:'12:00', seq:'approval_notify', label:'Trade approval notification (midday)', kind:'messaging', patch:true },
-    { time:'15:55', seq:'approval_notify', label:'Trade approval notification (close)', kind:'messaging', patch:true },
+    { time:'15:30', seq:'approval_notify', label:'Trade approval notification (close)', kind:'messaging', patch:true },
     { time:'16:00', seq:'daemon_run', label:'retail_market_daemon STOP', kind:'trading' },
     { time:'every 1m', seq:'heartbeat', label:'node_heartbeat (pi5, pi2w_monitor)', kind:'monitoring' },
     { time:'every 5m', seq:'heartbeat', label:'node_heartbeat (pi4b, pi2w_sentinel)', kind:'monitoring' },
@@ -2420,10 +2420,11 @@ const DAY_FIXED = [
   { t:480,  kind:'normal',   agents:['company_fidget'], dbs:['company'], label:'fidget anomaly scan' },
   { t:540,  kind:'normal',   agents:['company_scoop'], externals:['resend'], dbs:['company'], label:'Morning scoop email drain' },
   { t:550,  kind:'critical', agents:['market_daemon','cron_daemon'], label:'DAEMON START (9:10 ET)' },
-  { t:555,  kind:'normal',   agents:['market_daemon','price_poller','screener','news','sentiment','trade_logic'], dbs:['live_prices','signals'], externals:['alpaca'], label:'First daemon tick — full pipeline' },
+  { t:555,  kind:'normal',   agents:['market_daemon','price_poller','news'], dbs:['live_prices','signals'], externals:['alpaca'], label:'Pre-open prep — price poll + news refresh (9:15 · no trading yet)' },
+  { t:570,  kind:'critical', agents:['market_daemon','trade_logic','news','sentiment','screener'], dbs:['live_prices','signals','cust_dbs'], externals:['alpaca'], label:'Market open 9:30 — first enrichment cycle (trader begins)' },
   { t:570,  kind:'critical', agents:['market_daemon'], externals:['twilio','resend','user_phone','user_email'], dbs:['cust_dbs','auth'], label:'Trade approval notify — OPEN', patch:true },
   { t:720,  kind:'critical', agents:['market_daemon'], externals:['twilio','resend','user_phone','user_email'], dbs:['cust_dbs','auth'], label:'Trade approval notify — MIDDAY', patch:true },
-  { t:955,  kind:'critical', agents:['market_daemon'], externals:['twilio','resend','user_phone','user_email'], dbs:['cust_dbs','auth'], label:'Trade approval notify — CLOSE', patch:true },
+  { t:930,  kind:'critical', agents:['market_daemon'], externals:['twilio','resend','user_phone','user_email'], dbs:['cust_dbs','auth'], label:'Trade approval notify — CLOSE (15:30)', patch:true },
   { t:870,  kind:'normal',   agents:['retail_portal'], dbs:['auth'], externals:['user','resend','user_email'], label:'New customer signup → verification email sent (14:30)' },
   { t:900,  kind:'normal',   agents:['retail_portal'], dbs:['auth'], externals:['user'], label:'Customer clicks verification link (15:00)' },
   { t:960,  kind:'critical', agents:['market_daemon'], label:'DAEMON STOP (16:00 ET)' },
@@ -2462,12 +2463,13 @@ function buildDaySchedule() {
   for (let t = 480; t < 1080; t += 5) {
     items.push({ t, kind:'normal', agents:['price_poller'], dbs:['live_prices'], externals:['alpaca'], label:'price_poll' });
   }
-  // Trader dispatch cycle — every 20 sim min during 9:10-16:00
-  for (let t = 555; t < 960; t += 20) {
-    items.push({ t, kind:'normal', agents:['trade_logic','news','sentiment','screener'], dbs:['signals','cust_dbs'], label:'trader dispatch cycle' });
+  // Enrichment cycle (screener+news+sentiment+trader) — every 30 sim min during 9:30-16:00
+  // ENRICHMENT_INTERVAL_MIN=30 in retail_market_daemon.py
+  for (let t = 570; t < 960; t += 30) {
+    items.push({ t, kind:'normal', agents:['trade_logic','news','sentiment','screener'], dbs:['signals','cust_dbs'], label:'enrichment cycle (screener+news+sentiment+trader)' });
   }
-  // Reconciliation — every 10 sim min during 9:10-16:00
-  for (let t = 560; t < 960; t += 10) {
+  // Reconciliation — every 10 sim min during 9:30-16:00 (RECON_INTERVAL_MIN=10)
+  for (let t = 580; t < 960; t += 10) {
     items.push({ t, kind:'background', agents:['trade_logic'], externals:['alpaca'], dbs:['cust_dbs'], label:'reconciliation' });
   }
   return items.sort((a,b) => a.t - b.t);

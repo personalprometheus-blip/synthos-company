@@ -16,9 +16,11 @@ company.env
 .install_complete
 .install_progress.json
 
-# Logs
-logs/*.log
-logs/crash_reports/
+# Logs — ignore the whole directory contents (rotated .log.1, .log.N.gz,
+# .pid, crash dumps, etc. — none of them belong in git). Tracked config
+# files in logs/ should use an explicit `!logs/KEEP.md`-style allowlist.
+logs/*
+!logs/.gitkeep
 
 # Runtime state / caches
 data/.cve_cache.json
@@ -39,6 +41,11 @@ config/package_manifest.json
 # Stale backup artifacts from prior refactors (dbleak fix, etc.)
 *.pre_dbleak_bak
 *.pre_*_bak
+*.bak
+
+# Runtime state files not previously covered
+data/.admin_overrides.json
+data/archives/
 
 # Scoop / trigger files
 data/scoop_trigger.json

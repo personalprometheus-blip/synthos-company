@@ -105,9 +105,11 @@ REMOTE_NODES = {
         'services': [],
         'processes': [],
     },
-    # 'pi2w_sentinel' removed 2026-04-17 — display is offline indefinitely,
-    # leaving it in the monitor generated constant PROCESS_DOWN noise.
-    # Restore this entry when the display comes back online.
+    # 'pi2w_sentinel' — removed 2026-04-17, confirmed disabled indefinitely
+    # 2026-04-20. Display is currently off (power source: was USB from main PC,
+    # needs relocation to a standalone power supply before returning to
+    # service). No ETA. Leaving it in the monitor generated constant
+    # PROCESS_DOWN noise. Restore this entry when the display comes back.
 }
 
 # ── ERROR PATTERNS ────────────────────────────────────────────────────────

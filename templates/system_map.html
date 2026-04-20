@@ -1,0 +1,2774 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Synthos System Map — v3</title>
+<style>
+  /* Self-hosted fonts — variable files cover all weights. CSP-safe. */
+  @font-face {
+    font-family: 'Inter';
+    font-style: normal;
+    font-weight: 100 900;
+    font-display: swap;
+    src: url('/static/fonts/Inter.woff2') format('woff2');
+  }
+  @font-face {
+    font-family: 'JetBrains Mono';
+    font-style: normal;
+    font-weight: 100 900;
+    font-display: swap;
+    src: url('/static/fonts/JetBrainsMono.woff2') format('woff2');
+  }
+  :root{
+    --bg:#080b12; --surface:#0d1120; --surface2:#111827; --surface3:#151c2e;
+    --border:rgba(255,255,255,0.07); --border2:rgba(255,255,255,0.12); --border3:rgba(255,255,255,0.22);
+    --text:rgba(255,255,255,0.88); --text2:rgba(255,255,255,0.65); --muted:rgba(255,255,255,0.35); --dim:rgba(255,255,255,0.15);
+    --teal:#00f5d4; --teal2:rgba(0,245,212,0.1); --teal3:rgba(0,245,212,0.25); --teal-glow:rgba(0,245,212,0.4);
+    --pink:#ff4b6e; --pink2:rgba(255,75,110,0.1); --pink3:rgba(255,75,110,0.25);
+    --purple:#7b61ff; --purple2:rgba(123,97,255,0.1); --purple3:rgba(123,97,255,0.25); --purple-glow:rgba(123,97,255,0.4);
+    --amber:#ffb347; --amber2:rgba(255,179,71,0.1); --amber3:rgba(255,179,71,0.25);
+    --mono:'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+    --sans:'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html,body{ height:100vh; overflow:hidden; }
+  body{ background:var(--bg); color:var(--text); font-family:var(--sans); font-size:13px; -webkit-font-smoothing:antialiased; }
+  body::before{ content:''; position:fixed; inset:0; background:radial-gradient(ellipse at 20% 0%, rgba(0,245,212,0.04), transparent 50%), radial-gradient(ellipse at 80% 100%, rgba(123,97,255,0.04), transparent 50%); pointer-events:none; z-index:0; }
+  ::-webkit-scrollbar{ width:5px; height:5px; }
+  ::-webkit-scrollbar-thumb{ background:rgba(255,255,255,0.12); border-radius:99px; }
+  ::-webkit-scrollbar-thumb:hover{ background:rgba(255,255,255,0.22); }
+
+  #app{ position:relative; z-index:1; display:grid; grid-template-columns: 250px 1fr 370px; grid-template-rows: 60px 1fr; height:100vh; transition: grid-template-columns 0.28s cubic-bezier(0.4,0,0.2,1); }
+  #app.collapsed-left{ grid-template-columns: 32px 1fr 370px; }
+  #app.collapsed-right{ grid-template-columns: 250px 1fr 32px; }
+  #app.collapsed-left.collapsed-right{ grid-template-columns: 32px 1fr 32px; }
+  #app.collapsed-left  #actions > *:not(.collapse-btn){ display:none; }
+  #app.collapsed-right #detail  > *:not(.collapse-btn){ display:none; }
+
+  /* Header */
+  header{ grid-column:1/span 3; background:rgba(8,11,18,0.85); backdrop-filter:blur(20px); border-bottom:1px solid var(--border); padding:0 22px; display:flex; align-items:center; gap:14px; z-index:100; position:relative; }
+  .wordmark{ font-family:var(--mono); font-size:14px; font-weight:700; letter-spacing:0.18em; color:var(--teal); text-shadow:0 0 18px var(--teal-glow); }
+  .header-sub{ font-size:10.5px; color:var(--muted); font-family:var(--mono); letter-spacing:0.05em; }
+  .live-pill{ display:flex; align-items:center; gap:6px; padding:4px 10px; border-radius:99px; background:var(--teal2); border:1px solid var(--teal3); font-size:9.5px; font-weight:700; font-family:var(--mono); color:var(--teal); letter-spacing:0.12em; }
+  .live-dot{ width:5px; height:5px; border-radius:50%; background:var(--teal); box-shadow:0 0 8px var(--teal); animation:pulse 2s infinite; }
+  @keyframes pulse{ 0%,100%{ opacity:1; transform:scale(1) } 50%{ opacity:0.4; transform:scale(0.75) } }
+
+  .tabs{ display:flex; gap:4px; margin-left:10px; }
+  .tab{ background:transparent; border:1px solid var(--border); color:var(--muted); padding:6px 14px; font-family:var(--mono); font-size:10px; font-weight:600; cursor:pointer; border-radius:8px; letter-spacing:0.08em; text-transform:uppercase; transition:all .18s; }
+  .tab:hover:not(.active){ color:var(--text2); border-color:var(--border2); }
+  .tab.active{ background:var(--teal2); color:var(--teal); border-color:var(--teal3); box-shadow:0 0 12px rgba(0,245,212,0.15); }
+
+  #controls{ display:flex; gap:14px; align-items:center; margin-left:auto; font-size:10.5px; color:var(--muted); font-family:var(--mono); }
+  #controls label{ display:flex; align-items:center; gap:6px; }
+  #controls input[type=range]{ width:110px; vertical-align:middle; accent-color:var(--teal); cursor:pointer; }
+  #controls input[type=checkbox]{ accent-color:var(--teal); cursor:pointer; }
+  #controls button{ background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:6px 11px; font-family:var(--mono); font-weight:600; font-size:10px; cursor:pointer; border-radius:6px; transition:all .15s; }
+  #controls button:hover:not(:disabled){ background:var(--teal2); color:var(--teal); border-color:var(--teal3); }
+  #controls button:disabled{ opacity:0.3; cursor:not-allowed; }
+  #step-display{ font-size:10px; color:var(--muted); min-width:60px; text-align:center; font-variant-numeric:tabular-nums; }
+  #progress-bar{ height:3px; background:var(--surface3); width:110px; border-radius:99px; overflow:hidden; }
+  #progress-fill{ height:100%; background:linear-gradient(90deg, var(--teal), rgba(0,245,212,0.6)); width:0; transition:width 0.3s; box-shadow:0 0 8px var(--teal-glow); }
+
+  /* Side panels */
+  #actions, #detail{ background:var(--surface); position:relative; overflow-y:auto; }
+  #actions{ border-right:1px solid var(--border); padding:18px 14px; }
+  #detail{ border-left:1px solid var(--border); padding:18px 16px; font-size:12px; }
+  #actions h3{ font-family:var(--mono); font-size:9.5px; text-transform:uppercase; letter-spacing:0.14em; color:var(--muted); margin:0 0 10px; font-weight:700; display:flex; align-items:center; gap:8px; }
+  #actions h3::before{ content:''; display:inline-block; width:3px; height:12px; background:var(--teal); border-radius:99px; box-shadow:0 0 8px var(--teal-glow); }
+  #actions h3.group{ margin-top:22px; }
+  #actions h3.patch-group{ margin-top:22px; color:var(--purple); }
+  #actions h3.patch-group::before{ background:var(--purple); box-shadow:0 0 8px var(--purple-glow); }
+  .action-btn{ width:100%; background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:9px 12px; font-family:var(--mono); font-size:10.5px; font-weight:500; cursor:pointer; border-radius:8px; text-align:left; margin-bottom:6px; transition:all .15s; line-height:1.4; letter-spacing:0.02em; }
+  .action-btn:hover{ background:var(--surface3); border-color:var(--teal3); color:var(--teal); box-shadow:0 0 12px rgba(0,245,212,0.08); transform:translateX(2px); }
+  .action-btn.patch{ border-color:var(--purple2); }
+  .action-btn.patch:hover{ border-color:var(--purple3); color:var(--purple); box-shadow:0 0 12px rgba(123,97,255,0.12); }
+
+  #detail h3{ font-size:15px; margin:0 0 4px; font-weight:600; letter-spacing:-0.01em; }
+  #detail .sub{ font-size:10px; color:var(--muted); margin-bottom:16px; font-family:var(--mono); letter-spacing:0.04em; }
+  #detail .section{ margin-bottom:14px; }
+  #detail .section-label{ font-family:var(--mono); font-size:9px; text-transform:uppercase; letter-spacing:0.14em; color:var(--muted); margin-bottom:6px; font-weight:700; display:flex; align-items:center; gap:6px; }
+  #detail .section-label::before{ content:''; width:2px; height:10px; background:var(--teal); border-radius:99px; }
+  #detail ul{ margin:0; padding-left:14px; font-size:11.5px; line-height:1.6; color:var(--text2); }
+  #detail ul li{ margin-bottom:2px; }
+  #detail .tag{ display:inline-block; font-family:var(--mono); font-size:9px; font-weight:700; padding:2px 8px; border-radius:99px; background:var(--surface3); color:var(--text2); margin-right:4px; letter-spacing:0.08em; text-transform:uppercase; border:1px solid var(--border); }
+  #detail .tag.new{ background:var(--purple2); color:var(--purple); border-color:var(--purple3); }
+  #detail .tag.warn{ background:var(--amber2); color:var(--amber); border-color:var(--amber3); }
+  #detail a{ color:var(--teal); text-decoration:none; font-family:var(--mono); font-size:11px; }
+  #detail a:hover{ text-shadow:0 0 10px var(--teal-glow); }
+
+  .collapse-btn{ background:var(--surface2); border:1px solid var(--border); color:var(--muted); width:24px; height:24px; font-size:11px; cursor:pointer; border-radius:6px; padding:0; display:flex; align-items:center; justify-content:center; z-index:10; transition:all .15s; font-family:var(--mono); }
+  .collapse-btn:hover{ background:var(--surface3); color:var(--teal); border-color:var(--teal3); }
+  #actions .collapse-btn{ position:absolute; top:14px; right:7px; }
+  #detail  .collapse-btn{ position:absolute; top:14px; left:7px; }
+  #app.collapsed-left  #actions .collapse-btn{ left:4px; right:auto; }
+  #app.collapsed-right #detail  .collapse-btn{ left:4px; }
+
+  #canvas-wrap{ position:relative; overflow:hidden; background:var(--bg); }
+  #canvas-wrap::before{ content:''; position:absolute; inset:0; background-image: linear-gradient(rgba(255,255,255,0.018) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.018) 1px, transparent 1px); background-size: 40px 40px; pointer-events:none; }
+  svg{ width:100%; height:100%; display:block; position:relative; z-index:1; }
+
+  #log{ position:absolute; bottom:14px; left:14px; right:14px; background:rgba(13,17,32,0.88); border:1px solid var(--border2); border-radius:10px; padding:10px 16px; font-size:11px; font-family:var(--mono); min-height:22px; max-height:120px; overflow-y:auto; backdrop-filter:blur(14px); color:var(--text2); line-height:1.55; letter-spacing:0.02em; z-index:5; box-shadow:0 4px 24px rgba(0,0,0,0.4); }
+  #log .ts{ color:var(--muted); margin-right:10px; font-variant-numeric:tabular-nums; }
+  #log .entry{ margin-bottom:3px; }
+  #log .entry:last-child{ color:var(--teal); }
+
+  /* Node regions — color-coded with Synthos palette */
+  .node-region{ fill:rgba(13,17,32,0.6); stroke:var(--border2); stroke-width:1.5; }
+  .node-region.pi4b{ stroke:var(--teal); stroke-opacity:0.45; }
+  .node-region.pi5{ stroke:var(--purple); stroke-opacity:0.45; }
+  .node-region.pi2w_monitor{ stroke:var(--amber); stroke-opacity:0.5; }
+  .node-region.pi2w_sentinel{ stroke:var(--pink); stroke-opacity:0.45; }
+  .node-label{ font-family:var(--mono); font-size:12px; fill:rgba(255,255,255,0.85); font-weight:700; letter-spacing:0.15em; }
+  .node-region.pi4b + .node-label, g:has(.node-region.pi4b) .node-label{ fill:var(--teal); }
+  .node-role{ font-family:var(--mono); font-size:9.5px; fill:var(--muted); letter-spacing:0.04em; }
+
+  /* Cluster groups */
+  .cluster-region{ fill:rgba(13,17,32,0.4); stroke:var(--border); stroke-width:1; stroke-dasharray:2 4; rx:10; }
+  .cluster-label{ font-family:var(--mono); font-size:8.5px; fill:var(--muted); letter-spacing:0.18em; font-weight:700; }
+
+  /* Agents */
+  .agent{ cursor:pointer; }
+  .agent rect{ fill:var(--surface2); stroke:var(--border2); stroke-width:1.4; rx:6; transition: fill 0.4s, stroke 0.4s, stroke-width 0.4s, filter 0.4s; }
+  .agent text{ font-family:var(--mono); font-size:9.5px; fill:rgba(255,255,255,0.82); pointer-events:none; dominant-baseline:middle; text-anchor:middle; font-weight:500; letter-spacing:0.02em; }
+  .agent:hover rect{ stroke:rgba(255,255,255,0.28); fill:var(--surface3); }
+  .agent.glow rect{ fill:rgba(0,245,212,0.12); stroke:var(--teal); stroke-width:2.2; filter:url(#glow-teal); }
+  .agent.glow text{ fill:#ffffff; font-weight:700; }
+  .agent.patch rect{ stroke:var(--purple); stroke-opacity:0.55; stroke-dasharray:3 2; }
+  .agent.patch.glow rect{ stroke:var(--purple); stroke-opacity:1; stroke-width:2.2; filter:url(#glow-purple); fill:rgba(123,97,255,0.12); }
+  .agent .gap-badge{ fill:var(--amber); font-size:11px; font-weight:700; pointer-events:none; filter:drop-shadow(0 0 4px rgba(255,179,71,0.5)); }
+
+  /* DBs — cylinders */
+  .db{ cursor:pointer; }
+  .db ellipse{ fill:#0f1a28; stroke:rgba(123,97,255,0.35); stroke-width:1.5; transition: all 0.4s; }
+  .db path.side{ fill:#0a1422; stroke:rgba(123,97,255,0.35); stroke-width:1.5; transition: all 0.4s; }
+  .db text{ font-family:var(--mono); font-size:9.5px; fill:rgba(200,190,255,0.85); pointer-events:none; dominant-baseline:middle; text-anchor:middle; font-weight:600; letter-spacing:0.02em; }
+  .db:hover ellipse, .db:hover path.side{ stroke:rgba(123,97,255,0.65); }
+  .db.pulse ellipse, .db.pulse path.side{ fill:rgba(0,245,212,0.15); stroke:var(--teal); stroke-width:2.2; filter:url(#glow-teal); }
+  .db.pulse text{ fill:#ffffff; }
+  .db.patch ellipse{ stroke:var(--purple); stroke-dasharray:3 2; }
+
+  /* Externals */
+  .ext{ cursor:pointer; }
+  .ext rect{ fill:#0f0d1f; stroke:rgba(123,97,255,0.3); stroke-width:1.3; rx:7; transition:all 0.4s; }
+  .ext text{ font-family:var(--mono); font-size:9.5px; fill:rgba(220,210,255,0.85); pointer-events:none; dominant-baseline:middle; text-anchor:middle; font-weight:500; letter-spacing:0.02em; }
+  .ext:hover rect{ stroke:rgba(123,97,255,0.7); fill:#151330; }
+  .ext.pulse rect{ fill:rgba(123,97,255,0.18); stroke:var(--purple); stroke-width:2.2; filter:url(#glow-purple); }
+  .ext.pulse text{ fill:#ffffff; font-weight:700; }
+
+  /* Edges */
+  .edge{ stroke:rgba(255,255,255,0.07); stroke-width:1; fill:none; transition: all 0.3s; }
+  .edge.active{ stroke:var(--teal); stroke-width:2; opacity:1; filter:url(#glow-teal); }
+  .edge.patch{ stroke:var(--purple); stroke-dasharray:3 3; filter:url(#glow-purple); }
+  .edge-dot{ fill:var(--teal); filter:url(#glow-teal); }
+  .edge-dot.patch{ fill:var(--purple); filter:url(#glow-purple); }
+
+  /* Legend */
+  #legend{ position:absolute; top:14px; right:14px; background:rgba(13,17,32,0.85); border:1px solid var(--border2); border-radius:10px; padding:12px 16px; font-size:10px; font-family:var(--mono); backdrop-filter:blur(14px); z-index:5; box-shadow:0 4px 24px rgba(0,0,0,0.4); color:var(--text2); letter-spacing:0.02em; }
+  #legend div{ margin-bottom:5px; }
+  #legend div:last-child{ margin-bottom:0; }
+  .legend-swatch{ display:inline-block; width:11px; height:11px; border:1px solid; margin-right:7px; vertical-align:middle; border-radius:2px; }
+
+  /* Hover preview tooltip */
+  #hover-card{ position:absolute; background:rgba(13,17,32,0.96); border:1px solid var(--border3); border-radius:10px; padding:10px 14px; font-size:11px; color:var(--text); max-width:300px; pointer-events:none; z-index:20; display:none; box-shadow:0 8px 32px rgba(0,0,0,0.6), 0 0 0 1px rgba(0,245,212,0.08); backdrop-filter:blur(16px); line-height:1.45; }
+  #hover-card .title{ font-weight:700; color:#ffffff; margin-bottom:4px; font-size:13px; letter-spacing:-0.01em; }
+  #hover-card .kind{ font-family:var(--mono); color:var(--muted); font-size:9px; text-transform:uppercase; letter-spacing:0.14em; margin-bottom:6px; font-weight:700; }
+  #hover-card .desc{ color:var(--text2); }
+
+  /* Timeline view */
+  #timeline-wrap{ position:absolute; inset:0; background:var(--bg); display:none; padding:24px 28px; overflow:auto; z-index:2; }
+  #timeline-wrap.active{ display:block; }
+  #canvas-wrap.hidden-topology svg{ display:none; }
+  #canvas-wrap.hidden-topology::before{ display:none; }
+  #canvas-wrap.hidden-topology > #legend, #canvas-wrap.hidden-topology > #log, #canvas-wrap.hidden-topology > #hover-card{ display:none; }
+  .timeline-title{ font-family:var(--mono); font-size:12px; color:var(--text); font-weight:700; letter-spacing:0.15em; text-transform:uppercase; margin-bottom:22px; display:flex; align-items:center; gap:12px; }
+  .timeline-title::before{ content:''; width:3px; height:16px; background:var(--teal); border-radius:99px; box-shadow:0 0 10px var(--teal-glow); }
+  .timeline-title span{ color:var(--muted); font-weight:500; font-size:10px; letter-spacing:0.08em; text-transform:none; margin-left:auto; }
+  .timeline-grid{ position:relative; background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:18px 22px 38px; margin-bottom:14px; overflow:hidden; }
+  .timeline-grid::after{ content:''; position:absolute; top:0; left:0; right:0; height:2px; background:linear-gradient(90deg, transparent, var(--teal), transparent); border-radius:14px 14px 0 0; }
+  .timeline-grid[data-kind=messaging]::after{ background:linear-gradient(90deg, transparent, var(--purple), transparent); }
+  .timeline-grid[data-kind=monitoring]::after{ background:linear-gradient(90deg, transparent, var(--amber), transparent); }
+  .timeline-grid[data-kind=backup]::after{ background:linear-gradient(90deg, transparent, var(--pink), transparent); }
+  .timeline-grid[data-kind=housekeeping]::after{ background:linear-gradient(90deg, transparent, rgba(255,255,255,0.35), transparent); }
+  .timeline-grid[data-kind=scheduler]::after{ background:linear-gradient(90deg, transparent, var(--purple), transparent); }
+  .timeline-label{ font-family:var(--mono); font-size:10px; color:var(--muted); margin-bottom:10px; font-weight:700; letter-spacing:0.14em; text-transform:uppercase; }
+  .timeline-track{ position:relative; width:100%; height:36px; background:rgba(8,11,18,0.8); border-radius:8px; border:1px solid var(--border); margin-bottom:8px; }
+  .timeline-mark{ position:absolute; top:0; bottom:0; width:2px; background:var(--teal); cursor:pointer; transition:all 0.2s; box-shadow:0 0 6px var(--teal-glow); }
+  .timeline-mark:hover{ width:3px; box-shadow:0 0 12px var(--teal); }
+  .timeline-mark.patch{ background:var(--purple); box-shadow:0 0 6px var(--purple-glow); }
+  .timeline-mark.patch:hover{ box-shadow:0 0 12px var(--purple); }
+  .timeline-hr-scale{ display:flex; justify-content:space-between; font-family:var(--mono); font-size:9px; color:var(--muted); margin-top:8px; font-variant-numeric:tabular-nums; letter-spacing:0.04em; }
+  .timeline-tooltip{ position:absolute; bottom:calc(100% + 8px); left:50%; transform:translateX(-50%); background:rgba(13,17,32,0.96); border:1px solid var(--border2); border-radius:6px; padding:5px 10px; font-size:10px; font-family:var(--mono); color:var(--text); white-space:nowrap; display:none; z-index:5; box-shadow:0 4px 16px rgba(0,0,0,0.5); }
+  .timeline-mark:hover .timeline-tooltip{ display:block; }
+
+  body.patch-mode .agent:not(.patch) rect{ opacity:0.35; }
+  body.patch-mode .db:not(.patch) ellipse, body.patch-mode .db:not(.patch) path.side{ opacity:0.35; }
+  body.patch-mode .agent.patch rect{ stroke-width:2; }
+  body.patch-mode .db.patch ellipse{ stroke-width:2; }
+
+  /* ═════════ PIPELINE & GATES VIEW ═════════ */
+  #pipeline-wrap{ position:absolute; inset:0; background:var(--bg); display:none; overflow:auto; z-index:2; padding:20px 24px 100px; }
+  #pipeline-wrap.active{ display:block; }
+  #canvas-wrap.hidden-pipeline{ }
+  #canvas-wrap.hidden-pipeline > #legend-wrap, #canvas-wrap.hidden-pipeline > #log, #canvas-wrap.hidden-pipeline > #hover-card{ display:none; }
+  .pipe-header{ display:flex; align-items:center; gap:16px; margin-bottom:18px; flex-wrap:wrap; }
+  .pipe-header h2{ font-family:var(--mono); font-size:12px; color:var(--text); font-weight:700; letter-spacing:0.18em; text-transform:uppercase; display:flex; align-items:center; gap:12px; margin:0; }
+  .pipe-header h2::before{ content:''; width:3px; height:16px; background:var(--teal); border-radius:99px; box-shadow:0 0 10px var(--teal-glow); }
+  .pipe-header h2 span{ color:var(--muted); font-weight:500; letter-spacing:0.08em; text-transform:none; font-size:10.5px; }
+  .pipe-controls{ display:flex; gap:8px; margin-left:auto; font-family:var(--mono); align-items:center; font-size:10px; color:var(--muted); }
+  .pipe-btn{ background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:7px 12px; font-family:var(--mono); font-weight:600; font-size:10px; cursor:pointer; border-radius:8px; transition:all .15s; letter-spacing:0.06em; text-transform:uppercase; }
+  .pipe-btn:hover:not(:disabled){ background:var(--teal2); color:var(--teal); border-color:var(--teal3); }
+  .pipe-btn:disabled{ opacity:0.4; cursor:not-allowed; }
+  .pipe-btn.reject:hover{ background:var(--pink2); color:var(--pink); border-color:rgba(255,75,110,0.4); }
+  .pipe-btn.parallel:hover{ background:var(--purple2); color:var(--purple); border-color:var(--purple3); }
+
+  .pipe-grid{ display:grid; grid-template-columns: minmax(250px, 1fr) minmax(280px, 1fr) minmax(280px, 1fr); gap:18px; align-items:start; }
+  .pipe-col{ display:flex; flex-direction:column; gap:14px; }
+  .pipe-col-label{ font-family:var(--mono); font-size:9.5px; color:var(--muted); letter-spacing:0.2em; text-transform:uppercase; font-weight:700; margin-bottom:2px; display:flex; align-items:center; gap:8px; }
+  .pipe-col-label::before{ content:''; width:2px; height:12px; background:var(--teal); border-radius:99px; }
+  .pipe-col:nth-child(2) .pipe-col-label::before{ background:var(--purple); }
+  .pipe-col:nth-child(3) .pipe-col-label::before{ background:var(--pink); }
+
+  .pipe-agent{ background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px 14px 12px; position:relative; overflow:hidden; transition:all 0.3s; }
+  .pipe-agent::before{ content:''; position:absolute; top:0; left:0; right:0; height:2px; background:linear-gradient(90deg, transparent, var(--teal), transparent); opacity:0.3; transition:opacity 0.3s; }
+  .pipe-agent.running{ border-color:var(--teal3); box-shadow:0 0 16px rgba(0,245,212,0.15); }
+  .pipe-agent.running::before{ opacity:1; }
+  .pipe-agent.rejected{ border-color:rgba(255,75,110,0.5); box-shadow:0 0 16px rgba(255,75,110,0.15); }
+  .pipe-agent.rejected::before{ background:linear-gradient(90deg, transparent, var(--pink), transparent); opacity:1; }
+  .pipe-agent.validator::before{ background:linear-gradient(90deg, transparent, var(--purple), transparent); }
+  .pipe-agent.trader::before{ background:linear-gradient(90deg, transparent, var(--pink), transparent); }
+  .pipe-agent-header{ display:flex; align-items:center; gap:8px; margin-bottom:2px; }
+  .pipe-agent-num{ font-family:var(--mono); font-size:9px; color:var(--muted); background:var(--surface3); border:1px solid var(--border); padding:2px 6px; border-radius:4px; font-weight:700; letter-spacing:0.1em; }
+  .pipe-agent-name{ font-weight:600; font-size:13px; color:var(--text); letter-spacing:-0.01em; }
+  .pipe-agent-sub{ font-family:var(--mono); font-size:9.5px; color:var(--muted); letter-spacing:0.04em; margin-bottom:10px; }
+  .pipe-agent.patch-bar::before{ background:linear-gradient(90deg, transparent, var(--purple), transparent); opacity:0.6; }
+
+  .pipe-gates{ display:flex; flex-direction:column; gap:3px; }
+  .pipe-gate{ display:flex; align-items:center; gap:7px; padding:4px 9px; background:var(--surface2); border:1px solid var(--border); border-radius:5px; font-family:var(--mono); font-size:10px; color:var(--text2); transition:all 0.3s; letter-spacing:0.02em; }
+  .pipe-gate-num{ color:var(--muted); font-weight:700; flex-shrink:0; min-width:22px; }
+  .pipe-gate-name{ flex:1; }
+  .pipe-gate-status{ font-size:9px; color:var(--muted); }
+  .pipe-gate.active{ background:var(--teal2); border-color:var(--teal3); color:var(--teal); box-shadow:0 0 8px rgba(0,245,212,0.2); }
+  .pipe-gate.active .pipe-gate-num{ color:var(--teal); }
+  .pipe-gate.passed{ background:rgba(0,245,212,0.04); border-color:rgba(0,245,212,0.18); color:var(--text2); }
+  .pipe-gate.passed .pipe-gate-num::before{ content:'✓ '; color:var(--teal); }
+  .pipe-gate.failed{ background:var(--pink2); border-color:rgba(255,75,110,0.4); color:var(--pink); }
+  .pipe-gate.failed .pipe-gate-num::before{ content:'✗ '; }
+  .pipe-gate.patch{ border-color:var(--purple3); }
+  .pipe-gate.patch .pipe-gate-num{ color:var(--purple); }
+  .pipe-gate.verdict{ background:rgba(123,97,255,0.08); border-color:var(--purple3); color:var(--purple); font-weight:700; }
+  .pipe-gate.more{ color:var(--muted); font-style:italic; }
+
+  .pipe-parallel-lanes{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; margin:10px 0 12px; }
+  .pipe-lane{ padding:5px 8px; background:var(--surface2); border:1px solid var(--border); border-radius:6px; text-align:center; font-family:var(--mono); font-size:9.5px; color:var(--muted); font-weight:700; letter-spacing:0.08em; text-transform:uppercase; }
+  .pipe-lane.active{ background:var(--teal2); color:var(--teal); border-color:var(--teal3); box-shadow:0 0 10px rgba(0,245,212,0.2); }
+  .pipe-lane.active-alt{ background:rgba(255,179,71,0.1); color:var(--amber); border-color:rgba(255,179,71,0.3); }
+  .pipe-lane.active-pink{ background:var(--pink2); color:var(--pink); border-color:rgba(255,75,110,0.3); }
+
+  .pipe-arrow{ position:relative; text-align:center; color:var(--muted); font-size:18px; font-family:var(--mono); padding:4px 0; opacity:0.55; }
+  .pipe-arrow::before{ content:'↓'; }
+
+  .pipe-verdict-display{ display:none; margin-top:10px; padding:8px 12px; border-radius:8px; font-family:var(--mono); font-size:11px; font-weight:700; letter-spacing:0.1em; text-align:center; text-transform:uppercase; }
+  .pipe-verdict-display.show{ display:block; }
+  .pipe-verdict-display.go{ background:var(--teal2); color:var(--teal); border:1px solid var(--teal3); }
+  .pipe-verdict-display.caution{ background:var(--amber2); color:var(--amber); border:1px solid var(--amber3); }
+  .pipe-verdict-display.no_go{ background:var(--pink2); color:var(--pink); border:1px solid rgba(255,75,110,0.4); }
+
+  .pipe-output{ margin-top:22px; padding:14px 18px; background:var(--surface); border:1px solid var(--border); border-radius:12px; font-family:var(--mono); font-size:11px; color:var(--text2); text-align:center; letter-spacing:0.08em; position:relative; overflow:hidden; }
+  .pipe-output.buy{ border-color:var(--teal3); color:var(--teal); box-shadow:0 0 18px rgba(0,245,212,0.18); }
+  .pipe-output.skip{ border-color:rgba(255,75,110,0.4); color:var(--pink); }
+  .pipe-output.watch{ border-color:var(--amber3); color:var(--amber); }
+  .pipe-output-label{ font-weight:700; letter-spacing:0.15em; font-size:12px; }
+
+  .pipe-log{ margin-top:16px; background:rgba(13,17,32,0.6); border:1px solid var(--border); border-radius:10px; padding:10px 14px; font-family:var(--mono); font-size:10.5px; color:var(--text2); line-height:1.6; max-height:150px; overflow-y:auto; }
+  .pipe-log .ts{ color:var(--muted); margin-right:8px; }
+  .pipe-log .entry{ margin-bottom:2px; }
+  .pipe-log .entry.pass{ color:var(--teal); }
+  .pipe-log .entry.fail{ color:var(--pink); }
+  .pipe-log .entry.info{ color:var(--text2); }
+
+  /* v2 Pipeline additions ───────────── */
+  /* Screener pre-computed banner (compact horizontal card) */
+  .pipe-screener-banner{ display:flex; align-items:center; gap:14px; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:10px 16px; margin-bottom:14px; position:relative; overflow:hidden; }
+  .pipe-screener-banner::before{ content:''; position:absolute; top:0; left:0; right:0; height:2px; background:linear-gradient(90deg, transparent, var(--amber), transparent); opacity:0.5; }
+  .pipe-screener-banner .tag{ font-family:var(--mono); font-size:9px; background:var(--amber2); color:var(--amber); border:1px solid var(--amber3); padding:3px 8px; border-radius:99px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; }
+  .pipe-screener-banner .banner-title{ font-size:12.5px; font-weight:600; color:var(--text); }
+  .pipe-screener-banner .banner-sub{ font-family:var(--mono); font-size:10px; color:var(--muted); margin-left:auto; letter-spacing:0.04em; }
+
+  /* Reject scenario dropdown */
+  .pipe-reject-wrap{ position:relative; }
+  .pipe-reject-menu{ display:none; position:absolute; top:100%; right:0; margin-top:4px; background:rgba(13,17,32,0.96); border:1px solid var(--border2); border-radius:8px; padding:6px; min-width:280px; z-index:30; backdrop-filter:blur(14px); box-shadow:0 8px 32px rgba(0,0,0,0.6); }
+  .pipe-reject-menu.open{ display:block; }
+  .pipe-reject-menu button{ display:block; width:100%; text-align:left; padding:7px 10px; background:transparent; border:1px solid transparent; border-radius:6px; font-family:var(--mono); font-size:10.5px; color:var(--text2); cursor:pointer; letter-spacing:0.02em; margin-bottom:2px; }
+  .pipe-reject-menu button:hover{ background:var(--pink2); color:var(--pink); border-color:rgba(255,75,110,0.3); }
+  .pipe-reject-menu button .gate-tag{ font-size:9px; color:var(--muted); margin-right:8px; letter-spacing:0.08em; text-transform:uppercase; }
+
+  /* Traveling signal card */
+  .pipe-signal-card{ position:absolute; display:none; background:rgba(0,245,212,0.1); border:1px solid var(--teal); border-radius:10px; padding:8px 14px; backdrop-filter:blur(8px); box-shadow:0 0 16px var(--teal-glow), 0 4px 20px rgba(0,0,0,0.5); z-index:25; min-width:200px; transition: top 0.6s cubic-bezier(0.4,0,0.2,1), left 0.6s cubic-bezier(0.4,0,0.2,1); font-family:var(--mono); }
+  .pipe-signal-card.active{ display:block; }
+  .pipe-signal-card.rejected{ background:rgba(255,75,110,0.1); border-color:var(--pink); box-shadow:0 0 16px rgba(255,75,110,0.4); }
+  .pipe-signal-card .row1{ display:flex; align-items:center; gap:8px; }
+  .pipe-signal-card .ticker{ font-size:14px; font-weight:700; color:var(--teal); text-shadow:0 0 10px var(--teal-glow); letter-spacing:0.05em; }
+  .pipe-signal-card.rejected .ticker{ color:var(--pink); text-shadow:0 0 10px rgba(255,75,110,0.5); }
+  .pipe-signal-card .event{ font-size:10px; color:var(--text); margin-top:2px; }
+  .pipe-signal-card .score{ font-family:var(--mono); font-size:10.5px; font-weight:700; color:var(--text); margin-left:auto; letter-spacing:0.05em; }
+  .pipe-state-pill{ font-family:var(--mono); font-size:8.5px; font-weight:700; color:var(--teal); background:var(--teal2); border:1px solid var(--teal3); padding:2px 8px; border-radius:99px; letter-spacing:0.14em; text-transform:uppercase; display:inline-block; margin-top:5px; }
+  .pipe-signal-card.rejected .pipe-state-pill{ color:var(--pink); background:var(--pink2); border-color:rgba(255,75,110,0.4); }
+
+  /* Per-customer progress rows in trader */
+  .pipe-cust-progress{ margin:10px 0 12px; display:flex; flex-direction:column; gap:6px; }
+  .pipe-cust-row{ display:flex; align-items:center; gap:8px; font-family:var(--mono); font-size:9.5px; }
+  .pipe-cust-label{ color:var(--muted); min-width:54px; font-weight:700; letter-spacing:0.08em; }
+  .pipe-cust-row.active-teal .pipe-cust-label{ color:var(--teal); }
+  .pipe-cust-row.active-amber .pipe-cust-label{ color:var(--amber); }
+  .pipe-cust-row.active-pink .pipe-cust-label{ color:var(--pink); }
+  .pipe-cust-bar{ flex:1; height:8px; background:var(--surface2); border:1px solid var(--border); border-radius:99px; overflow:hidden; position:relative; }
+  .pipe-cust-fill{ height:100%; width:0; background:var(--teal); transition: width 0.25s ease-out; box-shadow:0 0 6px var(--teal-glow); }
+  .pipe-cust-row.active-amber .pipe-cust-fill{ background:var(--amber); box-shadow:0 0 6px rgba(255,179,71,0.5); }
+  .pipe-cust-row.active-pink .pipe-cust-fill{ background:var(--pink); box-shadow:0 0 6px rgba(255,75,110,0.5); }
+  .pipe-cust-row.failed .pipe-cust-fill{ background:var(--pink); box-shadow:0 0 6px rgba(255,75,110,0.5); }
+  .pipe-cust-stat{ font-family:var(--mono); font-size:9px; color:var(--muted); min-width:80px; text-align:right; letter-spacing:0.04em; }
+  .pipe-cust-stat.pass{ color:var(--teal); }
+  .pipe-cust-stat.fail{ color:var(--pink); }
+
+  /* Sentiment stage groups (collapsible) */
+  .pipe-stage-group{ border:1px solid var(--border); border-radius:6px; overflow:hidden; margin-bottom:4px; }
+  .pipe-stage-group.active{ border-color:var(--teal3); background:rgba(0,245,212,0.03); }
+  .pipe-stage-header{ display:flex; align-items:center; justify-content:space-between; padding:6px 10px; background:var(--surface2); cursor:pointer; font-family:var(--mono); font-size:10px; font-weight:700; color:var(--text2); letter-spacing:0.12em; }
+  .pipe-stage-header:hover{ color:var(--teal); }
+  .pipe-stage-header .stage-count{ color:var(--muted); font-weight:500; font-size:9px; }
+  .pipe-stage-header .caret{ margin-left:6px; transition: transform 0.2s; }
+  .pipe-stage-group.expanded .caret{ transform: rotate(90deg); }
+  .pipe-stage-gates{ display:none; padding:5px 6px 6px; flex-direction:column; gap:3px; }
+  .pipe-stage-group.expanded .pipe-stage-gates{ display:flex; }
+
+  /* Gate hover tooltip */
+  .pipe-gate{ position:relative; }
+  .pipe-gate-tooltip{ position:absolute; left:100%; top:50%; transform:translateY(-50%); margin-left:10px; background:rgba(13,17,32,0.96); border:1px solid var(--border2); border-radius:8px; padding:8px 12px; font-family:var(--mono); font-size:10px; color:var(--text); white-space:normal; max-width:260px; pointer-events:none; display:none; z-index:40; backdrop-filter:blur(14px); box-shadow:0 8px 24px rgba(0,0,0,0.6); line-height:1.4; }
+  .pipe-gate:hover .pipe-gate-tooltip{ display:block; }
+  .pipe-gate-tooltip .ttl{ color:var(--teal); font-weight:700; margin-bottom:3px; letter-spacing:0.08em; text-transform:uppercase; font-size:9px; }
+
+  /* Flow arrows between columns — absolute-positioned */
+  .pipe-col-arrow{ position:absolute; top:50%; transform:translateY(-50%); font-size:20px; color:var(--muted); font-family:var(--mono); pointer-events:none; opacity:0.5; transition:all 0.3s; }
+  .pipe-col-arrow.active{ color:var(--teal); opacity:1; text-shadow:0 0 10px var(--teal-glow); }
+
+  /* Aggregation arrows — fan-in to validator stack */
+  .pipe-aggregation{ position:relative; margin:10px 0 6px; text-align:center; font-family:var(--mono); font-size:9px; color:var(--muted); letter-spacing:0.12em; font-weight:700; text-transform:uppercase; }
+  .pipe-aggregation::before{ content:'↓ ↓ ↓ ↓'; display:block; font-size:12px; color:var(--purple); letter-spacing:0.35em; margin-bottom:3px; opacity:0.6; }
+  .pipe-aggregation.active::before{ opacity:1; text-shadow:0 0 8px var(--purple-glow); }
+
+  /* Rejection detail box */
+  .pipe-reject-detail{ display:none; margin-top:10px; padding:10px 12px; background:var(--pink2); border:1px solid rgba(255,75,110,0.4); border-radius:8px; font-family:var(--mono); font-size:10px; color:var(--pink); line-height:1.55; letter-spacing:0.02em; }
+  .pipe-reject-detail.show{ display:block; }
+  .pipe-reject-detail .label{ color:var(--muted); font-weight:700; letter-spacing:0.1em; text-transform:uppercase; font-size:9px; margin-bottom:2px; }
+  .pipe-reject-detail .val{ color:var(--text); font-weight:600; }
+
+  /* Interrogation cross-val callout */
+  .pipe-interrogation{ position:absolute; display:none; background:rgba(255,179,71,0.08); border:1px dashed var(--amber3); border-radius:10px; padding:8px 12px; font-family:var(--mono); font-size:10px; color:var(--amber); backdrop-filter:blur(8px); z-index:20; max-width:180px; text-align:center; box-shadow:0 0 14px rgba(255,179,71,0.2); }
+  .pipe-interrogation.active{ display:block; }
+  .pipe-interrogation .label{ font-size:8.5px; letter-spacing:0.18em; text-transform:uppercase; color:var(--muted); }
+
+  /* ═══ Pipeline v3 compact layout — fit one viewport ═══ */
+  #pipeline-wrap{ padding:14px 20px 20px; }
+  .pipe-header{ margin-bottom:10px; }
+  .pipe-screener-banner{ padding:7px 14px; margin-bottom:8px; }
+  .pipe-screener-banner .banner-title{ font-size:11.5px; }
+  .pipe-screener-banner .banner-sub{ font-size:9.5px; }
+  .pipe-grid{ gap:12px; grid-template-columns: minmax(250px, 1fr) minmax(300px, 1.05fr) minmax(260px, 0.95fr); }
+  .pipe-col{ gap:8px; }
+  .pipe-col-label{ font-size:9px; margin-bottom:0; }
+  .pipe-arrow{ display:none; }
+
+  /* Compact agent cards */
+  .pipe-agent{ padding:8px 10px 9px; border-radius:8px; }
+  .pipe-agent-header{ gap:6px; margin-bottom:1px; }
+  .pipe-agent-name{ font-size:12px; }
+  .pipe-agent-num{ font-size:8.5px; padding:1px 5px; }
+  .pipe-agent-sub{ margin-bottom:5px; font-size:9.5px; }
+
+  /* 2-column gate grids inside each agent */
+  .pipe-agent .pipe-gates{ display:grid; grid-template-columns:1fr 1fr; gap:3px; }
+  .pipe-stage-header{ padding:4px 8px; font-size:9.5px; }
+  .pipe-stage-group.expanded .pipe-stage-gates{ display:grid; grid-template-columns:1fr 1fr; gap:3px; padding:4px 6px 5px; }
+  .pipe-gate{ padding:3px 7px; font-size:9px; gap:4px; letter-spacing:0; border-radius:4px; }
+  .pipe-gate-num{ min-width:18px; font-size:8.5px; }
+  .pipe-gate-name{ font-size:9px; }
+
+  /* 2×2 grid for the 4 parallel validators */
+  .pipe-validator-grid{ display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px; }
+  .pipe-validator-grid .pipe-agent{ padding:7px 9px; }
+  .pipe-validator-grid .pipe-agent .pipe-gates{ grid-template-columns:1fr; }
+  .pipe-validator-grid .pipe-agent-sub{ display:none; }
+
+  /* Per-customer progress compact */
+  .pipe-cust-progress{ margin:6px 0 8px; gap:4px; }
+  .pipe-cust-row{ font-size:9px; gap:6px; }
+  .pipe-cust-label{ min-width:46px; font-size:8.5px; }
+  .pipe-cust-bar{ height:6px; }
+  .pipe-cust-stat{ min-width:70px; font-size:8.5px; }
+
+  /* Output + verdict + aggregation compact */
+  .pipe-output{ padding:10px 14px; margin-top:8px; }
+  .pipe-output-label{ font-size:10px; }
+  .pipe-aggregation{ margin:4px 0 2px; font-size:8px; }
+  .pipe-aggregation::before{ font-size:11px; margin-bottom:1px; }
+  .pipe-verdict-display{ padding:5px 10px; font-size:10px; }
+  .pipe-reject-detail{ padding:7px 10px; font-size:9.5px; margin-top:6px; }
+  .pipe-log{ margin-top:10px; max-height:80px; padding:8px 12px; font-size:10px; }
+
+  /* 24-hour day playback button */
+  .day-btn{ width:100%; background:linear-gradient(135deg, rgba(0,245,212,0.14), rgba(123,97,255,0.14)); border:1px solid var(--teal3); color:var(--teal); padding:14px 12px; font-family:var(--mono); font-weight:700; font-size:11px; letter-spacing:0.12em; cursor:pointer; border-radius:10px; margin-bottom:22px; text-transform:uppercase; transition:all .2s; box-shadow:0 0 20px rgba(0,245,212,0.1); position:relative; overflow:hidden; }
+  .day-btn::after{ content:''; position:absolute; top:0; left:0; right:0; height:2px; background:linear-gradient(90deg, transparent, var(--teal), transparent); }
+  .day-btn:hover{ box-shadow:0 0 28px rgba(0,245,212,0.28); transform:translateY(-1px); }
+  .day-btn.running{ color:var(--pink); border-color:rgba(255,75,110,0.5); background:linear-gradient(135deg, rgba(255,75,110,0.14), rgba(255,179,71,0.14)); box-shadow:0 0 20px rgba(255,75,110,0.2); }
+  .day-btn.running::after{ background:linear-gradient(90deg, transparent, var(--pink), transparent); }
+
+  /* Simulated day clock — inline in header */
+  #sim-clock{ display:none; align-items:center; gap:10px; padding:4px 14px; border-radius:10px; background:var(--teal2); border:1px solid var(--teal3); box-shadow:0 0 14px rgba(0,245,212,0.18); }
+  #sim-clock.active{ display:flex; }
+  .sim-clock-time{ font-family:var(--mono); font-size:18px; font-weight:700; color:var(--teal); text-shadow:0 0 12px var(--teal-glow); letter-spacing:0.08em; font-variant-numeric:tabular-nums; line-height:1; }
+  .sim-clock-phase{ font-family:var(--mono); font-size:10px; color:var(--text2); letter-spacing:0.06em; border-left:1px solid var(--teal3); padding-left:10px; }
+  .sim-clock-label{ display:none; }
+
+  /* Legend — collapsible pill */
+  #legend-wrap{ position:absolute; top:14px; right:14px; z-index:6; }
+  #legend-toggle{ padding:6px 12px; font-family:var(--mono); font-size:10px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; background:rgba(13,17,32,0.88); border:1px solid var(--border2); border-radius:99px; color:var(--text2); cursor:pointer; backdrop-filter:blur(12px); transition:all .15s; }
+  #legend-toggle:hover{ border-color:var(--teal3); color:var(--teal); }
+  #legend-toggle.open{ border-color:var(--teal3); color:var(--teal); background:var(--teal2); }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="wordmark">SYNTHOS</div>
+    <div class="header-sub">SYSTEM MAP · v3</div>
+    <div class="live-pill"><div class="live-dot"></div>2026-04-19</div>
+    <div id="sim-clock">
+      <div class="sim-clock-time" id="sim-clock-time">00:00</div>
+      <div class="sim-clock-phase" id="sim-clock-phase">Pre-dawn</div>
+    </div>
+    <div class="tabs">
+      <button class="tab active" data-view="topology">Topology</button>
+      <button class="tab" data-view="pipeline">Pipeline & Gates</button>
+      <button class="tab" data-view="timeline">24h Timeline</button>
+    </div>
+    <div id="controls">
+      <button id="btn-pause" disabled title="Pause">❚❚</button>
+      <button id="btn-back" disabled title="Step back">◂</button>
+      <button id="btn-fwd" disabled title="Step forward">▸</button>
+      <span id="step-display">—</span>
+      <div id="progress-bar"><div id="progress-fill"></div></div>
+      <label>Speed <input type="range" id="speed" min="0.25" max="2.5" step="0.05" value="1"><span id="speed-val" style="display:inline-block;min-width:32px;margin-left:4px;color:#9ab">1.0×</span></label>
+      <label><input type="checkbox" id="patch-toggle"> Patch overlay</label>
+      <button id="reset">Reset</button>
+    </div>
+  </header>
+
+  <aside id="actions">
+    <button class="collapse-btn" id="collapse-left" title="Collapse / expand">◂</button>
+    <button class="day-btn" id="btn-day">▶ PLAY 24-HOUR DAY</button>
+    <h3>Trading</h3>
+    <button class="action-btn" data-seq="daemon_run">🕘 Market Daemon Run (9:10 ET)</button>
+    <button class="action-btn" data-seq="price_poll">💹 Live Price Poll (60s loop)</button>
+    <button class="action-btn" data-seq="overnight_news">🌙 Overnight News Cycle</button>
+
+    <h3 class="group">Messaging</h3>
+    <button class="action-btn" data-seq="event_enqueue">📨 Event Enqueue (pi5 → pi4b)</button>
+    <button class="action-btn" data-seq="scoop">✉️ Email Scoop Drain</button>
+    <button class="action-btn" data-seq="approval_notify">📧 Trade Approval Notification</button>
+    <button class="action-btn" data-seq="account_approval">👋 Account Signup Approval</button>
+    <button class="action-btn" data-seq="support_ticket">🎫 Support Ticket</button>
+    <button class="action-btn" data-seq="interrogation">📡 Interrogation UDP Cross-Val</button>
+
+    <h3 class="group">Monitoring</h3>
+    <button class="action-btn" data-seq="heartbeat">💓 Heartbeat Cycle</button>
+    <button class="action-btn" data-seq="auditor">🔍 Auditor Scan</button>
+    <button class="action-btn" data-seq="librarian">📦 Librarian CVE Scan</button>
+
+    <h3 class="group">Housekeeping</h3>
+    <button class="action-btn" data-seq="backup">☁️ Nightly Backup → R2</button>
+    <button class="action-btn" data-seq="archivist">🗄️ DB Row Archival</button>
+    <button class="action-btn" data-seq="rebuild_tmpl">🔧 Rebuild Customer Template</button>
+    <button class="action-btn" data-seq="logs_rotate">📜 Log Rotation + Cleanup</button>
+    <button class="action-btn" data-seq="boot_sequence">🔌 Pi5 Boot Sequence</button>
+
+    <h3 class="group">Scenarios · learn the edges</h3>
+    <button class="action-btn" data-seq="market_cascade">⚡ Market Cascade (circuit breaker)</button>
+    <button class="action-btn" data-seq="alpaca_outage">🔌 Alpaca API Outage</button>
+    <button class="action-btn" data-seq="news_flood">📰 News Flood (earnings day)</button>
+    <button class="action-btn" data-seq="sizing_cascade">💰 Sizing Cascade (cash starvation)</button>
+
+    <h3 class="patch-group">2026-05-03 Patch</h3>
+    <button class="action-btn patch" data-seq="halt_activate">🛑 Admin Halt Activation</button>
+    <button class="action-btn patch" data-seq="customer_halt">⏸️ Customer Self-Halt</button>
+    <button class="action-btn patch" data-seq="auto_user">👤 User Buys Outside Bot</button>
+    <button class="action-btn patch" data-seq="sticky_pref">🔒 Sticky USER Preference</button>
+  </aside>
+
+  <main id="canvas-wrap">
+    <svg id="svg" viewBox="0 0 1600 1120" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+      <defs>
+        <filter id="glow-teal" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="3.5" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <filter id="glow-purple" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="3.5" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <marker id="arrow-teal" viewBox="0 -5 10 10" refX="9" refY="0" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M0,-5L10,0L0,5" fill="#00f5d4"/>
+        </marker>
+        <marker id="arrow-purple" viewBox="0 -5 10 10" refX="9" refY="0" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M0,-5L10,0L0,5" fill="#7b61ff"/>
+        </marker>
+      </defs>
+      <g id="clusters-layer"></g>
+      <g id="nodes-layer"></g>
+      <g id="edges-layer"></g>
+      <g id="content-layer"></g>
+      <g id="dots-layer"></g>
+    </svg>
+    <div id="timeline-wrap"></div>
+    <div id="pipeline-wrap"></div>
+    <div id="hover-card"></div>
+    <div id="legend-wrap">
+      <button id="legend-toggle">ⓘ Legend</button>
+      <div id="legend" style="display:none; margin-top:8px;">
+      <div><span class="legend-swatch" style="background:#17202e; border-color:#3a4868"></span>Agent</div>
+      <div><span class="legend-swatch" style="background:#1a3440; border:1px solid #4a7090; border-radius:50%"></span>Database</div>
+      <div><span class="legend-swatch" style="background:#1d1830; border-color:#5a5080"></span>External service</div>
+      <div><span class="legend-swatch" style="background:transparent; border-color:#7a4ba8; border-style:dashed"></span>New in patch</div>
+      <div style="color:#ffb347"><span style="display:inline-block;width:10px;text-align:center;margin-right:6px">⚠</span>Known gap (click for detail)</div>
+      <div style="margin-top:6px;color:#6a8aa8;font-size:9.5px">Glow = active · Dots = data flowing</div>
+    </div>
+    </div>
+    <div id="log"><span class="entry"><span class="ts">  —</span>Click an action on the left. Use playback controls to pause/step.</span></div>
+  </main>
+
+  <aside id="detail">
+    <button class="collapse-btn" id="collapse-right" title="Collapse / expand">▸</button>
+    <h3>Select an element</h3>
+    <div class="sub">Click any agent, DB, or external service — or hover for a quick card.</div>
+    <div class="section">
+      <div class="section-label">How to use</div>
+      <ul>
+        <li>Left = actions that trigger flows</li>
+        <li>Pause/step buttons top-center</li>
+        <li>Toggle <b>Patch overlay</b> to dim non-patch elements</li>
+        <li>Click ⚠ badges for known-gap details</li>
+        <li>Switch tabs to see 24h cron timeline</li>
+      </ul>
+    </div>
+  </aside>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// DATA MODEL
+// ═══════════════════════════════════════════════════════════════
+const M = {
+  nodes: [
+    { id:'pi4b', label:'pi4b', role:'Company Server · Pi 4B 8GB · 10.0.0.10', x:40, y:260, w:720, h:840 },
+    { id:'pi5',  label:'pi5 (retail_node)', role:'Trading Stack · Pi 5 16GB · 10.0.0.11', x:840, y:260, w:720, h:840 },
+    { id:'pi2w_monitor',  label:'pi2w_monitor',  role:'External Watchdog · Pi Zero 2W · 10.0.0.121', x:40, y:40, w:300, h:200 },
+    { id:'pi2w_sentinel', label:'pi2w_sentinel', role:'Display Node · Pi Zero 2W · 10.0.0.87',      x:1260, y:40, w:300, h:200 },
+  ],
+
+  clusters: [
+    { id:'cl_market',   label:'MARKET DATA',  x:360, y:50, w:360, h:50 },
+    { id:'cl_comms',    label:'COMMS',        x:730, y:50, w:160, h:50 },
+    { id:'cl_infra',    label:'INFRA',        x:900, y:50, w:200, h:50 },
+    { id:'cl_triggers', label:'CRON TRIGGERS',x:360, y:130, w:360, h:50 },
+    { id:'cl_actors',   label:'ACTORS',       x:730, y:130, w:370, h:50 },
+  ],
+
+  externals: [
+    // Market data
+    { id:'alpaca',    label:'Alpaca',     cluster:'cl_market', desc:'Broker — orders, positions, trailing stops, live prices', x:370, y:70, w:80, h:28 },
+    { id:'fmp',       label:'FMP',        cluster:'cl_market', desc:'Financial Modeling Prep — fundamentals. /etf-holdings paywalled (FREE TIER gap)', x:460, y:70, w:60, h:28, gap:'FMP /etf-holdings paywalled — sector screener uses hand-curated top-10 as a workaround.' },
+    { id:'polygon',   label:'Polygon',    cluster:'cl_market', desc:'Market data — historical bars, volume', x:530, y:70, w:70, h:28 },
+    { id:'news_apis', label:'News APIs',  cluster:'cl_market', desc:'Upstream news feeds', x:610, y:70, w:80, h:28 },
+    // Comms
+    { id:'resend',    label:'Resend',     cluster:'cl_comms', desc:'Transactional email — approvals, notifications, scoop', x:740, y:70, w:70, h:28 },
+    { id:'twilio',    label:'Twilio',     cluster:'cl_comms', desc:'SMS provider — approval notifications to customer phone', x:815, y:70, w:70, h:28 },
+    // Infra
+    { id:'r2',        label:'Cloudflare R2', cluster:'cl_infra', desc:'Object storage — encrypted backups, 30d retention', x:910, y:70, w:110, h:28 },
+    { id:'github',    label:'GitHub',     cluster:'cl_infra', desc:'Source of truth — Pis pull from main', x:1025, y:70, w:70, h:28 },
+    // Triggers
+    { id:'cron_daemon',label:'Daemon 9:10', cluster:'cl_triggers', desc:'cron fires 9:10 ET Mon-Fri → starts retail_market_daemon', x:370, y:150, w:90, h:28 },
+    { id:'cron_sched', label:'Scheduler',   cluster:'cl_triggers', desc:'cron fires overnight news sessions + hourly refreshes', x:465, y:150, w:80, h:28 },
+    { id:'cron_nightly',label:'Nightly 1:30/2/3', cluster:'cl_triggers', desc:'cron 1:30am retail_backup, 2am strongbox, 3am rebuild_template', x:550, y:150, w:170, h:28 },
+    // Actors
+    { id:'admin',     label:'Admin',    cluster:'cl_actors', desc:'Project lead — clicks in pi4b command portal', x:740, y:150, w:70, h:28 },
+    { id:'user',      label:'Customer', cluster:'cl_actors', desc:'End user — clicks in pi5 retail portal', x:815, y:150, w:80, h:28 },
+    { id:'user_phone',label:'Customer Phone', cluster:'cl_actors', desc:'Twilio delivers SMS here', x:900, y:150, w:110, h:28 },
+    { id:'user_email',label:'Customer Email', cluster:'cl_actors', desc:'Resend delivers email here', x:1015, y:150, w:80, h:28 },
+  ],
+
+  dbs: [
+    // pi4b
+    { id:'company', node:'pi4b', label:'company.db', desc:'Events queue (alerts from all agents), email queue, heartbeats roster, vault, fidget, config', x:80, y:340, w:110 },
+    { id:'auditor', node:'pi4b', label:'auditor.db', desc:'Detected issues, scan_state byte offsets, morning reports', x:210, y:340, w:100 },
+    { id:'login',   node:'pi4b', label:'login.db',   desc:'Company portal session auth (separate from retail auth)', x:330, y:340, w:80 },
+    { id:'support', node:'pi4b', label:'support.db', desc:'Support tickets + admin messages (separated from company.db to avoid lock contention)', x:430, y:340, w:100 },
+    { id:'monitor', node:'pi4b', label:'monitor.db', desc:'Node heartbeats, system metrics roster', x:550, y:340, w:100 },
+    // pi5
+    { id:'auth',    node:'pi5', label:'auth.db', desc:'Customer accounts, hashed pw, encrypted Alpaca creds, phone numbers, notif prefs', x:880, y:340, w:100 },
+    { id:'signals', node:'pi5', label:'signals.db (master)', desc:'Shared: signals, events, api_calls, system_halt (admin halt singleton)', x:1000, y:340, w:170, patch:true },
+    { id:'cust_dbs',node:'pi5', label:'customers/*/signals.db', desc:'Per-customer: positions (+managed_by), trades, portfolio, decisions, position_preferences (sticky), system_halt (customer halt)', x:1190, y:340, w:200, patch:true },
+    { id:'live_prices', node:'pi5', label:'live_prices', desc:'Shared table in master signals.db, refreshed 60s by price_poller', x:1410, y:340, w:140 },
+  ],
+
+  agents: [
+    // pi4b agents
+    { id:'synthos_monitor',  node:'pi4b', label:'synthos_monitor',  desc:'Admin portal (Flask). /dashboard, /system-architecture, /api/command/kill-switch, /support admin. Systemd.', x:80,  y:470, w:160, h:40 },
+    { id:'company_server',   node:'pi4b', label:'company_server',   desc:'Event queue API, /api/enqueue, /receive_backup endpoint. Systemd.', x:260, y:470, w:150, h:40 },
+    { id:'company_auditor',  node:'pi4b', label:'company_auditor',  desc:'SSH log scanner: pi5 + pi2w. Writes detected_issues → auditor.db. Daemon.', x:430, y:470, w:160, h:40 },
+    { id:'company_archivist',node:'pi4b', label:'company_archivist',desc:'DB row archival to compressed JSON. Daemon.', x:610, y:470, w:140, h:40 },
+    { id:'company_scoop',    node:'pi4b', label:'company_scoop',    desc:'Email queue drain → Resend. Daemon.', x:80,  y:530, w:160, h:40 },
+    { id:'company_sentinel', node:'pi4b', label:'company_sentinel', desc:'Heartbeat receiver + silence alerts. Cron 15m.', x:260, y:530, w:150, h:40 },
+    { id:'company_vault',    node:'pi4b', label:'company_vault',    desc:'License keys, compliance, secrets. Cron 1h.', x:430, y:530, w:160, h:40 },
+    { id:'company_fidget',   node:'pi4b', label:'company_fidget',   desc:'Keep-alive + usage anomaly detection. Cron 8am.', x:610, y:530, w:140, h:40 },
+    { id:'company_librarian',node:'pi4b', label:'company_librarian',desc:'SSH package audit + CVE scan. Cron Sun.', x:80,  y:590, w:160, h:40 },
+    { id:'company_strongbox',node:'pi4b', label:'company_strongbox',desc:'Fernet-encrypt + Cloudflare R2 upload. Cron 2am.', x:260, y:590, w:150, h:40 },
+    { id:'pi4b_heartbeat',   node:'pi4b', label:'node_heartbeat',   desc:'pi4b self metrics → monitor.db. Cron 5m.', x:430, y:590, w:160, h:40 },
+
+    // pi5 agents
+    { id:'retail_portal',    node:'pi5', label:'retail_portal',        desc:'Customer dashboard + API. AUTO/USER, halt endpoints, approval queue, support submit. Watchdog.', x:880, y:470, w:170, h:40, patch:true },
+    { id:'market_daemon',    node:'pi5', label:'retail_market_daemon', desc:'9:10-16:00 ET orchestrator. Runs screener→news→sentiment→trader. Kicks approval notifications at open/midday/close.', x:1070, y:470, w:170, h:40 },
+    { id:'scheduler',        node:'pi5', label:'retail_scheduler',     desc:'Off-hours orchestrator (overnight news sessions). Cron.', x:1260, y:470, w:150, h:40 },
+    { id:'interrogation',    node:'pi5', label:'interrogation_listener', desc:'UDP cross-validation, port 5556. Boot seq.', x:1430, y:470, w:130, h:40 },
+    { id:'trade_logic',      node:'pi5', label:'retail_trade_logic',   desc:'14-gate trader. Phase 2 patch: halt check + managed_by filter + sticky USER skip. Daemon.', x:880, y:530, w:170, h:40, patch:true },
+    { id:'news',             node:'pi5', label:'retail_news',          desc:'22-gate news classifier. Daemon. Sends interrogation UDP requests.', x:1070, y:530, w:150, h:40 },
+    { id:'sentiment',        node:'pi5', label:'retail_market_sentiment',desc:'27-gate deterioration detection. ~22s runtime (was 286s). Daemon.', x:1240, y:530, w:180, h:40 },
+    { id:'screener',         node:'pi5', label:'retail_sector_screener',desc:'Sector momentum → Gate 5 boost. Hand-curated top-10 (FMP paywalled). Daemon.', x:1430, y:530, w:130, h:40, gap:'Sector holdings hand-curated, quarterly review. Swap to FMP /etf-holdings once on paid tier.' },
+    { id:'price_poller',     node:'pi5', label:'retail_price_poller',  desc:'Polls Alpaca /v2/positions, writes shared live_prices. 60s cycle.', x:880, y:590, w:170, h:40 },
+    { id:'retail_backup',    node:'pi5', label:'retail_backup',        desc:'Nightly tar.gz → POST pi4b staging. Plaintext LAN leg (gap). Cron 1:30am.', x:1070, y:590, w:150, h:40, gap:'Plaintext LAN transit to pi4b. Backup encrypt+split plan (DEFERRED 2026-04-18) addresses this.' },
+    { id:'retail_watchdog',  node:'pi5', label:'retail_watchdog',      desc:'Crash monitor, auto-restart x3 on portal/daemon fail. @reboot.', x:1230, y:590, w:150, h:40 },
+    { id:'retail_heartbeat', node:'pi5', label:'retail_heartbeat',     desc:'Per-agent status POST to pi4b. Called by each agent.', x:1390, y:590, w:170, h:40 },
+    { id:'rebuild_template', node:'pi5', label:'rebuild_template',     desc:'Nightly customer DB template rebuild. Cron 3am.', x:880, y:650, w:170, h:40 },
+    { id:'health_check',     node:'pi5', label:'retail_health_check',  desc:'Post-reboot DB + Alpaca verify. Boot only.', x:1070, y:650, w:160, h:40 },
+    { id:'pi5_heartbeat',    node:'pi5', label:'node_heartbeat',       desc:'pi5 self metrics → pi4b monitor. Cron 1m.', x:1250, y:650, w:140, h:40 },
+    { id:'rotate_logs',      node:'pi5', label:'rotate_logs',          desc:'Weekly rotation + 30-day archive cleanup. Cron Sun.', x:1400, y:650, w:160, h:40 },
+    { id:'boot_sequence',    node:'pi5', label:'retail_boot_sequence', desc:'Network wait + integrity check on startup. @reboot.', x:880, y:710, w:170, h:40 },
+
+    // pi2w_monitor
+    { id:'mon_heartbeat', node:'pi2w_monitor', label:'node_heartbeat', desc:'pi2w_monitor metrics → pi4b. Cron 1m.', x:60,  y:110, w:130, h:34 },
+    { id:'mon_watchdog',  node:'pi2w_monitor', label:'node_watchdog',  desc:'Pings pi4b+pi5+display, alerts on failure. Cron 1m.', x:195, y:110, w:130, h:34 },
+    // pi2w_sentinel
+    { id:'sentinel_wave', node:'pi2w_sentinel', label:'sentinel_wave', desc:'Live agent sine wave on 3.5" TFT. Systemd.', x:1275, y:110, w:130, h:34, gap:'Needs reboot for rotation=0 + wave renderer debugging.' },
+    { id:'sen_heartbeat', node:'pi2w_sentinel', label:'node_heartbeat',desc:'pi2w_sentinel metrics → pi4b. Cron 5m.', x:1410, y:110, w:130, h:34 },
+  ],
+
+  // ═══════════════════════════════════════════════════════════════
+  // SEQUENCES
+  // ═══════════════════════════════════════════════════════════════
+  sequences: {
+    daemon_run: [
+      { log:'9:10 ET — cron kicks retail_market_daemon on pi5', ext:['cron_daemon'], agents:['market_daemon'], edges:[['cron_daemon','market_daemon']] },
+      { log:'Daemon is the orchestrator for the full trading loop', agents:['market_daemon'] },
+      { log:'Phase 1: refresh live prices', agents:['market_daemon','price_poller'], edges:[['market_daemon','price_poller']] },
+      { log:'Price poller hits Alpaca /v2/positions per customer', agents:['price_poller'], ext:['alpaca'], edges:[['price_poller','alpaca']] },
+      { log:'Prices written to shared live_prices table', agents:['price_poller'], dbs:['live_prices'], edges:[['price_poller','live_prices']] },
+      { log:'Phase 2: sector screener (sector momentum)', agents:['market_daemon','screener'], edges:[['market_daemon','screener']] },
+      { log:'Screener writes sector_scores → signals.db', agents:['screener'], dbs:['signals'], edges:[['screener','signals']] },
+      { log:'Phase 3: news agent — 22-gate classification', agents:['market_daemon','news'], edges:[['market_daemon','news']] },
+      { log:'News pulls feeds, writes validated signals', agents:['news'], dbs:['signals'], ext:['news_apis'], edges:[['news','news_apis'],['news','signals']] },
+      { log:'Phase 4: sentiment — 27-gate deterioration', agents:['market_daemon','sentiment'], edges:[['market_daemon','sentiment']] },
+      { log:'Sentiment reads prices + writes sentiment_score', agents:['sentiment'], dbs:['live_prices','signals'], ext:['alpaca'], edges:[['sentiment','live_prices'],['sentiment','signals']] },
+      { log:'Phase 5: trade logic dispatch (parallelism=3)', agents:['market_daemon','trade_logic'], edges:[['market_daemon','trade_logic']] },
+      { log:'PATCH: trader first checks system_halt (skip if active)', agents:['trade_logic'], dbs:['signals'], edges:[['trade_logic','signals']], patchStep:true },
+      { log:'Trader pulls VALIDATED signals + live_prices', agents:['trade_logic'], dbs:['signals','live_prices'], edges:[['trade_logic','signals'],['trade_logic','live_prices']] },
+      { log:'Reads customer Alpaca creds from auth.db', agents:['trade_logic'], dbs:['auth'], edges:[['trade_logic','auth']] },
+      { log:'14 gates per signal, per customer', agents:['trade_logic'] },
+      { log:'PATCH Gate: skip if sticky USER preference', agents:['trade_logic'], dbs:['cust_dbs'], edges:[['trade_logic','cust_dbs']], patchStep:true },
+      { log:'BUY decisions → Alpaca (trailing stops server-side)', agents:['trade_logic'], ext:['alpaca'], edges:[['trade_logic','alpaca']] },
+      { log:'Positions + decisions → per-customer signals.db', agents:['trade_logic'], dbs:['cust_dbs'], edges:[['trade_logic','cust_dbs']] },
+      { log:'Reconciliation (10m): adopt orphan positions', agents:['trade_logic'], ext:['alpaca'], dbs:['cust_dbs'], edges:[['trade_logic','alpaca'],['trade_logic','cust_dbs']] },
+      { log:'PATCH: orphan adoption tags managed_by="user"', agents:['trade_logic'], dbs:['cust_dbs'], patchStep:true },
+      { log:'Daemon tick complete. Next tick in 60s.' },
+    ],
+
+    price_poll: [
+      { log:'60s tick — price_poller runs', agents:['price_poller'] },
+      { log:'Query OPEN positions + VALIDATED signals', agents:['price_poller'], dbs:['signals','cust_dbs'], edges:[['price_poller','signals'],['price_poller','cust_dbs']] },
+      { log:'GET /v2/positions from Alpaca per customer', agents:['price_poller'], ext:['alpaca'], edges:[['price_poller','alpaca']] },
+      { log:'UPSERT tickers → shared live_prices', agents:['price_poller'], dbs:['live_prices'], edges:[['price_poller','live_prices']] },
+      { log:'DELETE stale tickers no longer held', agents:['price_poller'], dbs:['live_prices'] },
+      { log:'Portal + sentiment read from live_prices', agents:['retail_portal','sentiment'], dbs:['live_prices'], edges:[['retail_portal','live_prices'],['sentiment','live_prices']] },
+    ],
+
+    overnight_news: [
+      { log:'Scheduler cron fires overnight session', ext:['cron_sched'], agents:['scheduler'], edges:[['cron_sched','scheduler']] },
+      { log:'Scheduler invokes retail_news_agent (shared)', agents:['scheduler','news'], edges:[['scheduler','news']] },
+      { log:'News agent pulls breaking feeds', agents:['news'], ext:['news_apis'], edges:[['news','news_apis']] },
+      { log:'22-gate classification', agents:['news'] },
+      { log:'Validated signals → master signals.db', agents:['news'], dbs:['signals'], edges:[['news','signals']] },
+      { log:'Signals expire by tier (30d/7d/2d/1d)', dbs:['signals'] },
+      { log:'Morning daemon picks them up via trade_logic Gate 5', agents:['market_daemon','trade_logic'], dbs:['signals'], edges:[['market_daemon','trade_logic']] },
+    ],
+
+    event_enqueue: [
+      { log:'pi5 agent hits an alert-worthy event', agents:['trade_logic'] },
+      { log:'Agent calls scoop_queue_event() in retail lib', agents:['trade_logic'] },
+      { log:'POST to pi4b /api/enqueue (X-Token auth)', agents:['trade_logic','company_server'], edges:[['trade_logic','company_server']] },
+      { log:'company_server writes row to company.db events', agents:['company_server'], dbs:['company'], edges:[['company_server','company']] },
+      { log:'Scoop polling cycle picks up pending events', agents:['company_scoop'], dbs:['company'], edges:[['company_scoop','company']] },
+      { log:'Events tagged by agent: trader, auditor, sentinel, vault, fidget', agents:['company_auditor','company_sentinel','company_vault','company_fidget','company_scoop'] },
+      { log:'Scoop dispatches matching email(s) via Resend', agents:['company_scoop'], ext:['resend'], edges:[['company_scoop','resend']] },
+      { log:'Email hits admin/user inbox', ext:['resend','user_email'], edges:[['resend','user_email']] },
+    ],
+
+    scoop: [
+      { log:'company_scoop polls company.db email queue', agents:['company_scoop'], dbs:['company'], edges:[['company_scoop','company']] },
+      { log:'Queued events from: auditor, sentinel, vault, fidget', agents:['company_scoop','company_auditor','company_sentinel','company_vault','company_fidget'] },
+      { log:'Morning reports + silence alerts + anomaly alerts', agents:['company_scoop'] },
+      { log:'Dispatch via Resend API', agents:['company_scoop'], ext:['resend'], edges:[['company_scoop','resend']] },
+      { log:'Emails delivered to admin inbox', ext:['resend','user_email'], edges:[['resend','user_email']] },
+      { log:'Mark sent + rotate queue', agents:['company_scoop'], dbs:['company'] },
+    ],
+
+    approval_notify: [
+      { log:'9:30 ET — daemon tick runs check_approval_notifications()', agents:['market_daemon'] },
+      { log:'Read pending_approvals per customer from cust_dbs', agents:['market_daemon','trade_logic'], dbs:['cust_dbs'], edges:[['market_daemon','cust_dbs']] },
+      { log:'Read notif_pref + phone from auth.db', agents:['market_daemon'], dbs:['auth'], edges:[['market_daemon','auth']] },
+      { log:'Avoid duplicate notifs: check _APPROVAL_NOTIF_<date> flag', agents:['market_daemon'], dbs:['cust_dbs'] },
+      { log:'Branch A: phone set + pref≠email → Twilio SMS', agents:['market_daemon'], ext:['twilio'], edges:[['market_daemon','twilio']] },
+      { log:'Twilio delivers SMS to customer phone', ext:['twilio','user_phone'], edges:[['twilio','user_phone']] },
+      { log:'Branch B: email fallback → Resend', agents:['market_daemon'], ext:['resend'], edges:[['market_daemon','resend']] },
+      { log:'Resend delivers email to customer', ext:['resend','user_email'], edges:[['resend','user_email']] },
+      { log:'Flag set so same-day midday/close don\'t re-notify', agents:['market_daemon'], dbs:['cust_dbs'] },
+      { log:'Repeats at 12:00 midday and 15:30 close', agents:['market_daemon'] },
+    ],
+
+    account_approval: [
+      { log:'Customer signs up via portal', ext:['user'], agents:['retail_portal'], edges:[['user','retail_portal']] },
+      { log:'Account created (verified=0, approved=0) in auth.db', agents:['retail_portal'], dbs:['auth'], edges:[['retail_portal','auth']] },
+      { log:'Customer clicks verification link in email', ext:['user_email','user'] },
+      { log:'Admin reviews pending signups in command portal', ext:['admin'], agents:['synthos_monitor'], edges:[['admin','synthos_monitor']] },
+      { log:'Admin clicks Approve → POST to retail portal', agents:['synthos_monitor','retail_portal'], edges:[['synthos_monitor','retail_portal']] },
+      { log:'Portal flips approved=1 in auth.db', agents:['retail_portal'], dbs:['auth'], edges:[['retail_portal','auth']] },
+      { log:'_send_approval_email() fires via Resend', agents:['retail_portal'], ext:['resend'], edges:[['retail_portal','resend']] },
+      { log:'Customer gets "you\'re in" email', ext:['resend','user_email'], edges:[['resend','user_email']] },
+    ],
+
+    support_ticket: [
+      { log:'Customer submits ticket in retail portal', ext:['user'], agents:['retail_portal'], edges:[['user','retail_portal']] },
+      { log:'Portal POSTs to pi4b synthos_monitor /api/support', agents:['retail_portal','synthos_monitor'], edges:[['retail_portal','synthos_monitor']] },
+      { log:'Ticket inserted into support.db (separate DB, no lock contention)', agents:['synthos_monitor'], dbs:['support'], edges:[['synthos_monitor','support']] },
+      { log:'Admin opens /support in command portal', ext:['admin'], agents:['synthos_monitor'], edges:[['admin','synthos_monitor']] },
+      { log:'Admin reads + replies — message appended to support.db', agents:['synthos_monitor'], dbs:['support'] },
+      { log:'Notification email to customer via Resend', agents:['synthos_monitor'], ext:['resend'], edges:[['synthos_monitor','resend']] },
+      { log:'Customer sees reply on portal', ext:['user_email','user'] },
+    ],
+
+    interrogation: [
+      { log:'Trade logic has edge-case: needs news second opinion', agents:['trade_logic'] },
+      { log:'UDP packet sent to port 5556 on pi5 localhost', agents:['trade_logic','interrogation'], edges:[['trade_logic','interrogation']] },
+      { log:'Listener dispatches to news agent', agents:['interrogation','news'], edges:[['interrogation','news']] },
+      { log:'News runs single-signal validation on ticker', agents:['news'], dbs:['signals'], edges:[['news','signals']] },
+      { log:'Response UDP back to trade_logic', agents:['news','interrogation','trade_logic'], edges:[['news','interrogation'],['interrogation','trade_logic']] },
+      { log:'Trade logic uses the answer for final gate', agents:['trade_logic'] },
+    ],
+
+    heartbeat: [
+      { log:'pi2w_monitor node_heartbeat ticks (1m)', agents:['mon_heartbeat'] },
+      { log:'POST /heartbeat → pi4b synthos_monitor', agents:['mon_heartbeat','synthos_monitor'], edges:[['mon_heartbeat','synthos_monitor']] },
+      { log:'Stored in monitor.db', agents:['synthos_monitor'], dbs:['monitor'], edges:[['synthos_monitor','monitor']] },
+      { log:'pi5 node_heartbeat (1m)', agents:['pi5_heartbeat','synthos_monitor'], edges:[['pi5_heartbeat','synthos_monitor']] },
+      { log:'Retail agents call retail_heartbeat.log_heartbeat()', agents:['retail_heartbeat','trade_logic','sentiment','news'], edges:[['trade_logic','retail_heartbeat'],['sentiment','retail_heartbeat'],['news','retail_heartbeat']] },
+      { log:'Aggregated row → pi4b', agents:['retail_heartbeat','synthos_monitor'], edges:[['retail_heartbeat','synthos_monitor']] },
+      { log:'pi2w_sentinel node_heartbeat (5m)', agents:['sen_heartbeat','synthos_monitor'], edges:[['sen_heartbeat','synthos_monitor']] },
+      { log:'pi4b self-heartbeat (5m)', agents:['pi4b_heartbeat'], dbs:['monitor'], edges:[['pi4b_heartbeat','monitor']] },
+      { log:'company_sentinel cron (15m): scan for stale heartbeats', agents:['company_sentinel'], dbs:['monitor','company'], edges:[['company_sentinel','monitor']] },
+      { log:'Stale → enqueue silence alert → scoop', agents:['company_sentinel','company_scoop'], dbs:['company'], edges:[['company_sentinel','company_scoop']] },
+      { log:'pi2w_monitor node_watchdog pings pi4b+pi5+display', agents:['mon_watchdog'], edges:[['mon_watchdog','synthos_monitor']] },
+      { log:'Failed ping → alert queued into company.db', agents:['mon_watchdog','company_scoop'], dbs:['company'] },
+    ],
+
+    auditor: [
+      { log:'company_auditor daemon cycle starts', agents:['company_auditor'] },
+      { log:'SSH to pi5 — tail recent logs', agents:['company_auditor'], edges:[['company_auditor','retail_portal']] },
+      { log:'Track byte-offsets in scan_state', agents:['company_auditor'], dbs:['auditor'] },
+      { log:'Scan for ERROR/WARN patterns', agents:['company_auditor'] },
+      { log:'SSH to pi2w_monitor — check processes', agents:['company_auditor'], edges:[['company_auditor','mon_watchdog']] },
+      { log:'Detected issues UPSERTed → auditor.db', agents:['company_auditor'], dbs:['auditor'], edges:[['company_auditor','auditor']] },
+      { log:'Morning report written (08:00 ET)', agents:['company_auditor'], dbs:['auditor'] },
+      { log:'Portal /audit page renders issues', agents:['synthos_monitor'], dbs:['auditor'], edges:[['synthos_monitor','auditor']] },
+      { log:'Admin sees issues in browser', agents:['synthos_monitor'], ext:['admin'], edges:[['synthos_monitor','admin']] },
+    ],
+
+    librarian: [
+      { log:'Sunday cron fires company_librarian', ext:['cron_sched'], agents:['company_librarian'] },
+      { log:'SSH to pi5 — package inventory', agents:['company_librarian'], edges:[['company_librarian','retail_portal']] },
+      { log:'SSH to pi2w_monitor + pi2w_sentinel', agents:['company_librarian'], edges:[['company_librarian','mon_watchdog'],['company_librarian','sen_heartbeat']] },
+      { log:'Check pip-audit / apt CVE sources', agents:['company_librarian'] },
+      { log:'Vulnerabilities enqueued → company.db → scoop', agents:['company_librarian','company_scoop'], dbs:['company'], edges:[['company_librarian','company'],['company_scoop','company']] },
+    ],
+
+    backup: [
+      { log:'1:30 ET — pi5 cron kicks retail_backup', ext:['cron_nightly'], agents:['retail_backup'], edges:[['cron_nightly','retail_backup']] },
+      { log:'Archive auth.db + customers/ + user/signals.db + user/.env', agents:['retail_backup'], dbs:['auth','cust_dbs','signals'], edges:[['retail_backup','auth'],['retail_backup','cust_dbs'],['retail_backup','signals']] },
+      { log:'Build tar.gz in backups/staging/', agents:['retail_backup'] },
+      { log:'POST tar.gz → pi4b /receive_backup (PLAINTEXT LAN — known gap)', agents:['retail_backup','company_server'], edges:[['retail_backup','company_server']] },
+      { log:'company_server stages in ~/.backup_staging/<pi_id>/', agents:['company_server'] },
+      { log:'2:00 ET — strongbox wakes', ext:['cron_nightly'], agents:['company_strongbox'] },
+      { log:'Build company archive + Fernet-encrypt', agents:['company_strongbox'], dbs:['company'], edges:[['company_strongbox','company']] },
+      { log:'Fernet-encrypt staged retail archive', agents:['company_strongbox'] },
+      { log:'boto3 upload both .enc → Cloudflare R2', agents:['company_strongbox'], ext:['r2'], edges:[['company_strongbox','r2']] },
+      { log:'backup_status.json updated with checksums', agents:['company_strongbox'] },
+    ],
+
+    archivist: [
+      { log:'company_archivist daemon cycle', agents:['company_archivist'] },
+      { log:'Scan company.db for archival-eligible rows (>90d)', agents:['company_archivist'], dbs:['company'], edges:[['company_archivist','company']] },
+      { log:'Scan auditor.db resolved issues', agents:['company_archivist'], dbs:['auditor'], edges:[['company_archivist','auditor']] },
+      { log:'Compress + write JSON.gz to archive/ folder', agents:['company_archivist'] },
+      { log:'Delete archived rows from source DBs', agents:['company_archivist'], dbs:['company','auditor'] },
+    ],
+
+    rebuild_tmpl: [
+      { log:'3:00 ET — cron kicks rebuild_template', ext:['cron_nightly'], agents:['rebuild_template'], edges:[['cron_nightly','rebuild_template']] },
+      { log:'Rebuilds default customer DB schema template', agents:['rebuild_template'] },
+      { log:'Used when new customer signs up → apply template', agents:['rebuild_template','retail_portal'], dbs:['cust_dbs'], edges:[['rebuild_template','cust_dbs']] },
+    ],
+
+    logs_rotate: [
+      { log:'Sunday cron fires rotate_logs', ext:['cron_sched'], agents:['rotate_logs'], edges:[['cron_sched','rotate_logs']] },
+      { log:'Rotate active logs (portal, daemon, scheduler, backup, watchdog)', agents:['rotate_logs'] },
+      { log:'Compress rotated files → archive/', agents:['rotate_logs'] },
+      { log:'Delete archive files older than 30 days', agents:['rotate_logs'] },
+    ],
+
+    boot_sequence: [
+      { log:'pi5 reboots (manual or scheduled)', agents:['boot_sequence'] },
+      { log:'Wait for network (eth0 up)', agents:['boot_sequence'] },
+      { log:'Integrity check: DBs readable, schema version', agents:['boot_sequence'], dbs:['auth','signals','cust_dbs'], edges:[['boot_sequence','auth'],['boot_sequence','signals'],['boot_sequence','cust_dbs']] },
+      { log:'Hand off to retail_health_check', agents:['boot_sequence','health_check'], edges:[['boot_sequence','health_check']] },
+      { log:'health_check: Alpaca ping, portal port, daemon readiness', agents:['health_check'], ext:['alpaca'], edges:[['health_check','alpaca']] },
+      { log:'Start interrogation_listener (UDP 5556)', agents:['health_check','interrogation'], edges:[['health_check','interrogation']] },
+      { log:'watchdog + portal + daemon take over', agents:['retail_watchdog','retail_portal','market_daemon'], edges:[['retail_watchdog','retail_portal'],['retail_watchdog','market_daemon']] },
+    ],
+
+    halt_activate: [
+      { log:'Admin clicks Halt Agent on command portal', ext:['admin'] },
+      { log:'POST /api/command/kill-switch → pi4b synthos_monitor', agents:['synthos_monitor'], ext:['admin'], edges:[['admin','synthos_monitor']] },
+      { log:'Monitor forwards → pi5 /api/admin/halt-agent', agents:['synthos_monitor','retail_portal'], edges:[['synthos_monitor','retail_portal']], patchStep:true },
+      { log:'Portal writes system_halt singleton to master signals.db', agents:['retail_portal'], dbs:['signals'], edges:[['retail_portal','signals']], patchStep:true },
+      { log:'HALT_ACTIVATED event logged', agents:['retail_portal'], dbs:['signals'], patchStep:true },
+      { log:'Portal shows banner: "maintenance — activated by admin"', agents:['retail_portal'], ext:['user'], edges:[['retail_portal','user']], patchStep:true },
+      { log:'Daemon tick: trade_logic runs _check_halt_state() first', agents:['market_daemon','trade_logic'], dbs:['signals'], edges:[['market_daemon','trade_logic']], patchStep:true },
+      { log:'Halt detected → sys.exit(0). Trader skipped.', agents:['trade_logic'], patchStep:true },
+      { log:'Daemon continues: price poll + reconcile still run', agents:['market_daemon','price_poller'], edges:[['market_daemon','price_poller']] },
+      { log:'Alpaca trailing stops untouched — server-side', ext:['alpaca'] },
+      { log:'Approval queue clicks queued to run on resume', agents:['retail_portal'], dbs:['cust_dbs'], patchStep:true },
+    ],
+
+    customer_halt: [
+      { log:'Customer clicks Halt in their portal', ext:['user'] },
+      { log:'POST /api/halt-agent (session auth)', agents:['retail_portal'], ext:['user'], edges:[['user','retail_portal']], patchStep:true },
+      { log:'Writes system_halt to THIS customer\'s signals.db', agents:['retail_portal'], dbs:['cust_dbs'], edges:[['retail_portal','cust_dbs']], patchStep:true },
+      { log:'Banner: "you activated this halt"', agents:['retail_portal'], ext:['user'], patchStep:true },
+      { log:'Daemon tick: trader 4-layer halt check', agents:['trade_logic'], patchStep:true },
+      { log:'Layer 1: admin halt (master signals.db) — not set', dbs:['signals'], patchStep:true },
+      { log:'Layer 2: legacy kill-switch file — not set' },
+      { log:'Layer 3: customer halt (cust_dbs) — ACTIVE', agents:['trade_logic'], dbs:['cust_dbs'], edges:[['trade_logic','cust_dbs']], patchStep:true },
+      { log:'sys.exit(0) for THIS customer only', agents:['trade_logic'], patchStep:true },
+      { log:'Other customers\' traders continue', agents:['market_daemon'] },
+    ],
+
+    auto_user: [
+      { log:'Customer buys TSLA directly on Alpaca (bypasses bot)', ext:['user','alpaca'], edges:[['user','alpaca']] },
+      { log:'Next reconciliation (10min): trader scans Alpaca positions', agents:['market_daemon','trade_logic'], ext:['alpaca'], edges:[['trade_logic','alpaca']] },
+      { log:'Orphan detected (not in cust_dbs)', agents:['trade_logic'] },
+      { log:'PATCH: adopted with managed_by="user"', agents:['trade_logic'], dbs:['cust_dbs'], edges:[['trade_logic','cust_dbs']], patchStep:true },
+      { log:'Exit loop skips managed_by="user" rows', agents:['trade_logic'], dbs:['cust_dbs'], patchStep:true },
+      { log:'P&L still computed — visible on dashboard', agents:['retail_portal'], dbs:['cust_dbs'], edges:[['retail_portal','cust_dbs']], patchStep:true },
+      { log:'Portal counter shows X/12 auto · Y user', agents:['retail_portal'], ext:['user'], edges:[['retail_portal','user']], patchStep:true },
+      { log:'Cap-aware warning if ≥12 auto', agents:['retail_portal'], ext:['user'], patchStep:true },
+    ],
+
+    market_cascade: [
+      { log:'<b style="color:var(--amber);letter-spacing:0.1em;text-transform:uppercase">What this teaches ▸</b> Alpaca trailing stops are server-side, so they keep tracking even when the Validator flips to NO_GO and blocks your BUYs. news / sentiment / price_poll all stay alive — only the BUY decision is gated.', duration:5200 },
+      { log:'09:30 ET — SPY opens -2.5% on overnight futures', ext:['alpaca'] },
+      { log:'price_poller refreshes live_prices — red across the board', agents:['price_poller','market_daemon'], dbs:['live_prices'], externals:['alpaca'], edges:[['price_poller','alpaca'],['price_poller','live_prices']] },
+      { log:'Sentiment reads live_prices. Gates 5 (breadth) + 7 (volatility) + 10 (credit) all regime-shift', agents:['sentiment'], dbs:['live_prices','signals'], edges:[['sentiment','live_prices']] },
+      { log:'Sentiment writes sentiment_score=-0.82, regime=risk_off', agents:['sentiment'], dbs:['signals'], edges:[['sentiment','signals']] },
+      { log:'10:15 ET — SPY hits -7%. NYSE Level 1 circuit breaker fires. 15-min trading halt.', ext:['alpaca'] },
+      { log:'Validator stack macro agent: risk_off sustained 3 cycles', agents:['sentiment'] },
+      { log:'Validator G5 → NO_GO. All new entry signals blocked fleet-wide.', agents:['sentiment'] },
+      { log:'Next daemon tick: trader short-circuits. validator=NO_GO, zero BUYs.', agents:['trade_logic','market_daemon'], dbs:['signals','cust_dbs'], edges:[['market_daemon','trade_logic']] },
+      { log:'═══ INSIGHT: Alpaca trailing stops are SERVER-SIDE. They keep tracking.', ext:['alpaca'] },
+      { log:'Even during halt, some positions exit at their trailing-stop levels when market reopens', externals:['alpaca'], dbs:['cust_dbs'] },
+      { log:'Reconciliation cycle detects the auto-exits as orphan deltas', agents:['trade_logic'], externals:['alpaca'], dbs:['cust_dbs'], edges:[['trade_logic','alpaca']] },
+      { log:'Positions closed, trades logged. Portfolio row updated.', agents:['trade_logic'], dbs:['cust_dbs'], edges:[['trade_logic','cust_dbs']] },
+      { log:'═══ INSIGHT: news + sentiment + price_poll kept running. Only the BUY decision was gated.', agents:['news','sentiment','price_poller','market_daemon'] },
+      { log:'Validator drops out of NO_GO after regime stabilizes for 2 cycles. Trading resumes.', agents:['market_daemon','trade_logic'] },
+    ],
+
+    alpaca_outage: [
+      { log:'<b style="color:var(--amber);letter-spacing:0.1em;text-transform:uppercase">What this teaches ▸</b> Graceful degradation is uneven. When Alpaca dies: price_poller breaks, Fault Detection flags it, Validator blocks the trader. But news_agent runs unaffected (different upstream) and sentiment keeps running on stale prices. Degradation has shape.', duration:5200 },
+      { log:'14:05 ET — Alpaca /v2/account starts returning HTTP 503', ext:['alpaca'] },
+      { log:'price_poller fails. Writes error row into api_calls table', agents:['price_poller'], dbs:['signals'], edges:[['price_poller','alpaca']] },
+      { log:'live_prices table stops refreshing — timestamp ages past 60s', dbs:['live_prices'] },
+      { log:'Fault Detection Gate 2 (Alpaca API health) flags fault=1', agents:['sentiment'], dbs:['signals'] },
+      { log:'Validator stack aggregates: G1 sees fault=1 → verdict=NO_GO', agents:['sentiment'] },
+      { log:'Trader dispatch: reads validator=NO_GO, logs DEGRADED event, sys.exit(0)', agents:['trade_logic','market_daemon'], dbs:['signals','cust_dbs'], edges:[['market_daemon','trade_logic']] },
+      { log:'═══ INSIGHT: news_agent unaffected — keeps classifying articles', agents:['news'], ext:['news_apis'], dbs:['signals'], edges:[['news','news_apis'],['news','signals']] },
+      { log:'═══ INSIGHT: sentiment also runs, but uses last-known live_prices (stale)', agents:['sentiment'], dbs:['live_prices','signals'], edges:[['sentiment','live_prices']] },
+      { log:'Portal detects live_prices > 90s stale — shows "prices stale" banner to customers', agents:['retail_portal'], dbs:['live_prices'], externals:['user'], edges:[['retail_portal','user']] },
+      { log:'Alert queued in company.db. Scoop drains → Resend → admin email', agents:['company_scoop'], dbs:['company'], externals:['resend'], edges:[['company_scoop','resend']] },
+      { log:'14:18 ET — Alpaca recovers. 200 responses resume.', ext:['alpaca'] },
+      { log:'price_poller succeeds on next tick. live_prices refreshes.', agents:['price_poller'], dbs:['live_prices'], externals:['alpaca'], edges:[['price_poller','alpaca'],['price_poller','live_prices']] },
+      { log:'Fault Detection clears. Validator → GO. Trader resumes on next dispatch.', agents:['trade_logic','market_daemon'] },
+      { log:'═══ GAP TO CONSIDER: backlog of VALIDATED signals from during outage — freshness window?', agents:['trade_logic'], dbs:['signals'] },
+    ],
+
+    news_flood: [
+      { log:'<b style="color:var(--amber);letter-spacing:0.1em;text-transform:uppercase">What this teaches ▸</b> The trader is the bottleneck, not the pipeline. news + sentiment process everything. Trader picks top-N by composite score, not arrival order — so lower-scored TIER_1 signals can expire before ever being evaluated. Budget vs fairness tension.', duration:5200 },
+      { log:'09:30 ET — earnings season. 200 articles in 5 minutes.', ext:['news_apis'] },
+      { log:'news_agent pulls feeds, 22-gate classification per article', agents:['news'], ext:['news_apis'], dbs:['signals'], edges:[['news','news_apis']] },
+      { log:'G3 (source) + G6 (event) filter ~60% as non-actionable PR', agents:['news'] },
+      { log:'~80 signals survive to G22, written as VALIDATED to signals.db', agents:['news'], dbs:['signals'], edges:[['news','signals']] },
+      { log:'Signals queue. Tiers: TIER_1 (30d), TIER_2 (7d), TIER_3 (2d), TIER_4 (1d)', dbs:['signals'] },
+      { log:'Daemon tick begins: price_poll refreshes live_prices', agents:['market_daemon','price_poller'], dbs:['live_prices'], externals:['alpaca'], edges:[['price_poller','alpaca']] },
+      { log:'Screener output already pre-computed from 06:45. No re-run.', externals:['cron_sched'] },
+      { log:'Sentiment runs once per cycle (~22s) regardless of signal count', agents:['sentiment'], dbs:['live_prices','signals'] },
+      { log:'═══ INSIGHT: Trader is the bottleneck. Processes signals in score order, not arrival.', agents:['market_daemon','trade_logic'], dbs:['signals'] },
+      { log:'Trader picks top-N by composite score. Lower-score signals may never be evaluated before they expire.', agents:['trade_logic'], dbs:['signals'] },
+      { log:'For each chosen signal, dispatches 3 customers in parallel through 14 gates', agents:['trade_logic'], dbs:['cust_dbs','signals'], edges:[['trade_logic','cust_dbs']] },
+      { log:'Signals older than tier window auto-expire even if untouched', dbs:['signals'] },
+      { log:'═══ GAP TO CONSIDER: what if ALL 80 are TIER_1? signal_decisions fills with SKIPPED_UNEVALUATED. Budget vs fairness?', agents:['trade_logic'], dbs:['signals','cust_dbs'] },
+    ],
+
+    sizing_cascade: [
+      { log:'<b style="color:var(--amber);letter-spacing:0.1em;text-transform:uppercase">What this teaches ▸</b> The 12-cap isn\'t the only cap — cash is. Manual positions eat the bot\'s budget. Model B proposes a size; Model C blocks it with INSUFFICIENT_CASH_AFTER_MANUAL. Cap counter says 9/12 · 3 user — looks healthy — but cash has been starving for 4 signals.', duration:5200 },
+      { log:'10:15 ET — customer opens Alpaca directly, buys 3 manual positions ($8k)', ext:['user','alpaca'] },
+      { log:'Reconciliation cycle detects orphans — tags managed_by="user"', agents:['trade_logic'], dbs:['cust_dbs'], externals:['alpaca'], edges:[['trade_logic','alpaca'],['trade_logic','cust_dbs']], patchStep:true },
+      { log:'Portal counter now shows 9/12 auto · 3 user', agents:['retail_portal'], dbs:['cust_dbs'], externals:['user'], edges:[['retail_portal','user']], patchStep:true },
+      { log:'11:00 ET — news agent produces a TIER_1 NVDA buy signal', agents:['news'], dbs:['signals'], ext:['news_apis'], edges:[['news','signals']] },
+      { log:'Trader dispatch for this customer. Passes G0-G6 (account, halt, dedup, fresh, eligible, score, entry)', agents:['trade_logic'], dbs:['cust_dbs'] },
+      { log:'G7 Sizing: Model B says ideal position size = $3,500', agents:['trade_logic'], dbs:['cust_dbs'], patchStep:true },
+      { log:'Model C cash floor check: cash_available = $2,100, floor = $2,500', agents:['trade_logic'], patchStep:true },
+      { log:'═══ INSIGHT: Model B wants to buy, Model C blocks. Returns sentinel 0.', agents:['trade_logic'], patchStep:true },
+      { log:'log_signal_decision: NVDA · reason=INSUFFICIENT_CASH_AFTER_MANUAL', agents:['trade_logic'], dbs:['cust_dbs'], patchStep:true },
+      { log:'Same thing happens for next 4 signals today — cash-starved', agents:['trade_logic'], dbs:['signals','cust_dbs'] },
+      { log:'═══ INSIGHT: the 12-cap isn\'t the only cap. Cash is. Manual positions eat bot budget.', agents:['retail_portal'], dbs:['cust_dbs'] },
+      { log:'Portal shows user warning banner: "bot underutilized — 9/12 auto, but cash low"', agents:['retail_portal'], externals:['user'], edges:[['retail_portal','user']], patchStep:true },
+      { log:'Customer can resolve: sell a manual, or toggle a manual to bot-managed (returns cash to pool)', ext:['user'] },
+      { log:'═══ GAP TO CONSIDER: notification when this happens? Currently only the banner surfaces it.', agents:['retail_portal'], dbs:['cust_dbs'] },
+    ],
+
+    sticky_pref: [
+      { log:'Customer clicks lock icon next to TSLA', ext:['user'] },
+      { log:'POST /api/ticker-preferences/TSLA (sticky=true)', agents:['retail_portal'], ext:['user'], edges:[['user','retail_portal']], patchStep:true },
+      { log:'Written to position_preferences in cust_dbs', agents:['retail_portal'], dbs:['cust_dbs'], edges:[['retail_portal','cust_dbs']], patchStep:true },
+      { log:'Next daemon tick: news generates TSLA signal', agents:['news'], dbs:['signals'], edges:[['news','signals']] },
+      { log:'Signal validated, reaches trade_logic Gate 2', agents:['trade_logic'], dbs:['signals'] },
+      { log:'PATCH: Gate checks position_preferences', agents:['trade_logic'], dbs:['cust_dbs'], edges:[['trade_logic','cust_dbs']], patchStep:true },
+      { log:'Match — signal rejected STICKY_USER', agents:['trade_logic'], patchStep:true },
+      { log:'log_signal_decision with skip reason', agents:['trade_logic'], dbs:['cust_dbs'], patchStep:true },
+      { log:'Portal approvals page shows "blocked by sticky USER"', agents:['retail_portal'], ext:['user'], patchStep:true },
+    ],
+  },
+
+  // 24h timeline cron fire times
+  timeline: [
+    { time:'00:05', seq:'overnight_news', label:'Overnight news cycle (one of many)', kind:'scheduler' },
+    { time:'01:30', seq:'backup', label:'retail_backup (pi5) → POST to pi4b', kind:'backup' },
+    { time:'02:00', seq:'backup', label:'company_strongbox → Cloudflare R2', kind:'backup' },
+    { time:'03:00', seq:'rebuild_tmpl', label:'rebuild_template (customer DB schema)', kind:'housekeeping' },
+    { time:'03:15', seq:'logs_rotate', label:'rotate_logs (Sun only)', kind:'housekeeping' },
+    { time:'04:00', seq:'librarian', label:'company_librarian (Sun only)', kind:'monitoring' },
+    { time:'08:00', seq:'auditor', label:'Auditor morning report (daily)', kind:'monitoring' },
+    { time:'08:00', seq:'scoop', label:'company_fidget (keep-alive + usage anomalies)', kind:'monitoring' },
+    { time:'09:10', seq:'daemon_run', label:'retail_market_daemon START (Mon-Fri)', kind:'trading' },
+    { time:'09:30', seq:'approval_notify', label:'Trade approval notification (open)', kind:'messaging', patch:true },
+    { time:'12:00', seq:'approval_notify', label:'Trade approval notification (midday)', kind:'messaging', patch:true },
+    { time:'15:30', seq:'approval_notify', label:'Trade approval notification (close)', kind:'messaging', patch:true },
+    { time:'16:00', seq:'daemon_run', label:'retail_market_daemon STOP', kind:'trading' },
+    { time:'every 1m', seq:'heartbeat', label:'node_heartbeat (pi5, pi2w_monitor)', kind:'monitoring' },
+    { time:'every 5m', seq:'heartbeat', label:'node_heartbeat (pi4b, pi2w_sentinel)', kind:'monitoring' },
+    { time:'every 15m', seq:'heartbeat', label:'company_sentinel scan (stale heartbeats)', kind:'monitoring' },
+    { time:'every 60s', seq:'price_poll', label:'price_poller (during 8a-6p ET)', kind:'trading' },
+    { time:'every 10m', seq:'daemon_run', label:'Reconciliation cycle (during daemon run)', kind:'trading' },
+  ],
+};
+
+// ═══════════════════════════════════════════════════════════════
+// RENDER
+// ═══════════════════════════════════════════════════════════════
+const SVGNS = 'http://www.w3.org/2000/svg';
+const svg = document.getElementById('svg');
+const nodesLayer = document.getElementById('nodes-layer');
+const clustersLayer = document.getElementById('clusters-layer');
+const contentLayer = document.getElementById('content-layer');
+const edgesLayer = document.getElementById('edges-layer');
+const dotsLayer = document.getElementById('dots-layer');
+
+function el(name, attrs={}) {
+  const e = document.createElementNS(SVGNS, name);
+  for (const [k,v] of Object.entries(attrs)) e.setAttribute(k, v);
+  return e;
+}
+
+// Cluster regions
+M.clusters.forEach(c => {
+  const g = el('g');
+  g.appendChild(el('rect', { x:c.x, y:c.y, width:c.w, height:c.h, class:'cluster-region' }));
+  const lbl = el('text', { x:c.x + 8, y:c.y + 12, class:'cluster-label' });
+  lbl.textContent = c.label;
+  g.appendChild(lbl);
+  clustersLayer.appendChild(g);
+});
+
+// Node regions — per-node accent colors
+const NODE_ACCENT = {
+  pi4b: '#00f5d4',
+  pi5: '#7b61ff',
+  pi2w_monitor: '#ffb347',
+  pi2w_sentinel: '#ff4b6e',
+};
+M.nodes.forEach(n => {
+  const g = el('g', { id: `node-region-${n.id}` });
+  g.appendChild(el('rect', { x:n.x, y:n.y, width:n.w, height:n.h, rx:12, class:`node-region ${n.id}` }));
+  // accent bar at the top of each node region
+  g.appendChild(el('rect', { x:n.x+20, y:n.y-1, width:n.w-40, height:2, fill:NODE_ACCENT[n.id]||'#00f5d4', opacity:0.55, rx:1 }));
+  const lbl = el('text', { x:n.x+16, y:n.y+26, class:'node-label', fill:NODE_ACCENT[n.id]||'#ffffff', style:`text-shadow:0 0 12px ${NODE_ACCENT[n.id]}66` });
+  lbl.textContent = n.label.toUpperCase();
+  g.appendChild(lbl);
+  const role = el('text', { x:n.x+16, y:n.y+42, class:'node-role' });
+  role.textContent = n.role;
+  g.appendChild(role);
+  nodesLayer.appendChild(g);
+});
+
+// Externals
+M.externals.forEach(x => {
+  const g = el('g', { class:'ext', id:`ext-${x.id}`, 'data-id':x.id, 'data-kind':'ext' });
+  g.appendChild(el('rect', { x:x.x, y:x.y, width:x.w, height:x.h }));
+  const t = el('text', { x:x.x+x.w/2, y:x.y+x.h/2 });
+  t.textContent = x.label;
+  g.appendChild(t);
+  if (x.gap) {
+    const bg = el('text', { x:x.x + x.w - 8, y:x.y + 10, class:'gap-badge' });
+    bg.textContent = '⚠';
+    g.appendChild(bg);
+  }
+  contentLayer.appendChild(g);
+  g.addEventListener('click', () => showDetail('ext', x));
+  g.addEventListener('mouseenter', ev => showHover(ev, 'ext', x));
+  g.addEventListener('mouseleave', hideHover);
+  g.addEventListener('mousemove', moveHover);
+});
+
+// DBs (cylinders)
+M.dbs.forEach(d => {
+  const g = el('g', { class:`db${d.patch ? ' patch':''}`, id:`db-${d.id}`, 'data-id':d.id, 'data-kind':'db' });
+  const cx = d.x + d.w/2;
+  const w = d.w;
+  const h = 46;
+  const top = el('ellipse', { cx:cx, cy:d.y, rx:w/2, ry:7 });
+  const body = el('path', { class:'side',
+    d:`M${d.x},${d.y} L${d.x},${d.y+h} A${w/2},7 0 0 0 ${d.x+w},${d.y+h} L${d.x+w},${d.y} A${w/2},7 0 0 1 ${d.x},${d.y} Z`
+  });
+  g.appendChild(body);
+  g.appendChild(top);
+  const t = el('text', { x:cx, y:d.y+h/2+4 });
+  t.textContent = d.label;
+  g.appendChild(t);
+  contentLayer.appendChild(g);
+  g.addEventListener('click', () => showDetail('db', d));
+  g.addEventListener('mouseenter', ev => showHover(ev, 'db', d));
+  g.addEventListener('mouseleave', hideHover);
+  g.addEventListener('mousemove', moveHover);
+});
+
+// Agents
+M.agents.forEach(a => {
+  const g = el('g', { class:`agent${a.patch ? ' patch':''}`, id:`agent-${a.id}`, 'data-id':a.id, 'data-kind':'agent' });
+  g.appendChild(el('rect', { x:a.x, y:a.y, width:a.w, height:a.h }));
+  const t = el('text', { x:a.x+a.w/2, y:a.y+a.h/2 });
+  t.textContent = a.label;
+  g.appendChild(t);
+  if (a.gap) {
+    const bg = el('text', { x:a.x + a.w - 8, y:a.y + 11, class:'gap-badge' });
+    bg.textContent = '⚠';
+    g.appendChild(bg);
+  }
+  contentLayer.appendChild(g);
+  g.addEventListener('click', () => showDetail('agent', a));
+  g.addEventListener('mouseenter', ev => showHover(ev, 'agent', a));
+  g.addEventListener('mouseleave', hideHover);
+  g.addEventListener('mousemove', moveHover);
+});
+
+// ═══════════════════════════════════════════════════════════════
+// EDGE + DOT DRAWING
+// ═══════════════════════════════════════════════════════════════
+function getAnchor(id) {
+  const a = M.agents.find(x=>x.id===id);
+  if (a) return { x: a.x+a.w/2, y: a.y+a.h/2 };
+  const d = M.dbs.find(x=>x.id===id);
+  if (d) return { x: d.x+d.w/2, y: d.y+23 };
+  const ex = M.externals.find(x=>x.id===id);
+  if (ex) return { x: ex.x+ex.w/2, y: ex.y+ex.h/2 };
+  return null;
+}
+
+let dotIdCounter = 0;
+
+function drawEdges(pairs, patchStep=false) {
+  // clear old active edges and dots
+  [...edgesLayer.querySelectorAll('.edge.active')].forEach(e => e.remove());
+  [...dotsLayer.children].forEach(e => e.remove());
+  pairs.forEach(([a, b], idx) => {
+    const pa = getAnchor(a), pb = getAnchor(b);
+    if (!pa || !pb) return;
+    const dx = pb.x - pa.x, dy = pb.y - pa.y;
+    const dist = Math.hypot(dx, dy);
+    const mx = (pa.x + pb.x) / 2;
+    const my = (pa.y + pb.y) / 2;
+    const cx = mx - (dy / dist) * Math.min(dist*0.15, 40);
+    const cy = my + (dx / dist) * Math.min(dist*0.15, 40);
+    const pathD = `M${pa.x},${pa.y} Q${cx},${cy} ${pb.x},${pb.y}`;
+    const edgeId = `edge-path-${++dotIdCounter}`;
+    const markerEnd = patchStep ? 'url(#arrow-purple)' : 'url(#arrow-teal)';
+    const p = el('path', { id:edgeId, d:pathD, class:`edge active${patchStep?' patch':''}`, 'marker-end':markerEnd });
+    edgesLayer.appendChild(p);
+    // Animated dot moving along the edge
+    const dot = el('circle', { r:4, class:`edge-dot${patchStep?' patch':''}` });
+    const am = el('animateMotion', { dur:`${1.2 / state.speed}s`, begin:`${idx * 0.15}s`, repeatCount:'indefinite', rotate:'auto' });
+    const mp = el('mpath', {});
+    mp.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', `#${edgeId}`);
+    mp.setAttribute('href', `#${edgeId}`);
+    am.appendChild(mp);
+    dot.appendChild(am);
+    dotsLayer.appendChild(dot);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SEQUENCE PLAYER with pause/step/back
+// ═══════════════════════════════════════════════════════════════
+const state = {
+  speed: 1,
+  playing: false,
+  paused: false,
+  seqId: null,
+  steps: [],
+  stepIdx: 0,
+  timer: null,
+  seqStartMs: 0,
+  stepElapsedSec: 0,
+};
+
+const logEl = document.getElementById('log');
+const stepDisplay = document.getElementById('step-display');
+const progressFill = document.getElementById('progress-fill');
+const btnPause = document.getElementById('btn-pause');
+const btnFwd = document.getElementById('btn-fwd');
+const btnBack = document.getElementById('btn-back');
+
+function logMsg(text, isHeader=false) {
+  const elapsed = state.stepElapsedSec;
+  const ts = isHeader ? '  —' : `+${elapsed.toFixed(1)}s`;
+  const div = document.createElement('div');
+  div.className = 'entry';
+  div.innerHTML = `<span class="ts">${ts.padStart(6)}</span>${text}`;
+  logEl.appendChild(div);
+  while (logEl.children.length > 14) logEl.removeChild(logEl.firstChild);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function clearAllHighlights() {
+  document.querySelectorAll('.agent.glow, .db.pulse, .ext.pulse').forEach(e => {
+    e.classList.remove('glow');
+    e.classList.remove('pulse');
+  });
+  [...edgesLayer.querySelectorAll('.edge.active')].forEach(e => e.remove());
+  [...dotsLayer.children].forEach(e => e.remove());
+}
+
+function renderStep(s, announce=true) {
+  clearAllHighlights();
+  (s.agents || []).forEach(id => document.getElementById(`agent-${id}`)?.classList.add('glow'));
+  (s.dbs || []).forEach(id => document.getElementById(`db-${id}`)?.classList.add('pulse'));
+  (s.ext || []).forEach(id => document.getElementById(`ext-${id}`)?.classList.add('pulse'));
+  if (s.edges) drawEdges(s.edges, s.patchStep);
+  if (announce) {
+    const prefix = s.patchStep ? '<span style="color:#7b61ff;font-weight:700">[PATCH] </span>' : '';
+    logMsg(prefix + s.log);
+  }
+  updateStepDisplay();
+}
+
+function updateStepDisplay() {
+  if (state.steps.length === 0) {
+    stepDisplay.textContent = '—';
+    progressFill.style.width = '0';
+    return;
+  }
+  stepDisplay.textContent = `${state.stepIdx} / ${state.steps.length}`;
+  progressFill.style.width = `${(state.stepIdx / state.steps.length) * 100}%`;
+}
+
+function updateButtons() {
+  btnPause.disabled = !state.seqId;
+  btnFwd.disabled = !state.seqId || state.stepIdx >= state.steps.length;
+  btnBack.disabled = !state.seqId || state.stepIdx <= 1;
+  btnPause.textContent = state.paused ? '▶' : '❚❚';
+}
+
+function scheduleNext() {
+  if (state.paused || !state.playing) return;
+  const curStep = state.steps[state.stepIdx - 1];
+  const dur = (curStep?.duration || 1600) / state.speed;
+  state.timer = setTimeout(() => {
+    if (state.paused || !state.playing) return;
+    if (state.stepIdx >= state.steps.length) {
+      state.playing = false;
+      logMsg(`<b style="color:#00f5d4">■ Complete.</b>`, true);
+      updateButtons();
+      return;
+    }
+    advanceStep();
+  }, dur);
+}
+
+function advanceStep() {
+  if (state.stepIdx >= state.steps.length) return;
+  const s = state.steps[state.stepIdx];
+  state.stepIdx++;
+  state.stepElapsedSec = (performance.now() - state.seqStartMs) / 1000;
+  renderStep(s);
+  updateButtons();
+  scheduleNext();
+}
+
+function runSequence(seqId) {
+  // Reset fully
+  clearTimeout(state.timer);
+  clearAllHighlights();
+  logEl.innerHTML = '';
+  state.seqId = seqId;
+  state.steps = M.sequences[seqId] || [];
+  state.stepIdx = 0;
+  state.paused = false;
+  state.playing = true;
+  state.seqStartMs = performance.now();
+  state.stepElapsedSec = 0;
+  logMsg(`<b style="color:#00f5d4">▶ Starting: ${seqId.replace(/_/g,' ')}</b>`, true);
+  updateButtons();
+  // Immediately render step 0
+  if (state.steps.length > 0) advanceStep();
+}
+
+btnPause.addEventListener('click', () => {
+  state.paused = !state.paused;
+  if (!state.paused && state.playing) {
+    scheduleNext();
+  } else {
+    clearTimeout(state.timer);
+  }
+  updateButtons();
+});
+btnFwd.addEventListener('click', () => {
+  clearTimeout(state.timer);
+  advanceStep();
+});
+btnBack.addEventListener('click', () => {
+  if (state.stepIdx <= 1) return;
+  clearTimeout(state.timer);
+  state.stepIdx -= 2;
+  advanceStep();
+});
+
+// ═══════════════════════════════════════════════════════════════
+// DETAIL PANEL
+// ═══════════════════════════════════════════════════════════════
+const detailEl = document.getElementById('detail');
+function showDetail(kind, obj) {
+  const patchTag = obj.patch ? '<span class="tag new">PATCH</span>' : '';
+  const nodeTag = obj.node ? `<span class="tag">${obj.node}</span>` : '';
+  const gapTag = obj.gap ? '<span class="tag warn">⚠ KNOWN GAP</span>' : '';
+  let interactions = '';
+  if (kind === 'agent') {
+    const seqs = [];
+    for (const [sid, steps] of Object.entries(M.sequences)) {
+      if (steps.some(s => (s.agents||[]).includes(obj.id))) seqs.push(sid);
+    }
+    const reads = new Set(), exts = new Set();
+    for (const steps of Object.values(M.sequences)) {
+      for (const s of steps) {
+        if ((s.agents||[]).includes(obj.id)) {
+          (s.dbs||[]).forEach(d => reads.add(d));
+          (s.ext||[]).forEach(e => exts.add(e));
+        }
+      }
+    }
+    interactions = `
+      <div class="section"><div class="section-label">Databases touched</div>
+        <ul>${[...reads].map(r => `<li>${M.dbs.find(d=>d.id===r)?.label||r}</li>`).join('') || '<li><i>(none)</i></li>'}</ul></div>
+      <div class="section"><div class="section-label">External services</div>
+        <ul>${[...exts].map(e => `<li>${M.externals.find(x=>x.id===e)?.label||e}</li>`).join('') || '<li><i>(none)</i></li>'}</ul></div>
+      <div class="section"><div class="section-label">Appears in flows</div>
+        <ul>${seqs.map(s => `<li><a href="#" data-run="${s}">${s.replace(/_/g,' ')}</a></li>`).join('') || '<li><i>(none)</i></li>'}</ul></div>
+    `;
+  } else if (kind === 'db') {
+    const users = new Set();
+    for (const steps of Object.values(M.sequences)) {
+      for (const s of steps) {
+        if ((s.dbs||[]).includes(obj.id)) (s.agents||[]).forEach(a => users.add(a));
+      }
+    }
+    interactions = `
+      <div class="section"><div class="section-label">Accessed by</div>
+        <ul>${[...users].map(u => `<li>${M.agents.find(a=>a.id===u)?.label||u}</li>`).join('') || '<li><i>(none)</i></li>'}</ul></div>
+    `;
+  } else if (kind === 'ext') {
+    const users = new Set();
+    for (const steps of Object.values(M.sequences)) {
+      for (const s of steps) {
+        if ((s.ext||[]).includes(obj.id)) (s.agents||[]).forEach(a => users.add(a));
+      }
+    }
+    interactions = `
+      <div class="section"><div class="section-label">Contacted by</div>
+        <ul>${[...users].map(u => `<li>${M.agents.find(a=>a.id===u)?.label||u}</li>`).join('') || '<li><i>(none)</i></li>'}</ul></div>
+    `;
+  }
+  const gapSection = obj.gap ? `<div class="section"><div class="section-label">Known gap</div><div style="font-size:11.5px; line-height:1.5; color:#ffb347">${obj.gap}</div></div>` : '';
+  detailEl.innerHTML = `
+    <button class="collapse-btn" id="collapse-right" title="Collapse / expand">▸</button>
+    <h3>${obj.label}</h3>
+    <div class="sub">${kind.toUpperCase()} ${nodeTag} ${patchTag} ${gapTag}</div>
+    <div class="section"><div class="section-label">Description</div><div style="font-size:11.5px; line-height:1.5">${obj.desc||''}</div></div>
+    ${gapSection}
+    ${interactions}
+  `;
+  detailEl.querySelectorAll('a[data-run]').forEach(a => {
+    a.addEventListener('click', ev => { ev.preventDefault(); runSequence(a.dataset.run); });
+  });
+  // re-wire the collapse btn since we rewrote detailEl
+  document.getElementById('collapse-right').addEventListener('click', toggleRight);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// HOVER CARD
+// ═══════════════════════════════════════════════════════════════
+const hoverCard = document.getElementById('hover-card');
+function showHover(ev, kind, obj) {
+  const gap = obj.gap ? `<div style="color:#ffb347;margin-top:4px">⚠ ${obj.gap}</div>` : '';
+  const patch = obj.patch ? '<span class="tag new" style="font-size:9px;padding:1px 5px;background:#3a2450;color:#d9a8ff;border:1px solid #6a4a90;border-radius:3px;margin-left:4px">PATCH</span>' : '';
+  hoverCard.innerHTML = `
+    <div class="kind">${kind} ${obj.node ? '· ' + obj.node : ''} ${patch}</div>
+    <div class="title">${obj.label}</div>
+    <div>${obj.desc || ''}</div>
+    ${gap}
+  `;
+  hoverCard.style.display = 'block';
+  moveHover(ev);
+}
+function moveHover(ev) {
+  const r = document.getElementById('canvas-wrap').getBoundingClientRect();
+  let x = ev.clientX - r.left + 14;
+  let y = ev.clientY - r.top + 14;
+  const cw = hoverCard.offsetWidth, ch = hoverCard.offsetHeight;
+  if (x + cw > r.width) x = ev.clientX - r.left - cw - 14;
+  if (y + ch > r.height) y = ev.clientY - r.top - ch - 14;
+  hoverCard.style.left = x + 'px';
+  hoverCard.style.top = y + 'px';
+}
+function hideHover() { hoverCard.style.display = 'none'; }
+
+// ═══════════════════════════════════════════════════════════════
+// CONTROLS
+// ═══════════════════════════════════════════════════════════════
+document.querySelectorAll('.action-btn').forEach(btn => {
+  btn.addEventListener('click', () => runSequence(btn.dataset.seq));
+});
+document.getElementById('speed').addEventListener('input', e => {
+  state.speed = parseFloat(e.target.value);
+  document.getElementById('speed-val').textContent = state.speed.toFixed(2) + '×';
+});
+document.getElementById('reset').addEventListener('click', () => {
+  clearTimeout(state.timer);
+  state.playing = false;
+  state.paused = false;
+  state.seqId = null;
+  state.steps = [];
+  state.stepIdx = 0;
+  clearAllHighlights();
+  updateStepDisplay();
+  updateButtons();
+  logEl.innerHTML = '<span class="entry"><span class="ts">  —</span>Reset.</span>';
+});
+document.getElementById('patch-toggle').addEventListener('change', e => {
+  document.body.classList.toggle('patch-mode', e.target.checked);
+});
+
+function toggleLeft() {
+  const app = document.getElementById('app');
+  app.classList.toggle('collapsed-left');
+  document.getElementById('collapse-left').textContent = app.classList.contains('collapsed-left') ? '▸' : '◂';
+}
+function toggleRight() {
+  const app = document.getElementById('app');
+  app.classList.toggle('collapsed-right');
+  document.getElementById('collapse-right').textContent = app.classList.contains('collapsed-right') ? '◂' : '▸';
+}
+document.getElementById('collapse-left').addEventListener('click', toggleLeft);
+document.getElementById('collapse-right').addEventListener('click', toggleRight);
+
+// Legend toggle
+document.getElementById('legend-toggle').addEventListener('click', () => {
+  const btn = document.getElementById('legend-toggle');
+  const legend = document.getElementById('legend');
+  const open = legend.style.display !== 'none';
+  legend.style.display = open ? 'none' : 'block';
+  btn.classList.toggle('open', !open);
+  btn.textContent = open ? 'ⓘ Legend' : '× Close';
+});
+
+// ═══════════════════════════════════════════════════════════════
+// TIMELINE VIEW
+// ═══════════════════════════════════════════════════════════════
+function timeToPct(timeStr) {
+  if (timeStr.startsWith('every')) return null;
+  const [h, m] = timeStr.split(':').map(Number);
+  const minutes = h * 60 + m;
+  return (minutes / 1440) * 100;
+}
+
+function renderTimeline() {
+  const w = document.getElementById('timeline-wrap');
+  const kinds = {
+    trading: { label:'Trading', items:[] },
+    messaging:{ label:'Messaging', items:[] },
+    monitoring:{ label:'Monitoring', items:[] },
+    backup:  { label:'Backup', items:[] },
+    housekeeping:{ label:'Housekeeping', items:[] },
+    scheduler:{ label:'News Scheduler', items:[] },
+  };
+  const periodicItems = [];
+  M.timeline.forEach(t => {
+    if (t.time.startsWith('every')) {
+      periodicItems.push(t);
+    } else if (kinds[t.kind]) {
+      kinds[t.kind].items.push(t);
+    }
+  });
+
+  let html = `<div class="timeline-title">24-HOUR CRON TIMELINE <span>click marks to jump to that flow · grouped by kind</span></div>`;
+  for (const [k, kv] of Object.entries(kinds)) {
+    if (kv.items.length === 0) continue;
+    html += `<div class="timeline-grid">`;
+    html += `<div class="timeline-label">${kv.label}</div>`;
+    html += `<div class="timeline-track">`;
+    kv.items.forEach(t => {
+      const pct = timeToPct(t.time);
+      if (pct === null) return;
+      html += `<div class="timeline-mark${t.patch?' patch':''}" style="left:${pct}%" data-seq="${t.seq}"><div class="timeline-tooltip">${t.time} · ${t.label}</div></div>`;
+    });
+    html += `</div>`;
+    html += `<div class="timeline-hr-scale">`;
+    for (let i = 0; i <= 24; i+=2) html += `<span>${String(i).padStart(2,'0')}:00</span>`;
+    html += `</div></div>`;
+  }
+
+  if (periodicItems.length > 0) {
+    html += `<div class="timeline-grid"><div class="timeline-label">Recurring (sub-hour)</div>`;
+    html += `<ul style="margin:8px 0 0 20px; padding:0; font-size:11px; color:#cde; line-height:1.7">`;
+    periodicItems.forEach(p => {
+      html += `<li><b style="color:#9ab">${p.time}</b> — <a href="#" data-seq="${p.seq}" style="color:#00f5d4;text-decoration:none">${p.label}</a></li>`;
+    });
+    html += `</ul></div>`;
+  }
+  w.innerHTML = html;
+  // Wire clicks
+  w.querySelectorAll('[data-seq]').forEach(el => {
+    el.addEventListener('click', e => {
+      e.preventDefault();
+      const seq = el.dataset.seq;
+      // Switch back to topology, then play
+      document.querySelector('.tab[data-view="topology"]').click();
+      runSequence(seq);
+    });
+  });
+}
+
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    const view = tab.dataset.view;
+    const tl = document.getElementById('timeline-wrap');
+    const pw = document.getElementById('pipeline-wrap');
+    const cw = document.getElementById('canvas-wrap');
+    tl.classList.remove('active');
+    pw.classList.remove('active');
+    cw.classList.remove('hidden-topology','hidden-pipeline');
+    if (view === 'timeline') {
+      tl.classList.add('active');
+      cw.classList.add('hidden-topology');
+      renderTimeline();
+    } else if (view === 'pipeline') {
+      pw.classList.add('active');
+      cw.classList.add('hidden-topology','hidden-pipeline');
+      renderPipeline();
+    }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// PIPELINE & GATES VIEW — v2
+// ═══════════════════════════════════════════════════════════════
+const PIPELINE_V1_DEAD = {
+  ingest: [
+    { id:'screener', num:'AGENT 5', name:'Sector Screener', sub:'Once/day pre-market · 5 gates · sector momentum',
+      gates:[
+        {n:'G1', name:'Holdings lookup (hand-curated top-10)'},
+        {n:'G2', name:'Liquidity floor'},
+        {n:'G3', name:'Momentum calc'},
+        {n:'G4', name:'Rank by score'},
+        {n:'G5', name:'Publish top-N → signals.db'},
+      ],
+    },
+    { id:'news', num:'AGENT 2', name:'News Agent', sub:'22 gates · per article · 100% deterministic',
+      gates:[
+        {n:'G1', name:'System health'},
+        {n:'G2', name:'Benchmark filter'},
+        {n:'G3', name:'Source relevance'},
+        {n:'G4', name:'Ticker extraction'},
+        {n:'G6', name:'Event detection'},
+        {n:'G7', name:'Sentiment score'},
+        {n:'G8', name:'Novelty check'},
+        {n:'G12', name:'Confirmation'},
+        {n:'G13', name:'Timing window'},
+        {n:'G15', name:'Contradiction'},
+        {n:'G18', name:'Risk discounts'},
+        {n:'G22', name:'Composite → VALIDATED'},
+      ],
+    },
+    { id:'sentiment', num:'AGENT 3', name:'Market Sentiment', sub:'27 gates · per cycle · ~22s runtime',
+      gates:[
+        {n:'G1', name:'System'},
+        {n:'G4', name:'Price action'},
+        {n:'G5', name:'Breadth'},
+        {n:'G6', name:'Volume'},
+        {n:'G7', name:'Volatility'},
+        {n:'G9', name:'Safe-haven / cross-asset'},
+        {n:'G11', name:'Sector rotation'},
+        {n:'G15', name:'Breadth-price divergence'},
+        {n:'G18', name:'Composite sentiment'},
+        {n:'G20', name:'Regime'},
+        {n:'G22', name:'Action'},
+        {n:'G27', name:'Final signal → signals.db'},
+      ],
+    },
+  ],
+  validators: [
+    { id:'fault', num:'AGENT 6', name:'Fault Detection',
+      gates:[
+        {n:'G1', name:'DB connectivity'},
+        {n:'G2', name:'Alpaca API health'},
+        {n:'G3', name:'Agent heartbeats'},
+        {n:'G4', name:'Disk / table integrity'},
+      ],
+    },
+    { id:'bias', num:'AGENT 7', name:'Bias Detection', sub:'6 gates · per-customer',
+      gates:[
+        {n:'G1', name:'Sector concentration'},
+        {n:'G2', name:'Recency bias'},
+        {n:'G3', name:'Loss aversion'},
+        {n:'G4', name:'Overtrading'},
+        {n:'G5', name:'Disposition effect'},
+        {n:'G6', name:'Confidence clustering'},
+      ],
+    },
+    { id:'marketstate', num:'AGENT 9', name:'Market State',
+      gates:[
+        {n:'G1', name:'VIX regime'},
+        {n:'G2', name:'Breadth state'},
+        {n:'G3', name:'Volume state'},
+        {n:'G4', name:'Trend state'},
+        {n:'G5', name:'Aggregated state'},
+      ],
+    },
+    { id:'macro', num:'AGENT 8', name:'Macro Regime',
+      gates:[
+        {n:'G1', name:'Yield curve'},
+        {n:'G2', name:'Dollar strength'},
+        {n:'G3', name:'Commodities'},
+        {n:'G4', name:'Credit spreads'},
+        {n:'G5', name:'Regime classification'},
+      ],
+    },
+  ],
+  validator_final: {
+    id:'validator', num:'AGENT 10', name:'Validator Stack', sub:'Reads all 4 above · outputs GO / CAUTION / NO_GO',
+    gates:[
+      {n:'G1', name:'System health ← Fault'},
+      {n:'G2', name:'Bias guard ← Bias'},
+      {n:'G3', name:'Market state ← Market State'},
+      {n:'G4', name:'Macro regime ← Macro'},
+      {n:'G5', name:'FINAL VERDICT', verdict:true},
+    ],
+  },
+  trader: {
+    id:'trade', num:'AGENT 1', name:'Trade Logic', sub:'14 gates · parallelism=3 customers',
+    gates:[
+      {n:'G0', name:'Account health'},
+      {n:'G1', name:'Halt check (admin + customer)', patch:true},
+      {n:'G2', name:'Dedup signal'},
+      {n:'G3', name:'Freshness window'},
+      {n:'G4', name:'Eligibility (liquidity/spread)'},
+      {n:'G5', name:'Signal score + sector boost'},
+      {n:'G6', name:'Entry decision'},
+      {n:'G7', name:'Sizing (Model B + Model C cash guard)', patch:true},
+      {n:'G8', name:'Risk (trailing stop)'},
+      {n:'G9', name:'Order placement → Alpaca'},
+      {n:'G10', name:'Confirmation'},
+      {n:'G11', name:'Portfolio controls'},
+      {n:'G12', name:'Cross-check sticky USER', patch:true},
+      {n:'G13', name:'Log decision'},
+    ],
+  },
+};
+
+function agentCard(a, extraClass='', isTrader=false) {
+  const gatesHtml = a.gates.map(g => `
+    <div class="pipe-gate${g.patch?' patch':''}${g.verdict?' verdict':''}" data-agent="${a.id}" data-gate="${g.n}">
+      <span class="pipe-gate-num">${g.n}</span>
+      <span class="pipe-gate-name">${g.name}</span>
+    </div>
+  `).join('');
+  const lanes = isTrader ? `
+    <div class="pipe-parallel-lanes">
+      <div class="pipe-lane" data-lane="0">CUST 1</div>
+      <div class="pipe-lane" data-lane="1">CUST 2</div>
+      <div class="pipe-lane" data-lane="2">CUST 3</div>
+    </div>
+  ` : '';
+  return `
+    <div class="pipe-agent ${extraClass}" id="pipe-${a.id}">
+      <div class="pipe-agent-header">
+        <span class="pipe-agent-num">${a.num}</span>
+        <span class="pipe-agent-name">${a.name}</span>
+      </div>
+      ${a.sub ? `<div class="pipe-agent-sub">${a.sub}</div>` : ''}
+      ${lanes}
+      <div class="pipe-gates">${gatesHtml}</div>
+    </div>
+  `;
+}
+
+function renderPipeline() {
+  const w = document.getElementById('pipeline-wrap');
+  if (w.dataset.rendered === '1') return;
+  w.innerHTML = `
+    <div class="pipe-header">
+      <h2>VALIDATION PIPELINE <span>how a signal flows gate-by-gate from intake to execution</span></h2>
+      <div class="pipe-controls">
+        <button class="pipe-btn" data-pipe="single">▶ Single signal</button>
+        <button class="pipe-btn parallel" data-pipe="parallel">▶ 3 parallel customers</button>
+        <button class="pipe-btn reject" data-pipe="reject">▶ Rejection path</button>
+      </div>
+    </div>
+    <div class="pipe-grid">
+      <div class="pipe-col">
+        <div class="pipe-col-label">INGEST · market intake</div>
+        ${agentCard(PIPELINE.ingest[0])}
+        <div class="pipe-arrow"></div>
+        ${agentCard(PIPELINE.ingest[1])}
+        <div class="pipe-arrow"></div>
+        ${agentCard(PIPELINE.ingest[2])}
+      </div>
+      <div class="pipe-col">
+        <div class="pipe-col-label">VALIDATION · 4 parallel lanes</div>
+        ${PIPELINE.validators.map(a => agentCard(a, 'validator')).join('')}
+        <div class="pipe-arrow"></div>
+        ${agentCard(PIPELINE.validator_final, 'validator')}
+        <div class="pipe-verdict-display" id="pipe-verdict"></div>
+      </div>
+      <div class="pipe-col">
+        <div class="pipe-col-label">DECISION · per customer</div>
+        ${agentCard(PIPELINE.trader, 'trader patch-bar', true)}
+        <div class="pipe-output" id="pipe-output">
+          <div class="pipe-output-label">OUTCOME</div>
+          <div id="pipe-output-detail" style="font-size:10.5px; color:var(--muted); margin-top:6px; letter-spacing:0.04em">awaiting signal…</div>
+        </div>
+      </div>
+    </div>
+    <div class="pipe-log" id="pipe-log">
+      <div class="entry info"><span class="ts">  —</span>Click an action above. Watch gates light up sequentially within each agent, and in parallel across the 4 validator lanes.</div>
+    </div>
+  `;
+  w.querySelectorAll('.pipe-btn').forEach(btn => {
+    btn.addEventListener('click', () => runPipeline(btn.dataset.pipe));
+  });
+  w.dataset.rendered = '1';
+}
+
+const pipeStateV1 = { running:false };
+
+function pipeLog(text, kind='info') {
+  const logEl = document.getElementById('pipe-log');
+  if (!logEl) return;
+  const div = document.createElement('div');
+  div.className = `entry ${kind}`;
+  div.innerHTML = `<span class="ts">—</span>${text}`;
+  logEl.appendChild(div);
+  while (logEl.children.length > 40) logEl.removeChild(logEl.firstChild);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function clearPipe() {
+  document.querySelectorAll('#pipeline-wrap .pipe-gate.active, #pipeline-wrap .pipe-gate.passed, #pipeline-wrap .pipe-gate.failed').forEach(e => e.classList.remove('active','passed','failed'));
+  document.querySelectorAll('#pipeline-wrap .pipe-agent.running, #pipeline-wrap .pipe-agent.rejected').forEach(e => e.classList.remove('running','rejected'));
+  document.querySelectorAll('#pipeline-wrap .pipe-lane').forEach(e => e.classList.remove('active','active-alt','active-pink'));
+  const verdict = document.getElementById('pipe-verdict');
+  if (verdict) { verdict.className='pipe-verdict-display'; verdict.textContent=''; }
+  const out = document.getElementById('pipe-output');
+  if (out) { out.className='pipe-output'; }
+}
+
+function pipeSleep(ms) { return new Promise(r => setTimeout(r, ms / state.speed)); }
+
+async function runAgentGates(agentId, opts={}) {
+  const agent = document.getElementById(`pipe-${agentId}`);
+  if (!agent) return true;
+  agent.classList.add('running');
+  const gates = agent.querySelectorAll('.pipe-gate');
+  for (let i = 0; i < gates.length; i++) {
+    const g = gates[i];
+    g.classList.add('active');
+    await pipeSleep(opts.gateMs || 260);
+    if (opts.failAt != null && i === opts.failAt) {
+      g.classList.remove('active');
+      g.classList.add('failed');
+      agent.classList.remove('running');
+      agent.classList.add('rejected');
+      return false;
+    }
+    g.classList.remove('active');
+    g.classList.add('passed');
+  }
+  agent.classList.remove('running');
+  return true;
+}
+
+async function runPipeline(mode) {
+  if (pipeState.running) return;
+  pipeState.running = true;
+  clearPipe();
+  document.querySelectorAll('#pipeline-wrap .pipe-btn').forEach(b => b.disabled = true);
+  const outDetail = document.getElementById('pipe-output-detail');
+  const outEl = document.getElementById('pipe-output');
+  pipeLog(`▶ Starting pipeline: <b style="color:var(--teal)">${mode.toUpperCase()}</b>`);
+  // INGEST
+  pipeLog('[INGEST] Screener — sector momentum');
+  await runAgentGates('screener', { gateMs:160 });
+  pipeLog('[INGEST] News classifies incoming article');
+  const newsOk = await runAgentGates('news', { gateMs:160, failAt: mode==='reject' ? 4 : -1 });
+  if (!newsOk) {
+    pipeLog('Signal rejected at News Gate 6 — event detection failed', 'fail');
+    outDetail.textContent = 'SKIP · rejected at news gate';
+    outEl.classList.add('skip');
+    pipeState.running = false;
+    document.querySelectorAll('#pipeline-wrap .pipe-btn').forEach(b => b.disabled = false);
+    return;
+  }
+  pipeLog('→ VALIDATED signal written to signals.db', 'pass');
+  pipeLog('[INGEST] Sentiment runs on position universe');
+  await runAgentGates('sentiment', { gateMs:100 });
+  pipeLog('→ sentiment_score + regime stamped', 'pass');
+  // VALIDATION · 4 lanes parallel
+  pipeLog('[VALIDATION] Fault + Bias + Market State + Macro — running in parallel');
+  await Promise.all(['fault','bias','marketstate','macro'].map(v => runAgentGates(v, { gateMs:240 })));
+  pipeLog('All 4 validators reported', 'pass');
+  pipeLog('[VALIDATION] Validator Stack aggregates → GO / CAUTION / NO_GO');
+  await runAgentGates('validator', { gateMs:300 });
+  // Verdict
+  const verdict = mode==='reject' ? 'NO_GO' : 'GO';
+  const verdictEl = document.getElementById('pipe-verdict');
+  verdictEl.classList.add('show', verdict.toLowerCase());
+  verdictEl.textContent = verdict;
+  pipeLog(`Verdict: <b>${verdict}</b>`, verdict==='GO' ? 'pass' : 'fail');
+  if (verdict === 'NO_GO') {
+    outDetail.textContent = 'SKIP · validator stack returned NO_GO';
+    outEl.classList.add('skip');
+    pipeState.running = false;
+    document.querySelectorAll('#pipeline-wrap .pipe-btn').forEach(b => b.disabled = false);
+    return;
+  }
+  await pipeSleep(400);
+  // TRADER
+  pipeLog('[DECISION] Trade logic dispatches to customer subprocesses');
+  const lanes = document.querySelectorAll('#pipe-trade .pipe-lane');
+  const laneClasses = ['active','active-alt','active-pink'];
+  const custCount = mode==='parallel' ? 3 : 1;
+  for (let i = 0; i < custCount; i++) {
+    lanes[i].classList.add(laneClasses[i]);
+    pipeLog(`└ Customer ${i+1} subprocess spawned`, 'info');
+  }
+  const trader = document.getElementById('pipe-trade');
+  trader.classList.add('running');
+  const gates = trader.querySelectorAll('.pipe-gate');
+  for (let i = 0; i < gates.length; i++) {
+    const g = gates[i];
+    g.classList.add('active');
+    if (g.classList.contains('patch')) pipeLog(`[PATCH] ${g.dataset.gate} · ${g.querySelector('.pipe-gate-name').textContent}`, 'info');
+    await pipeSleep(180);
+    g.classList.remove('active');
+    g.classList.add('passed');
+  }
+  trader.classList.remove('running');
+  const outcome = mode==='parallel' ? 'MIXED' : 'BUY';
+  outEl.className = `pipe-output ${outcome==='MIXED'?'buy':'buy'}`;
+  outDetail.textContent = mode==='parallel'
+    ? '3 customers processed · CUST 1 BUY · CUST 2 BUY · CUST 3 SKIP (12/12 auto cap)'
+    : 'BUY → Alpaca (trailing stop server-side)';
+  pipeLog(`Outcome: <b>${outcome==='MIXED'?'2 BUY · 1 SKIP':'BUY'}</b>`, 'pass');
+  pipeStateV1.running = false;
+  document.querySelectorAll('#pipeline-wrap .pipe-btn').forEach(b => b.disabled = false);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PIPELINE v2 — overrides v1 functions defined above
+// ═══════════════════════════════════════════════════════════════
+const PIPELINE = {
+  screener: {
+    id:'screener', num:'AGENT 5', name:'Sector Screener',
+    sub:'Pre-computed once/day pre-market · feeds Trade Gate 5',
+    gates:[
+      {n:'G1',name:'Holdings lookup',desc:'Hand-curated top-10 per SPDR sector (XLE, XLF, XLK, ...). TODO: FMP /etf-holdings on paid tier.'},
+      {n:'G2',name:'Liquidity floor',desc:'Drops tickers below $5M avg daily volume.'},
+      {n:'G3',name:'Momentum calc',desc:'20-day and 50-day return vs SPY.'},
+      {n:'G4',name:'Rank by score',desc:'Composite of momentum + volatility bucket.'},
+      {n:'G5',name:'Publish top-N',desc:'Top 3 per sector → sector_scores in signals.db.'},
+    ],
+  },
+  ingest: [
+    { id:'news', num:'AGENT 2', name:'News Agent', sub:'22 gates · ~200ms/article · deterministic',
+      gates:[
+        {n:'G1',name:'System health',desc:'Reads fault_detection output.'},
+        {n:'G2',name:'Benchmark filter',desc:'Drops articles only about SPY/VTI.'},
+        {n:'G3',name:'Source relevance',desc:'Source must be whitelisted (Bloomberg, Reuters, WSJ, FT, ...).'},
+        {n:'G4',name:'Ticker extraction',desc:'Finds primary ticker in headline/body.'},
+        {n:'G6',name:'Event detection',desc:'Classifies: earnings, merger, guidance, analyst, regulatory, litigation, mgmt, macro, sector. Fails for routine PR.'},
+        {n:'G7',name:'Sentiment score',desc:'Deterministic lexicon + syntax rules, −1.0 to +1.0.'},
+        {n:'G8',name:'Novelty check',desc:'Not a duplicate or repost.'},
+        {n:'G12',name:'Confirmation',desc:'Multiple sources corroborate.'},
+        {n:'G13',name:'Timing window',desc:'Tradeable window for signal tier.'},
+        {n:'G15',name:'Contradiction',desc:'No opposing signal within last 4h.'},
+        {n:'G18',name:'Risk discounts',desc:'Multiplicative discounts on impact_score.'},
+        {n:'G22',name:'Composite → VALIDATED',desc:'Final composite crosses threshold → signal VALIDATED in signals.db.'},
+      ],
+    },
+    { id:'sentiment', num:'AGENT 3', name:'Market Sentiment', sub:'27 gates in 4 stages · ~22s/cycle',
+      stages:[
+        { id:'universe', name:'UNIVERSE', gates:[
+          {n:'G1',name:'System',desc:'Fault detection read.'},
+          {n:'G2',name:'Input universe',desc:'Which positions/benchmarks to evaluate.'},
+          {n:'G3',name:'Benchmark',desc:'SPY/VTI baseline.'},
+        ]},
+        { id:'scoring', name:'SCORING (G4-17)', gates:[
+          {n:'G4',name:'Price action',desc:'Recent price moves vs benchmark.'},
+          {n:'G5',name:'Breadth',desc:'Advance/decline, new highs/lows.'},
+          {n:'G7',name:'Volatility',desc:'ATR, VIX proxy.'},
+          {n:'G9',name:'Safe-haven',desc:'Bonds, gold, defensive sectors.'},
+          {n:'G11',name:'Sector rotation',desc:'Which sectors lead/lag.'},
+          {n:'G15',name:'Breadth-price divergence',desc:'Flags breadth vs price divergence.'},
+        ]},
+        { id:'adjust', name:'ADJUSTMENTS (G18-23)', gates:[
+          {n:'G18',name:'Composite sentiment',desc:'Weighted aggregate.'},
+          {n:'G19',name:'Confidence',desc:'Based on input agreement.'},
+          {n:'G20',name:'Regime',desc:'Risk-on / risk-off / neutral.'},
+          {n:'G22',name:'Action',desc:'Derived action given composite + regime.'},
+        ]},
+        { id:'output', name:'OUTPUT (G24-27)', gates:[
+          {n:'G24',name:'Temporal persistence',desc:'Must persist 2 cycles.'},
+          {n:'G27',name:'Final signal write',desc:'sentiment_score → signals.db.'},
+        ]},
+      ],
+    },
+  ],
+  validators: [
+    { id:'fault', num:'AGENT 6', name:'Fault Detection',
+      gates:[
+        {n:'G1',name:'DB connectivity',desc:'Can we reach all DBs?'},
+        {n:'G2',name:'Alpaca API health',desc:'Live ping /v2/account.'},
+        {n:'G3',name:'Agent heartbeats',desc:'All agents reported in last N min.'},
+        {n:'G4',name:'Disk / tables',desc:'PRAGMA integrity_check.'},
+      ],
+    },
+    { id:'bias', num:'AGENT 7', name:'Bias Detection', sub:'6 gates · per-customer',
+      gates:[
+        {n:'G1',name:'Sector concentration',desc:'No single sector > 40%.'},
+        {n:'G2',name:'Recency bias',desc:'Not over-weighting recent winners.'},
+        {n:'G3',name:'Loss aversion',desc:'Not holding losers too long.'},
+        {n:'G4',name:'Overtrading',desc:'Churn rate bounds.'},
+        {n:'G5',name:'Disposition effect',desc:'Selling winners too early.'},
+        {n:'G6',name:'Confidence clustering',desc:'Not biased toward confident sources.'},
+      ],
+    },
+    { id:'marketstate', num:'AGENT 9', name:'Market State',
+      gates:[
+        {n:'G1',name:'VIX regime',desc:'Calm / elevated / stress.'},
+        {n:'G2',name:'Breadth state',desc:'Advance/decline health.'},
+        {n:'G3',name:'Volume state',desc:'Relative volume distribution.'},
+        {n:'G4',name:'Trend state',desc:'SPY vs moving averages.'},
+        {n:'G5',name:'Aggregated state',desc:'Bullish / neutral / bearish.'},
+      ],
+    },
+    { id:'macro', num:'AGENT 8', name:'Macro Regime',
+      gates:[
+        {n:'G1',name:'Yield curve',desc:'10y-2y spread.'},
+        {n:'G2',name:'Dollar strength',desc:'DXY regime.'},
+        {n:'G3',name:'Commodities',desc:'Oil, gold, copper trend.'},
+        {n:'G4',name:'Credit spreads',desc:'HY OAS, IG OAS. Widening = risk_off.'},
+        {n:'G5',name:'Regime class',desc:'Risk-on / risk-off / neutral.'},
+      ],
+    },
+  ],
+  validator_final: {
+    id:'validator', num:'AGENT 10', name:'Validator Stack',
+    sub:'Aggregates all 4 above · GO / CAUTION / NO_GO',
+    gates:[
+      {n:'G1',name:'System health ← Fault',desc:'Any critical fault → NO_GO.'},
+      {n:'G2',name:'Bias guard ← Bias',desc:'Any critical bias → CAUTION.'},
+      {n:'G3',name:'Market state ← Market State',desc:'Bearish state → CAUTION.'},
+      {n:'G4',name:'Macro regime ← Macro',desc:'Risk-off sustained 2+ cycles → NO_GO.'},
+      {n:'G5',name:'FINAL VERDICT',desc:'Weighted aggregate → GO / CAUTION / NO_GO.',verdict:true},
+    ],
+  },
+  trader: {
+    id:'trade', num:'AGENT 1', name:'Trade Logic', sub:'14 gates · parallelism=3 customers',
+    gates:[
+      {n:'G0',name:'Account health',desc:'Alpaca status OK.'},
+      {n:'G1',name:'Halt check',patch:true,desc:'4-layer check: admin halt → legacy kill_switch → customer halt → last_good. sys.exit(0) on any halt.'},
+      {n:'G2',name:'Dedup signal',desc:'Same signal already executed today?'},
+      {n:'G3',name:'Freshness',desc:'Signal age within tier (30d/7d/2d/1d).'},
+      {n:'G4',name:'Eligibility',desc:'Liquidity + spread within bounds. Also 12-cap check here for some customers.'},
+      {n:'G5',name:'Signal score',desc:'Composite + sector_scores boost from Screener.'},
+      {n:'G6',name:'Entry decision',desc:'Compare against portfolio exposure.'},
+      {n:'G7',name:'Sizing',patch:true,desc:'Model B (equity share) + Model C cash floor. Fails with INSUFFICIENT_CASH_AFTER_MANUAL if cash < floor.'},
+      {n:'G8',name:'Risk setup',desc:'Trailing stop % by volatility.'},
+      {n:'G9',name:'Order placement',desc:'POST to Alpaca.'},
+      {n:'G10',name:'Confirmation',desc:'Poll Alpaca for fill.'},
+      {n:'G11',name:'Portfolio controls',desc:'12-cap auto, sector concentration final check.'},
+      {n:'G12',name:'Sticky USER check',patch:true,desc:'position_preferences[ticker].sticky=user → skip.'},
+      {n:'G13',name:'Log decision',desc:'Write audit to trade_decisions.'},
+    ],
+  },
+};
+
+const REJECT_SCENARIOS = {
+  news_g6: { label:'News G6 · event detection', phase:'news', failAt:4,
+    fail:{gate:'News Gate 6', value:'event_relevance=0.32', threshold:'>= 0.50 required', reason:'No actionable event — looks like a routine press release.'} },
+  validator_nogo: { label:'Validator · NO_GO (macro risk-off)', phase:'validator', failAt:3,
+    fail:{gate:'Macro Gate 4 → Validator G4', value:'HY spread +80bps, yield curve inverted 3 cycles', threshold:'>= 2 sustained risk-off cycles = NO_GO', reason:'Credit stress + yield curve inversion + dollar strengthening.'} },
+  trade_g1_halt: { label:'Trade G1 · admin halt', phase:'trader', failAt:1,
+    fail:{gate:'Trade Gate 1', value:'system_halt.active=1, src=admin, reason="maintenance"', threshold:'sys.exit(0) on any halt', reason:'Admin maintenance halt in effect — trader subprocess skipped entirely.'} },
+  trade_g7_cash: { label:'Trade G7 · insufficient cash', phase:'trader', failAt:7,
+    fail:{gate:'Trade Gate 7', value:'cash_available=$1,200 after manual positions', threshold:'Model C floor $2,500', reason:'Manual positions eat cash — INSUFFICIENT_CASH_AFTER_MANUAL skip reason logged.'} },
+  trade_g12_sticky: { label:'Trade G12 · sticky USER', phase:'trader', failAt:12,
+    fail:{gate:'Trade Gate 12', value:'position_preferences[TSLA].sticky=user', threshold:'any sticky=user blocks', reason:'Customer marked TSLA as USER-managed — bot skips all signals for this ticker.'} },
+};
+
+const SAMPLE_SIGNAL = { ticker:'AAPL', event:'earnings beat · Q1 guide raised', score:'—' };
+
+function gateHtml(g, extraAttrs='') {
+  const patch = g.patch ? ' patch' : '';
+  const verdict = g.verdict ? ' verdict' : '';
+  const desc = g.desc ? `<div class="pipe-gate-tooltip"><div class="ttl">${g.n}</div>${g.desc}</div>` : '';
+  return `<div class="pipe-gate${patch}${verdict}" data-gate="${g.n}" ${extraAttrs}>
+    <span class="pipe-gate-num">${g.n}</span>
+    <span class="pipe-gate-name">${g.name}</span>
+    ${desc}
+  </div>`;
+}
+
+function agentCard(a, extraClass='', opts={}) {
+  let gatesHtml = '';
+  if (a.stages) {
+    gatesHtml = a.stages.map((s, idx) => `
+      <div class="pipe-stage-group${idx===0?' expanded':''}" id="stage-${s.id}">
+        <div class="pipe-stage-header" data-stage="${s.id}">
+          <span>${s.name}<span class="stage-count"> · ${s.gates.length} gates</span></span>
+          <span class="caret">▸</span>
+        </div>
+        <div class="pipe-stage-gates">
+          ${s.gates.map(g => gateHtml(g, `data-agent="${a.id}"`)).join('')}
+        </div>
+      </div>
+    `).join('');
+  } else {
+    gatesHtml = `<div class="pipe-gates">${a.gates.map(g => gateHtml(g, `data-agent="${a.id}"`)).join('')}</div>`;
+  }
+  const custProgress = opts.trader ? `
+    <div class="pipe-cust-progress">
+      <div class="pipe-cust-row" data-cust="1"><span class="pipe-cust-label">CUST 1</span><div class="pipe-cust-bar"><div class="pipe-cust-fill"></div></div><span class="pipe-cust-stat">—</span></div>
+      <div class="pipe-cust-row" data-cust="2"><span class="pipe-cust-label">CUST 2</span><div class="pipe-cust-bar"><div class="pipe-cust-fill"></div></div><span class="pipe-cust-stat">—</span></div>
+      <div class="pipe-cust-row" data-cust="3"><span class="pipe-cust-label">CUST 3</span><div class="pipe-cust-bar"><div class="pipe-cust-fill"></div></div><span class="pipe-cust-stat">—</span></div>
+    </div>` : '';
+  return `
+    <div class="pipe-agent ${extraClass}" id="pipe-${a.id}">
+      <div class="pipe-agent-header">
+        <span class="pipe-agent-num">${a.num}</span>
+        <span class="pipe-agent-name">${a.name}</span>
+      </div>
+      ${a.sub ? `<div class="pipe-agent-sub">${a.sub}</div>` : ''}
+      ${custProgress}
+      ${gatesHtml}
+    </div>
+  `;
+}
+
+function renderPipeline() {
+  const w = document.getElementById('pipeline-wrap');
+  // Force re-render in v2 so we pick up new structure
+  w.dataset.rendered = '';
+  const rejectHtml = Object.entries(REJECT_SCENARIOS).map(([k, s]) =>
+    `<button data-scenario="${k}"><span class="gate-tag">${s.phase}</span>${s.label}</button>`
+  ).join('');
+  const scr = PIPELINE.screener;
+  w.innerHTML = `
+    <div class="pipe-header">
+      <h2>VALIDATION PIPELINE <span>v2 · traveling signal · per-customer lanes · rejection detail</span></h2>
+      <div class="pipe-controls">
+        <button class="pipe-btn" data-pipe="single">▶ Single signal</button>
+        <button class="pipe-btn parallel" data-pipe="parallel">▶ 3 parallel customers</button>
+        <div class="pipe-reject-wrap">
+          <button class="pipe-btn reject" id="pipe-reject-btn">▶ Reject scenarios ▾</button>
+          <div class="pipe-reject-menu" id="pipe-reject-menu">${rejectHtml}</div>
+        </div>
+      </div>
+    </div>
+    <div class="pipe-screener-banner" id="pipe-screener">
+      <span class="tag">Pre-computed</span>
+      <div>
+        <div class="banner-title">${scr.num} · ${scr.name}</div>
+        <div style="font-size:10px; color:var(--muted); font-family:var(--mono); margin-top:2px">${scr.gates.length} gates · runs once/day 06:45 ET · feeds Trade Gate 5 via sector_scores</div>
+      </div>
+      <div class="banner-sub">last run 06:45 · 3 sectors: XLK(+0.82) XLE(-0.34) XLV(+0.18)</div>
+    </div>
+    <div class="pipe-grid" id="pipe-grid">
+      <div class="pipe-col" data-col="ingest">
+        <div class="pipe-col-label">INGEST · per-signal</div>
+        ${agentCard(PIPELINE.ingest[0])}
+        <div class="pipe-arrow"></div>
+        ${agentCard(PIPELINE.ingest[1])}
+      </div>
+      <div class="pipe-col" data-col="validation">
+        <div class="pipe-col-label">VALIDATION · 4 parallel lanes</div>
+        <div class="pipe-validator-grid">
+          ${PIPELINE.validators.map(a => agentCard(a, 'validator')).join('')}
+        </div>
+        <div class="pipe-aggregation" id="pipe-aggregation">aggregating into Agent 10</div>
+        ${agentCard(PIPELINE.validator_final, 'validator')}
+        <div class="pipe-verdict-display" id="pipe-verdict"></div>
+      </div>
+      <div class="pipe-col" data-col="decision">
+        <div class="pipe-col-label">DECISION · per customer</div>
+        ${agentCard(PIPELINE.trader, 'trader patch-bar', { trader:true })}
+        <div class="pipe-reject-detail" id="pipe-reject-detail"></div>
+        <div class="pipe-output" id="pipe-output">
+          <div class="pipe-output-label">OUTCOME</div>
+          <div id="pipe-output-detail" style="font-size:10.5px; color:var(--muted); margin-top:6px; letter-spacing:0.04em">awaiting signal…</div>
+        </div>
+      </div>
+    </div>
+    <div class="pipe-signal-card" id="pipe-signal">
+      <div class="row1">
+        <div>
+          <div class="ticker" id="pipe-sig-ticker">AAPL</div>
+          <div class="event" id="pipe-sig-event">earnings beat · Q1 guide raised</div>
+        </div>
+        <div class="score" id="pipe-sig-score">+0.73</div>
+      </div>
+      <div class="pipe-state-pill" id="pipe-sig-state">QUEUED</div>
+    </div>
+    <div class="pipe-interrogation" id="pipe-interrogation">
+      <div class="label">UDP 5556 · Interrogation Listener</div>
+      <div style="margin-top:4px">News → Sentiment second opinion</div>
+    </div>
+    <div class="pipe-log" id="pipe-log">
+      <div class="entry info"><span class="ts">  —</span>Click an action above. Watch the signal card travel, per-customer lanes run independently, and rejections short-circuit with full detail.</div>
+    </div>
+  `;
+  w.querySelectorAll('.pipe-btn[data-pipe]').forEach(btn => {
+    btn.addEventListener('click', () => runPipeline(btn.dataset.pipe));
+  });
+  document.getElementById('pipe-reject-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    document.getElementById('pipe-reject-menu').classList.toggle('open');
+  });
+  document.addEventListener('click', () => {
+    document.getElementById('pipe-reject-menu')?.classList.remove('open');
+  });
+  w.querySelectorAll('#pipe-reject-menu button').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      document.getElementById('pipe-reject-menu').classList.remove('open');
+      runPipeline('reject:' + btn.dataset.scenario);
+    });
+  });
+  w.querySelectorAll('.pipe-stage-header').forEach(h => {
+    h.addEventListener('click', () => h.parentElement.classList.toggle('expanded'));
+  });
+  w.dataset.rendered = '1';
+}
+
+const pipeState = { running:false };
+
+function pipeLog(text, kind='info') {
+  const logEl = document.getElementById('pipe-log');
+  if (!logEl) return;
+  const div = document.createElement('div');
+  div.className = `entry ${kind}`;
+  div.innerHTML = `<span class="ts">—</span>${text}`;
+  logEl.appendChild(div);
+  while (logEl.children.length > 50) logEl.removeChild(logEl.firstChild);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function clearPipe() {
+  const w = document.getElementById('pipeline-wrap');
+  if (!w) return;
+  w.querySelectorAll('.pipe-gate.active, .pipe-gate.passed, .pipe-gate.failed').forEach(e => e.classList.remove('active','passed','failed'));
+  w.querySelectorAll('.pipe-agent.running, .pipe-agent.rejected, .pipe-stage-group.active').forEach(e => e.classList.remove('running','rejected','active'));
+  w.querySelectorAll('.pipe-cust-row').forEach(e => {
+    e.classList.remove('active-teal','active-amber','active-pink','failed');
+    const fill = e.querySelector('.pipe-cust-fill'); if (fill) fill.style.width='0';
+    const stat = e.querySelector('.pipe-cust-stat'); if (stat) { stat.textContent='—'; stat.className='pipe-cust-stat'; }
+  });
+  w.querySelectorAll('.pipe-aggregation').forEach(e => e.classList.remove('active'));
+  const verdict = document.getElementById('pipe-verdict');
+  if (verdict) { verdict.className='pipe-verdict-display'; verdict.textContent=''; }
+  const out = document.getElementById('pipe-output');
+  if (out) out.className='pipe-output';
+  const outDetail = document.getElementById('pipe-output-detail');
+  if (outDetail) outDetail.textContent = 'awaiting signal…';
+  const reject = document.getElementById('pipe-reject-detail');
+  if (reject) { reject.classList.remove('show'); reject.innerHTML=''; }
+  const sig = document.getElementById('pipe-signal');
+  if (sig) sig.classList.remove('active','rejected');
+  const interrog = document.getElementById('pipe-interrogation');
+  if (interrog) interrog.classList.remove('active');
+}
+
+function pipeSleep(ms) { return new Promise(r => setTimeout(r, ms / state.speed)); }
+
+function moveSignalCard(targetId, dx=0, dy=-60) {
+  const sig = document.getElementById('pipe-signal');
+  const target = document.getElementById(targetId);
+  const wrap = document.getElementById('pipeline-wrap');
+  if (!sig || !target || !wrap) return;
+  sig.classList.add('active');
+  const wrapRect = wrap.getBoundingClientRect();
+  const tRect = target.getBoundingClientRect();
+  const left = tRect.left - wrapRect.left + tRect.width/2 - 110 + dx + wrap.scrollLeft;
+  const top  = tRect.top  - wrapRect.top  - 30 + dy + wrap.scrollTop;
+  sig.style.left = left + 'px';
+  sig.style.top  = top + 'px';
+}
+
+function setSignalState(s) { const el = document.getElementById('pipe-sig-state'); if (el) el.textContent = s; }
+function setSignalScore(s) { const el = document.getElementById('pipe-sig-score'); if (el) el.textContent = s; }
+function setSignalRejected(on) { const sig = document.getElementById('pipe-signal'); if (!sig) return; if (on) sig.classList.add('rejected'); else sig.classList.remove('rejected'); }
+
+async function runAgentGates(agentId, opts={}) {
+  const agent = document.getElementById(`pipe-${agentId}`);
+  if (!agent) return true;
+  agent.classList.add('running');
+  if (agentId === 'sentiment') agent.querySelectorAll('.pipe-stage-group').forEach(g => g.classList.add('expanded','active'));
+  const gates = agent.querySelectorAll('.pipe-gate');
+  for (let i = 0; i < gates.length; i++) {
+    const g = gates[i];
+    g.classList.add('active');
+    await pipeSleep(opts.gateMs || 220);
+    // Score accumulation milestones — the signal's score is BUILT by gates, not pre-set
+    if (opts.scoreUpdates && opts.scoreUpdates[i]) {
+      const u = opts.scoreUpdates[i];
+      setSignalScore(u.score);
+      pipeLog(`  <span style="color:var(--teal)">score → ${u.score}</span> · ${u.note}`, 'info');
+    }
+    if (opts.failAt != null && i === opts.failAt) {
+      g.classList.remove('active');
+      g.classList.add('failed');
+      agent.classList.remove('running');
+      agent.classList.add('rejected');
+      return false;
+    }
+    g.classList.remove('active');
+    g.classList.add('passed');
+  }
+  agent.classList.remove('running');
+  return true;
+}
+
+async function runCustomerLane(custIdx, opts={}) {
+  const trader = document.getElementById('pipe-trade');
+  const gates = trader.querySelectorAll('.pipe-gate');
+  const row = trader.querySelector(`.pipe-cust-row[data-cust="${custIdx+1}"]`);
+  if (!row) return 0;
+  const fill = row.querySelector('.pipe-cust-fill');
+  const stat = row.querySelector('.pipe-cust-stat');
+  const laneClasses = ['active-teal','active-amber','active-pink'];
+  row.classList.add(laneClasses[custIdx]);
+  const total = gates.length;
+  const failAt = opts.failAt != null ? opts.failAt : null;
+  for (let i = 0; i < total; i++) {
+    stat.textContent = `G${i}`;
+    fill.style.width = `${((i+1)/total)*100}%`;
+    await pipeSleep((opts.gateMs || 160) + custIdx*25 + Math.random()*50);
+    if (failAt === i) {
+      row.classList.add('failed');
+      stat.textContent = opts.failLabel || `fail G${i}`;
+      stat.classList.add('fail');
+      return i;
+    }
+  }
+  stat.textContent = opts.passLabel || 'BUY';
+  stat.classList.add('pass');
+  return total;
+}
+
+function showRejection(scen) {
+  if (!scen) return;
+  const el = document.getElementById('pipe-reject-detail');
+  if (!el) return;
+  el.innerHTML = `
+    <div class="label">Rejected at ${scen.fail.gate}</div>
+    <div style="margin-bottom:6px">${scen.fail.reason}</div>
+    <div style="font-size:9px; color:var(--muted); margin-bottom:2px; letter-spacing:0.1em; text-transform:uppercase">Input</div>
+    <div class="val" style="margin-bottom:4px">${scen.fail.value}</div>
+    <div style="font-size:9px; color:var(--muted); margin-bottom:2px; letter-spacing:0.1em; text-transform:uppercase">Threshold</div>
+    <div class="val">${scen.fail.threshold}</div>
+  `;
+  el.classList.add('show');
+  setSignalRejected(true);
+  setSignalState('REJECTED');
+  pipeLog(`✗ Rejected at ${scen.fail.gate} — ${scen.fail.reason}`, 'fail');
+  pipeLog(`  input: ${scen.fail.value}`, 'fail');
+  pipeLog(`  required: ${scen.fail.threshold}`, 'fail');
+  const out = document.getElementById('pipe-output');
+  if (out) out.className = 'pipe-output skip';
+  const outDetail = document.getElementById('pipe-output-detail');
+  if (outDetail) outDetail.textContent = `SKIP · ${scen.fail.gate}`;
+}
+
+function finishPipeline() {
+  pipeState.running = false;
+  document.querySelectorAll('#pipeline-wrap .pipe-btn').forEach(b => b.disabled = false);
+}
+
+async function runPipeline(mode) {
+  if (pipeState.running) return;
+  pipeState.running = true;
+  clearPipe();
+  document.querySelectorAll('#pipeline-wrap .pipe-btn').forEach(b => b.disabled = true);
+
+  let rejectScenario = null;
+  if (mode.startsWith('reject:')) rejectScenario = REJECT_SCENARIOS[mode.slice(7)];
+
+  const sigData = SAMPLE_SIGNAL;
+  document.getElementById('pipe-sig-ticker').textContent = sigData.ticker;
+  document.getElementById('pipe-sig-event').textContent = sigData.event;
+  document.getElementById('pipe-sig-score').textContent = sigData.score;
+  setSignalState('QUEUED');
+  moveSignalCard('pipe-screener');
+  pipeLog(`▶ Signal enters: <b style="color:var(--teal)">${sigData.ticker}</b> · ${sigData.event} · score ${sigData.score}`);
+  await pipeSleep(500);
+
+  const screenerBanner = document.getElementById('pipe-screener');
+  screenerBanner.style.boxShadow = '0 0 22px rgba(255,179,71,0.35)';
+  pipeLog('[SCREENER] Pre-computed sector_scores available (last run 06:45) — will feed Trade Gate 5');
+  await pipeSleep(400);
+  screenerBanner.style.boxShadow = '';
+
+  // NEWS — score is BUILT as signal walks through gates (not pre-set)
+  moveSignalCard('pipe-news');
+  pipeLog('[INGEST] News classifies article (22 gates · ~200ms/article). Score accumulates as gates complete.');
+  const newsFail = rejectScenario && rejectScenario.phase === 'news' ? rejectScenario.failAt : -1;
+  // Visible gates in order: G1,G2,G3,G4,G6,G7,G8,G12,G13,G15,G18,G22  (indices 0..11)
+  const newsScoreUpdates = {
+    5:  { score:'+0.55', note:'G7 · raw sentiment (lexical scoring)' },
+    10: { score:'+0.48', note:'G18 · −0.07 risk discount (analyst-downgrade adjacent)' },
+    11: { score:'+0.62', note:'G22 · composite finalized → VALIDATED' },
+  };
+  const newsOk = await runAgentGates('news', { gateMs:110, failAt:newsFail, scoreUpdates:newsScoreUpdates });
+  if (!newsOk) { showRejection(rejectScenario); return finishPipeline(); }
+  setSignalState('VALIDATED');
+  pipeLog('→ Signal VALIDATED and written to signals.db', 'pass');
+
+  // Interrogation cross-val hop
+  if (!rejectScenario || rejectScenario.phase !== 'news') {
+    const interrogBox = document.getElementById('pipe-interrogation');
+    const newsRect = document.getElementById('pipe-news').getBoundingClientRect();
+    const wrap = document.getElementById('pipeline-wrap').getBoundingClientRect();
+    interrogBox.style.left = (newsRect.right - wrap.left + 16) + 'px';
+    interrogBox.style.top  = (newsRect.bottom - wrap.top - 50) + 'px';
+    interrogBox.classList.add('active');
+    pipeLog('[INTERROGATION] News hops UDP 5556 → Sentiment for second opinion');
+    await pipeSleep(700);
+    interrogBox.classList.remove('active');
+  }
+
+  // SENTIMENT
+  moveSignalCard('pipe-sentiment');
+  pipeLog('[INGEST] Sentiment runs (27 gates in 4 stages · ~22s/cycle in reality)');
+  await runAgentGates('sentiment', { gateMs:80 });
+  setSignalState('EVALUATED');
+  pipeLog('→ sentiment_score + regime stamped', 'pass');
+
+  // VALIDATION parallel
+  moveSignalCard('pipe-validator', 0, -20);
+  pipeLog('[VALIDATION] Fault + Bias + Market State + Macro — 4 lanes in parallel');
+  const validatorFail = rejectScenario && rejectScenario.phase === 'validator' ? rejectScenario.failAt : -1;
+  await Promise.all([
+    runAgentGates('fault',       { gateMs:180 }),
+    runAgentGates('bias',        { gateMs:180 }),
+    runAgentGates('marketstate', { gateMs:180 }),
+    runAgentGates('macro',       { gateMs:180, failAt:validatorFail }),
+  ]);
+  pipeLog('All 4 validators reported', 'pass');
+  document.getElementById('pipe-aggregation').classList.add('active');
+  await pipeSleep(400);
+  pipeLog('[VALIDATION] Validator Stack aggregates → GO / CAUTION / NO_GO');
+  await runAgentGates('validator', { gateMs:240 });
+  document.getElementById('pipe-aggregation').classList.remove('active');
+
+  const verdict = (rejectScenario && rejectScenario.phase === 'validator') ? 'NO_GO' : 'GO';
+  const verdictEl = document.getElementById('pipe-verdict');
+  verdictEl.classList.add('show', verdict.toLowerCase());
+  verdictEl.textContent = verdict;
+  pipeLog(`Verdict: <b>${verdict}</b>`, verdict==='GO' ? 'pass' : 'fail');
+  if (verdict === 'NO_GO') { showRejection(rejectScenario); return finishPipeline(); }
+  await pipeSleep(300);
+
+  // DECISION — per-customer independent
+  moveSignalCard('pipe-trade', 0, -20);
+  const trader = document.getElementById('pipe-trade');
+  trader.classList.add('running');
+  const custCount = mode === 'parallel' ? 3 : 1;
+  pipeLog(`[DECISION] Trader dispatches ${custCount} customer subprocess${custCount>1?'es':''} in parallel (MAX_TRADE_PARALLEL=3)`);
+  // Apply Screener sector boost at Trade G5 — pushes +0.62 → +0.73 (XLK was +0.82 from pre-computed sector_scores)
+  if (!rejectScenario || rejectScenario.failAt == null || rejectScenario.failAt >= 5) {
+    await pipeSleep(280);
+    setSignalScore('+0.73');
+    pipeLog('  <span style="color:var(--teal)">score → +0.73</span> · Trade G5 · +0.11 sector boost from Screener (XLK +0.82 pre-computed)', 'info');
+  }
+
+  const traderFail = rejectScenario && rejectScenario.phase === 'trader' ? rejectScenario.failAt : null;
+  const custConfigs = [];
+  if (mode === 'parallel') {
+    custConfigs.push({ failAt:null, passLabel:'BUY' });
+    custConfigs.push({ failAt:null, passLabel:'BUY' });
+    custConfigs.push({ failAt:4, failLabel:'cap 12/12' });
+  } else if (traderFail != null) {
+    custConfigs.push({ failAt:traderFail, failLabel:`fail G${traderFail}` });
+  } else {
+    custConfigs.push({ failAt:null, passLabel:'BUY' });
+  }
+  const laneResults = await Promise.all(custConfigs.map((c, i) => runCustomerLane(i, { gateMs:120, ...c })));
+  trader.classList.remove('running');
+
+  const gates = trader.querySelectorAll('.pipe-gate');
+  const maxReached = Math.max(...laneResults);
+  for (let i = 0; i < Math.min(maxReached, gates.length); i++) gates[i].classList.add('passed');
+  if (traderFail != null) {
+    gates[traderFail]?.classList.remove('passed');
+    gates[traderFail]?.classList.add('failed');
+  }
+
+  if (rejectScenario) { showRejection(rejectScenario); return finishPipeline(); }
+
+  const buyCount = laneResults.filter(r => r === gates.length).length;
+  const skipCount = laneResults.length - buyCount;
+  setSignalState('EXECUTED');
+  const out = document.getElementById('pipe-output');
+  out.className = 'pipe-output buy';
+  document.getElementById('pipe-output-detail').textContent = custCount > 1
+    ? `${buyCount} BUY · ${skipCount} SKIP — outcomes vary per customer (last customer hit 12-cap)`
+    : 'BUY → Alpaca (trailing stop server-side)';
+  pipeLog(`Outcome: <b>${custCount > 1 ? `${buyCount} BUY · ${skipCount} SKIP` : 'BUY'}</b>`, 'pass');
+  finishPipeline();
+}
+
+updateButtons();
+
+// ═══════════════════════════════════════════════════════════════
+// 24-HOUR DAY PLAYBACK
+// ═══════════════════════════════════════════════════════════════
+// t is simulated minutes from 00:00. kind: critical | normal | background
+const DAY_FIXED = [
+  { t:5,    kind:'normal',   agents:['scheduler','news'], dbs:['signals'], externals:['news_apis'], label:'Overnight news session' },
+  { t:65,   kind:'normal',   agents:['scheduler','news'], dbs:['signals'], externals:['news_apis'], label:'Overnight news (01:05)' },
+  { t:90,   kind:'critical', agents:['retail_backup','company_server'], dbs:['auth','cust_dbs','signals'], label:'retail_backup → pi4b staging' },
+  { t:120,  kind:'critical', agents:['company_strongbox'], externals:['r2'], dbs:['company'], label:'strongbox → Cloudflare R2' },
+  { t:180,  kind:'normal',   agents:['rebuild_template'], dbs:['cust_dbs'], label:'rebuild_template (customer DB schema)' },
+  { t:195,  kind:'background', agents:['rotate_logs'], label:'rotate_logs [Sun only]' },
+  { t:240,  kind:'normal',   agents:['company_librarian'], externals:['github'], label:'librarian CVE scan [Sun only]' },
+  { t:360,  kind:'background', agents:['company_vault'], dbs:['company'], label:'vault hourly' },
+  { t:405,  kind:'normal',   agents:['retail_portal'], dbs:['auth'], externals:['user','resend','user_email'], label:'Customer password reset requested (06:45)' },
+  { t:420,  kind:'background', agents:['company_vault'], dbs:['company'], label:'vault hourly' },
+  { t:480,  kind:'critical', agents:['company_auditor'], dbs:['auditor'], label:'Auditor morning report' },
+  { t:480,  kind:'normal',   agents:['company_fidget'], dbs:['company'], label:'fidget anomaly scan' },
+  { t:540,  kind:'normal',   agents:['company_scoop'], externals:['resend'], dbs:['company'], label:'Morning scoop email drain' },
+  { t:550,  kind:'critical', agents:['market_daemon','cron_daemon'], label:'DAEMON START (9:10 ET)' },
+  { t:555,  kind:'normal',   agents:['market_daemon','price_poller','news'], dbs:['live_prices','signals'], externals:['alpaca'], label:'Pre-open prep — price poll + news refresh (9:15 · no trading yet)' },
+  { t:570,  kind:'critical', agents:['market_daemon','trade_logic','news','sentiment','screener'], dbs:['live_prices','signals','cust_dbs'], externals:['alpaca'], label:'Market open 9:30 — first enrichment cycle (trader begins)' },
+  { t:570,  kind:'critical', agents:['market_daemon'], externals:['twilio','resend','user_phone','user_email'], dbs:['cust_dbs','auth'], label:'Trade approval notify — OPEN', patch:true },
+  { t:720,  kind:'critical', agents:['market_daemon'], externals:['twilio','resend','user_phone','user_email'], dbs:['cust_dbs','auth'], label:'Trade approval notify — MIDDAY', patch:true },
+  { t:930,  kind:'critical', agents:['market_daemon'], externals:['twilio','resend','user_phone','user_email'], dbs:['cust_dbs','auth'], label:'Trade approval notify — CLOSE (15:30)', patch:true },
+  { t:870,  kind:'normal',   agents:['retail_portal'], dbs:['auth'], externals:['user','resend','user_email'], label:'New customer signup → verification email sent (14:30)' },
+  { t:900,  kind:'normal',   agents:['retail_portal'], dbs:['auth'], externals:['user'], label:'Customer clicks verification link (15:00)' },
+  { t:960,  kind:'critical', agents:['market_daemon'], label:'DAEMON STOP (16:00 ET)' },
+  { t:990,  kind:'critical', agents:['synthos_monitor','retail_portal','market_daemon','trade_logic'], dbs:['signals'], externals:['admin','user'], label:'Admin issues late-day maintenance HALT — banner to customers', patch:true },
+  { t:1020, kind:'normal',   agents:['synthos_monitor','retail_portal'], dbs:['signals'], externals:['admin','user'], label:'Admin resumes — maintenance window cleared (17:00)', patch:true },
+  { t:1080, kind:'background', agents:['company_vault'], dbs:['company'], label:'vault hourly' },
+  { t:1170, kind:'normal',   agents:['retail_portal','synthos_monitor'], dbs:['support'], externals:['user'], label:'Customer opens support ticket: "exit didn\'t trigger" (19:30)' },
+  { t:1200, kind:'normal',   agents:['company_scoop'], externals:['resend'], dbs:['company'], label:'Evening scoop drain' },
+  { t:1215, kind:'normal',   agents:['synthos_monitor'], dbs:['support'], externals:['admin'], label:'Admin reads ticket on /support page (20:15)' },
+  { t:1230, kind:'normal',   agents:['synthos_monitor'], dbs:['support'], externals:['admin','resend','user_email'], label:'Admin replies — email sent to customer (20:30)' },
+  { t:1260, kind:'normal',   agents:['retail_portal','synthos_monitor'], dbs:['support'], externals:['user'], label:'Customer reads reply, posts follow-up (21:00)' },
+  { t:1290, kind:'normal',   agents:['synthos_monitor'], dbs:['support'], externals:['admin','resend','user_email'], label:'Admin final reply — thread resolved (21:30)' },
+  { t:1320, kind:'normal',   agents:['company_archivist'], dbs:['company','auditor'], label:'archivist old-row sweep' },
+];
+
+function buildDaySchedule() {
+  const items = [...DAY_FIXED];
+  // Heartbeats — every 15 sim min
+  for (let t = 0; t < 1440; t += 15) {
+    items.push({ t, kind:'background', agents:['pi5_heartbeat','synthos_monitor'], dbs:['monitor'], label:'pi5 heartbeat' });
+    items.push({ t, kind:'background', agents:['mon_heartbeat','synthos_monitor'], label:'pi2w_monitor heartbeat' });
+  }
+  // pi2w_sentinel heartbeat — every 30 sim min
+  for (let t = 0; t < 1440; t += 30) {
+    items.push({ t, kind:'background', agents:['sen_heartbeat','synthos_monitor'], label:'pi2w_sentinel heartbeat' });
+  }
+  // company_sentinel stale-check — every 30 sim min
+  for (let t = 22; t < 1440; t += 30) {
+    items.push({ t, kind:'background', agents:['company_sentinel'], dbs:['monitor'], label:'sentinel stale-check' });
+  }
+  // pi4b self-heartbeat — every 30 sim min
+  for (let t = 7; t < 1440; t += 30) {
+    items.push({ t, kind:'background', agents:['pi4b_heartbeat'], dbs:['monitor'], label:'pi4b heartbeat' });
+  }
+  // Price poll — every 5 sim min during 8a-6p (480..1080)
+  for (let t = 480; t < 1080; t += 5) {
+    items.push({ t, kind:'normal', agents:['price_poller'], dbs:['live_prices'], externals:['alpaca'], label:'price_poll' });
+  }
+  // Enrichment cycle (screener+news+sentiment+trader) — every 30 sim min during 9:30-16:00
+  // ENRICHMENT_INTERVAL_MIN=30 in retail_market_daemon.py
+  for (let t = 570; t < 960; t += 30) {
+    items.push({ t, kind:'normal', agents:['trade_logic','news','sentiment','screener'], dbs:['signals','cust_dbs'], label:'enrichment cycle (screener+news+sentiment+trader)' });
+  }
+  // Reconciliation — every 10 sim min during 9:30-16:00 (RECON_INTERVAL_MIN=10)
+  for (let t = 580; t < 960; t += 10) {
+    items.push({ t, kind:'background', agents:['trade_logic'], externals:['alpaca'], dbs:['cust_dbs'], label:'reconciliation' });
+  }
+  return items.sort((a,b) => a.t - b.t);
+}
+
+const daySchedule = buildDaySchedule();
+
+function dayPhase(t) {
+  if (t < 300)   return 'Pre-dawn · overnight news, backups';
+  if (t < 480)   return 'Early morning · quiet';
+  if (t < 550)   return 'Morning prep · auditor, fidget';
+  if (t < 960)   return 'Market hours · daemon running';
+  if (t < 1200)  return 'After-market · reconciliation tail';
+  return 'Night · heartbeats, scoop, archivist';
+}
+
+const dayState = { running:false, simT:0, lastRealMs:0, idx:0, rafId:null };
+const simClockEl = document.getElementById('sim-clock');
+const simTimeEl = document.getElementById('sim-clock-time');
+const simPhaseEl = document.getElementById('sim-clock-phase');
+const btnDay = document.getElementById('btn-day');
+
+function startDay() {
+  // Always switch to topology view — the whole point is to watch it on the map
+  const topoTab = document.querySelector('.tab[data-view="topology"]');
+  if (topoTab && !topoTab.classList.contains('active')) topoTab.click();
+  // Stop any running sequence
+  clearTimeout(state.timer);
+  state.playing = false;
+  state.seqId = null;
+  state.steps = [];
+  state.stepIdx = 0;
+  clearAllHighlights();
+  logEl.innerHTML = '';
+  logMsg('<b style="color:#00f5d4">▶ Starting 24-hour day simulation — 00:00 ET</b>', true);
+  dayState.running = true;
+  dayState.simT = 0;
+  dayState.idx = 0;
+  dayState.lastRealMs = performance.now();
+  simClockEl.classList.add('active');
+  btnDay.classList.add('running');
+  btnDay.textContent = '⏹ STOP DAY PLAYBACK';
+  // Disable sequence step buttons during day mode
+  btnFwd.disabled = true;
+  btnBack.disabled = true;
+  btnPause.disabled = false;
+  dayState.rafId = requestAnimationFrame(dayFrame);
+}
+
+function stopDay() {
+  dayState.running = false;
+  if (dayState.rafId) cancelAnimationFrame(dayState.rafId);
+  simClockEl.classList.remove('active');
+  btnDay.classList.remove('running');
+  btnDay.textContent = '▶ PLAY 24-HOUR DAY';
+  clearAllHighlights();
+  progressFill.style.width = '0';
+  stepDisplay.textContent = '—';
+  updateButtons();
+}
+
+function dayFrame(now) {
+  if (!dayState.running) return;
+  const dt = now - dayState.lastRealMs;
+  dayState.lastRealMs = now;
+  if (!state.paused) {
+    // 1× speed = 24h in 96s real → 1440 sim-min / 96000 ms = 0.015 min/ms
+    const rate = 0.015 * state.speed;
+    dayState.simT += dt * rate;
+  }
+  if (dayState.simT >= 1440) {
+    logMsg('<b style="color:#00f5d4">■ Day complete — 23:59 ET</b>', true);
+    stopDay();
+    return;
+  }
+  const h = Math.floor(dayState.simT / 60);
+  const m = Math.floor(dayState.simT % 60);
+  const hhmm = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+  simTimeEl.textContent = hhmm;
+  simPhaseEl.textContent = dayPhase(dayState.simT);
+  progressFill.style.width = `${(dayState.simT / 1440) * 100}%`;
+  stepDisplay.textContent = hhmm;
+  while (dayState.idx < daySchedule.length && daySchedule[dayState.idx].t <= dayState.simT) {
+    fireDayEvent(daySchedule[dayState.idx]);
+    dayState.idx++;
+  }
+  dayState.rafId = requestAnimationFrame(dayFrame);
+}
+
+function fireDayEvent(ev) {
+  const durBase = ev.kind === 'critical' ? 2200 : (ev.kind === 'normal' ? 900 : 320);
+  const dur = durBase / state.speed;
+  const touched = [];
+  (ev.agents || []).forEach(id => {
+    const e = document.getElementById(`agent-${id}`);
+    if (e) { e.classList.add('glow'); touched.push(e); }
+  });
+  (ev.dbs || []).forEach(id => {
+    const e = document.getElementById(`db-${id}`);
+    if (e) { e.classList.add('pulse'); touched.push(e); }
+  });
+  (ev.externals || []).forEach(id => {
+    const e = document.getElementById(`ext-${id}`);
+    if (e) { e.classList.add('pulse'); touched.push(e); }
+  });
+  // Draw flow edges between the event participants so the "system interacting with itself" reads clearly.
+  // Skip for background events to keep the visual noise down on heartbeats etc.
+  let edgeElements = [];
+  let dotElements = [];
+  if (ev.kind !== 'background') {
+    const agents = ev.agents || [];
+    const targets = [...(ev.dbs||[]).map(d=>['db',d]), ...(ev.externals||[]).map(x=>['ext',x])];
+    const pairs = [];
+    if (agents.length >= 2) {
+      // Chain agents first: a[0]→a[1]→a[2]...
+      for (let i = 0; i < agents.length - 1; i++) pairs.push([agents[i], agents[i+1]]);
+    }
+    // Primary agent → each target DB/external
+    const primary = agents[agents.length - 1] || agents[0];
+    if (primary) {
+      targets.forEach(([k, id]) => pairs.push([primary, id]));
+    }
+    // Draw them (temporary, scoped to this event)
+    pairs.forEach(([a, b], idx) => {
+      const pa = getAnchor(a), pb = getAnchor(b);
+      if (!pa || !pb) return;
+      const dx = pb.x - pa.x, dy = pb.y - pa.y;
+      const dist = Math.hypot(dx, dy);
+      const mx = (pa.x + pb.x) / 2;
+      const my = (pa.y + pb.y) / 2;
+      const cx = mx - (dy / dist) * Math.min(dist*0.15, 40);
+      const cy = my + (dx / dist) * Math.min(dist*0.15, 40);
+      const edgeId = `day-edge-${++dotIdCounter}`;
+      const markerEnd = ev.patch ? 'url(#arrow-purple)' : 'url(#arrow-teal)';
+      const p = el('path', { id:edgeId, d:`M${pa.x},${pa.y} Q${cx},${cy} ${pb.x},${pb.y}`, class:`edge active${ev.patch?' patch':''}`, 'marker-end':markerEnd });
+      edgesLayer.appendChild(p);
+      edgeElements.push(p);
+      // One dot per edge for critical; skip for normal to reduce noise
+      if (ev.kind === 'critical') {
+        const dot = el('circle', { r:4, class:`edge-dot${ev.patch?' patch':''}` });
+        const am = el('animateMotion', { dur:`${Math.max(0.6, 1.2/state.speed)}s`, begin:`${idx * 0.1}s`, repeatCount:'indefinite', rotate:'auto' });
+        const mp = el('mpath', {});
+        mp.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', `#${edgeId}`);
+        mp.setAttribute('href', `#${edgeId}`);
+        am.appendChild(mp);
+        dot.appendChild(am);
+        dotsLayer.appendChild(dot);
+        dotElements.push(dot);
+      }
+    });
+  }
+  // Log critical + normal, skip background
+  if (ev.kind !== 'background') {
+    const hh = String(Math.floor(ev.t/60)).padStart(2,'0');
+    const mm = String(ev.t%60).padStart(2,'0');
+    const prefix = ev.patch ? '<span style="color:#7b61ff;font-weight:700">[PATCH] </span>' : '';
+    const marker = ev.kind === 'critical' ? '<span style="color:#ffb347">●</span> ' : '<span style="color:#00f5d4">○</span> ';
+    const entry = document.createElement('div');
+    entry.className = 'entry';
+    entry.innerHTML = `<span class="ts">${hh}:${mm}</span>${marker}${prefix}${ev.label}`;
+    logEl.appendChild(entry);
+    while (logEl.children.length > 14) logEl.removeChild(logEl.firstChild);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  setTimeout(() => {
+    touched.forEach(e => { e.classList.remove('glow'); e.classList.remove('pulse'); });
+    edgeElements.forEach(e => e.remove());
+    dotElements.forEach(e => e.remove());
+  }, dur);
+}
+
+btnDay.addEventListener('click', () => {
+  if (dayState.running) stopDay();
+  else startDay();
+});
+
+// Wire Reset to stop day mode too
+const origReset = document.getElementById('reset').onclick;
+document.getElementById('reset').addEventListener('click', () => {
+  if (dayState.running) stopDay();
+}, { capture:true });
+
+// ═══════════════════════════════════════════════════════════════
+// ARCHITECTURE JSON OVERRIDES
+// On page load, fetch /api/system-architecture (backed by GitHub's
+// system_architecture.json) and merge any metadata updates into the
+// map. Layout (coordinates) stays in this template; text/statuses
+// flow from the JSON so the map stays accurate without template edits.
+// ═══════════════════════════════════════════════════════════════
+async function loadArchitectureOverrides() {
+  try {
+    const token = new URLSearchParams(location.search).get('token') || '';
+    const url = '/api/system-architecture' + (token ? ('?token=' + encodeURIComponent(token)) : '');
+    const resp = await fetch(url, { credentials: 'same-origin' });
+    if (!resp.ok) { console.warn('[arch-json] fetch failed', resp.status); return; }
+    const arch = await resp.json();
+    applyArchOverrides(arch);
+    showArchMeta(arch);
+  } catch (e) {
+    console.warn('[arch-json] error loading:', e);
+  }
+}
+
+function applyArchOverrides(arch) {
+  if (!arch || !Array.isArray(arch.nodes)) return;
+  const jsonAgents = {};  // id (stripped of .py) → {desc, how, status, node}
+  const jsonDbs = {};
+  for (const node of arch.nodes) {
+    for (const a of (node.agents || [])) {
+      const id = (a.name || '').replace(/\.py$/, '');
+      jsonAgents[id] = { ...a, _node: node.id };
+    }
+    for (const db of (node.databases || [])) {
+      // DB names in JSON are strings like "company.db", "customers/*/signals.db"
+      jsonDbs[db] = node.id;
+    }
+  }
+
+  // 1. Merge into existing M.agents
+  const unmatchedTemplate = [];
+  for (const tmpl of M.agents) {
+    const json = jsonAgents[tmpl.id] || jsonAgents[tmpl.label];
+    if (json) {
+      // JSON desc replaces template desc if JSON has one
+      if (json.desc) tmpl.desc = json.desc;
+      if (json.how) tmpl.cron = json.how;
+      if (json.status) tmpl.status = json.status;
+      // Mark as JSON-backed
+      tmpl._jsonBacked = true;
+      delete jsonAgents[tmpl.id];
+      delete jsonAgents[tmpl.label];
+    } else {
+      unmatchedTemplate.push(tmpl.id);
+    }
+  }
+
+  // 2. Anything left in jsonAgents is in JSON but not in our layout — add to misc zone
+  const jsonOnly = Object.values(jsonAgents);
+  if (jsonOnly.length) {
+    addMiscAgents(jsonOnly);
+  }
+
+  // 3. Log mismatches to console for debugging
+  if (unmatchedTemplate.length) {
+    console.warn('[arch-json] template has agents not in JSON:', unmatchedTemplate);
+  }
+  if (jsonOnly.length) {
+    console.warn('[arch-json] JSON has agents not in template layout (rendered in misc zone):', jsonOnly.map(a => a.name));
+  }
+}
+
+// Render any JSON-only agents as small boxes in a "misc" zone below the nodes
+function addMiscAgents(extras) {
+  const layer = document.getElementById('content-layer');
+  if (!layer) return;
+  // Place misc zone at bottom of canvas, x=40 y=1050
+  const xStart = 40, yStart = 1050, boxW = 140, boxH = 28, gap = 8;
+  // Banner label
+  const label = el('text', { x: xStart, y: yStart - 6, style:'font-family:var(--mono); font-size:10px; fill:var(--amber); letter-spacing:0.1em', 'text-anchor':'start' });
+  label.textContent = `⚠ ${extras.length} agent(s) in JSON but not positioned in template — add coordinates`;
+  layer.appendChild(label);
+  extras.forEach((a, i) => {
+    const id = (a.name || '').replace(/\.py$/, '');
+    const x = xStart + (i % 10) * (boxW + gap);
+    const y = yStart + Math.floor(i / 10) * (boxH + gap);
+    const g = el('g', { class:'agent', id:`agent-${id}`, 'data-id':id, 'data-kind':'agent' });
+    g.appendChild(el('rect', { x, y, width:boxW, height:boxH, style:'stroke:var(--amber); stroke-dasharray:3 2' }));
+    const t = el('text', { x: x + boxW/2, y: y + boxH/2 });
+    t.textContent = id;
+    g.appendChild(t);
+    layer.appendChild(g);
+    // Register in M.agents so click/hover still works
+    M.agents.push({ id, label:id, node:a._node, desc:a.desc || '(in JSON, no template coordinates)', x, y, w:boxW, h:boxH, _miscZone:true });
+    const reg = M.agents[M.agents.length - 1];
+    g.addEventListener('click', () => showDetail('agent', reg));
+    g.addEventListener('mouseenter', ev => showHover(ev, 'agent', reg));
+    g.addEventListener('mouseleave', hideHover);
+    g.addEventListener('mousemove', moveHover);
+  });
+}
+
+// Show a small indicator that JSON was loaded + timestamp
+function showArchMeta(arch) {
+  if (!arch || !arch.meta) return;
+  const lastUpdated = arch.meta.last_updated || '';
+  const version = arch.meta.version || '';
+  const src = arch._meta && arch._meta.source;  // 'github' or 'local'
+  // Small stamp bottom-right of header area
+  const headerRight = document.querySelector('header .live-pill');
+  if (!headerRight) return;
+  const stamp = document.createElement('div');
+  stamp.style.cssText = 'font-family:var(--mono); font-size:9px; color:var(--muted); letter-spacing:0.04em; margin-left:6px';
+  stamp.title = `system_architecture.json · last updated ${lastUpdated} · source: ${src || 'unknown'}`;
+  stamp.textContent = `json v${version}${src === 'github' ? ' · gh' : src === 'local' ? ' · local' : ''}`;
+  headerRight.parentNode.insertBefore(stamp, headerRight.nextSibling);
+}
+
+// Kick off the merge after initial render (defaults show first, then upgrade).
+loadArchitectureOverrides();
+</script>
+</body>
+</html>

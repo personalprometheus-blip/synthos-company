@@ -1,6 +1,6 @@
 # Trader Restructure Plan
 
-**Status:** DRAFT · consolidated + decisions locked 2026-04-20 · 10 changes (+ 1a/1b window-calculator refinement) · 5 phases · not yet approved for implementation
+**Status:** DRAFT · finalized 2026-04-20 · 10 changes (Change 7 absorbed into 1a/1b) · 5 phases · awaiting final build approval
 **Created:** 2026-04-20
 **Branch:** `patch/logic-review-2026-04-20` (synthos-company)
 **Owner:** Project lead
@@ -136,30 +136,61 @@ Trader runs every 30 minutes. Intraday pullbacks often complete in 5–10 minute
 - Each daemon needs its own heartbeat + watchdog restart path
 - Alpaca rate limit headroom with continuous polling — implement backoff
 
-### 1a. Window Calculator (new agent in enrichment daemon)
+### 1a. Window Calculator module — tiered macro + minor
 
-Keeps the trade daemon lean by precomputing entry/exit conditions per candidate.
+Single module (`synthos_build/agents/retail_window_calculator.py`) invoked in two modes:
 
-For each candidate signal, the Window Calculator computes:
-```
-entry_low       — lowest acceptable entry price (pullback target)
-entry_high      — highest acceptable entry price (above = too extended)
-initial_stop    — stop level if filled (ATR-based, per Change 6)
-take_profit     — optional TP level
-valid_until     — TTL for this window set
-```
+- **Enrichment mode** (called on 30-min enrichment tick) — computes **both** macro AND minor windows for every candidate. Heavy computation: ATR_14, 20-day SMA, prior-day close, VWAP, rel_strength.
+- **Refresh mode** (called by trade daemon every cycle ~30s) — recomputes **only minor** windows using live prices + today's intraday state. Cheap — no historical data fetches.
 
-Runs as part of each enrichment tick. Writes to a new `trade_windows` table keyed by (signal_id, customer_id). Recomputed every tick so windows stay fresh.
+For each (signal_id, customer_id) candidate, the module produces:
+
+| Field | Macro | Minor |
+|---|---|---|
+| `entry_low` | thesis-level pullback floor (e.g. 20-day SMA - 0.5×ATR) | today's tactical floor (e.g. VWAP - 0.25×ATR) |
+| `entry_high` | thesis-level ceiling (e.g. prior resistance) | today's tactical ceiling (e.g. VWAP + 0.5×ATR) |
+| `stop` | ATR-based initial stop | same stop (tactical windows don't override strategic risk) |
+| `tp` | thesis take-profit (optional) | — |
+| `computed_at` | 30-min enrichment tick | trade daemon tick (~30s) |
+| `expires_at` | until next enrichment tick (+5 min grace) | 2× trade daemon cycle time |
+
+**Minor windows must nest inside macro** — if `minor.entry_low < macro.entry_low` or `minor.entry_high > macro.entry_high`, flag recompute on next enrichment tick.
+
+**ATR + VWAP as first-class inputs:**
+- Minor windows width must be ≥ 1× ATR to avoid whipsaw
+- VWAP is the default anchor for intraday pullback windows (classic institutional pullback target)
 
 ### 1b. Trade daemon reads windows, not raw logic
 
-Trade daemon's per-tick behavior becomes:
-1. Read `trade_windows` for not-yet-filled candidates
-2. For each candidate, compare `live_prices.price` against `(entry_low, entry_high)`
-3. If in window + all downstream gates pass → fire order
-4. Otherwise, move on
+Trade daemon's per-cycle behavior:
+1. Refresh minor windows (invoke Window Calculator in refresh mode)
+2. Read `trade_windows` for not-yet-filled candidates with valid (non-stale) minor rows
+3. For each candidate, fire only if ALL:
+   - `minor` row exists, not stale
+   - Current `live_prices.price` ∈ [`minor.entry_low`, `minor.entry_high`]
+   - `minor` nests inside `macro` (validates nesting on every check)
+   - All downstream gates pass (G0-G13)
+4. Otherwise, move to next candidate
 
-This makes the trade daemon O(candidates × customers) per tick with mostly integer comparisons. No heavy computation. The expensive work (ATR, rel_strength, gate scoring) lives in the enrichment tick where it belongs.
+**Why this design collapses Change 7 into Change 1a/1b:** the "pullback-only entry filter" (Change 7) is no longer a separate gate — the minor window *is* the pullback target. Strategic intent (macro) and tactical timing (minor) are separated primitives, checked together at fire time.
+
+### Table schema update
+
+```sql
+CREATE TABLE trade_windows (
+  signal_id     INTEGER NOT NULL,
+  customer_id   TEXT NOT NULL,
+  tier          TEXT NOT NULL,    -- 'macro' | 'minor'
+  entry_low     REAL NOT NULL,
+  entry_high    REAL NOT NULL,
+  stop          REAL NOT NULL,
+  tp            REAL,             -- nullable
+  computed_at   TEXT NOT NULL,
+  expires_at    TEXT NOT NULL,
+  PRIMARY KEY (signal_id, customer_id, tier)
+);
+CREATE INDEX idx_trade_windows_customer_tier ON trade_windows(customer_id, tier, expires_at);
+```
 
 ### 2. Candidate Generator (new component in enrichment daemon)
 - Reads `sector_scores` for sectors with positive momentum
@@ -212,12 +243,11 @@ CREATE INDEX idx_news_flags_ticker_fresh ON news_flags(ticker, fresh_until);
 - Total risk per trade capped at ~0.5% of equity (configurable)
 - Trailing stop mechanics unchanged (they work correctly per E2 evidence)
 
-### 7. Pullback entry filter (new rule in Gate 6)
-- Reject entry if ANY of:
-  - price > `day_high − (0.5 × day_range)`  (within 0.5% of day-high)
-  - `RSI_14 > 70` at entry
-  - price more than `0.5 × ATR_14` above 20-day SMA
-- Goal: stop buying extended moves; wait for pullbacks within established trend
+### 7. Pullback entry filter — ABSORBED INTO Change 1a/1b
+
+Originally proposed as a new gate rule. With the macro/minor window design, the pullback-only behavior is already enforced by the minor window being anchored on VWAP ± 0.25-0.5×ATR. Buying outside the pullback zone becomes impossible by construction — there's no firing trigger outside the window.
+
+**Dropped as a separate change.** The logic it would have added now lives in the Window Calculator's minor-window anchoring rules. One primitive, not two.
 
 ### 8. Gate 4 EVENT_RISK — integrate earnings calendar
 - Current: `NOT_CHECKED — TODO: DATA_DEPENDENCY`
@@ -289,6 +319,8 @@ Decision 2026-04-20: full conversion to new logic. No A/B, no env-var toggle, no
 - Baseline = pre-cutover 2-3 weeks of v1 metrics
 - If v2 is clearly worse on multiple metrics after 2 weeks → decide between `git revert` (return to v1 while redesigning) or forward patch (fix what's broken in v2)
 
+**Revert authority:** `git revert` on any phase's merge commit requires **explicit admin approval** — it is not a reflex action triggered by metric thresholds alone. The thresholds (open question 3) define when to *consider* reverting; the decision itself is always a human call. This is deliberate: reverting under panic during market stress is a known failure mode.
+
 The env var pattern is explicitly rejected. v1 code is deleted in the Phase 1 commit that introduces v2.
 
 ---
@@ -334,9 +366,22 @@ daily_master_YYYY-MM-DD.log
 
 ## Open questions (still to design)
 
-1. **Trade daemon cycle time** — bounded by customer count × per-customer evaluation time. Measure during Phase 1 build; target ≤30s full cycle. How does this scale if customer count grows past `MAX_TRADE_PARALLEL=3`?
-2. **Window Calculator frequency** — recomputed every enrichment tick (30 min), but do volatile-ticker windows need more frequent refresh? Possibly — could trigger window recomputation on large intraday moves, not only on cadence.
-3. **Post-cutover measurement thresholds** — what specific metric thresholds on buys/day, win rate, drawdown etc. would trigger a `git revert` decision vs a forward patch? Need to define before cutover so the decision isn't made in a panic.
+1. **Scaling past 3 customers** — `MAX_TRADE_PARALLEL=3` caps simultaneous customer evaluations. With current 6 customers it's fine (2 parallel batches per cycle). If customer count grows past ~10, cycle time degrades. Design decision for that moment, not now.
+2. **Post-cutover measurement thresholds** — specific metric thresholds on buys/day, win rate, drawdown, avg win$, avg loss$ that flag v2 as clearly worse than v1 baseline. Need to define **before Phase 3 cutover** (Phase 1 is pure refactor, no behavior change to measure against).
+3. **Pre-existing customer `f313a3d9` 300s timeout bug** — surfaced during cycle-time measurement. Not blocking this work but needs a separate patch branch. Flag as its own investigation.
+
+## Cycle-time data from live runs (resolved)
+
+Measured from `scheduler.log` over recent weeks:
+
+| Cycle type | Duration |
+|---|---|
+| No-op tick (nothing to trade) | 1.6–2.0s |
+| Normal multi-decision cycle | 5–12s |
+| Large batch (6/6 customers) | ≤15s |
+| Outlier (4 customer timeouts × 300s) | 1200s — pre-existing bug, see open question 3 |
+
+**Implication for design:** 30s trade daemon cycle target is comfortably achievable for current 6-customer fleet with parallelism=3. No need to further measure before Phase 1 build.
 
 ---
 

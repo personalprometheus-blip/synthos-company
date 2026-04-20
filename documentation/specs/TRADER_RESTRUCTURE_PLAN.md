@@ -19,6 +19,18 @@ The 12-day "stability window" that started ~2026-04-18 measures hardware stabili
 
 Hardware-level monitoring reports all-green through all of these.
 
+**The deeper issue — a flawed premise, not just a tuning problem.**
+
+The current trader was designed on the assumption that news signals would arrive with enough frequency and quality to keep trading activity meaningful. That assumption is wrong in practice. Most market days produce *no* actionable news signal that crosses a 0.75 composite threshold (see E1). Meanwhile:
+
+- Sector momentum is real, persistent, and ignored as a *trigger* (only used as a small G5 boost)
+- Market regime / macro context is evaluated but never originates a buy
+- Cash sits idle waiting for news that doesn't come
+
+**Lotto-ticket analogy:** the current system is designed like playing the lottery 3 times a year — it only fires when a rare news signal jackpots the composite past the threshold. Instead, it should play the market like a **professional portfolio manager** — positioning based on sector strength and market regime, using news to *inform* already-rational positions rather than *trigger* positions from nothing.
+
+This restructure is not a re-tuning. It is a reframe of what drives buys.
+
 ---
 
 ## Evidence from logs
@@ -263,18 +275,21 @@ Each phase is its own patch branch off main. No phase merges without a validatio
 
 ---
 
-## Cutover strategy — no A/B, sequential with rollback switch
+## Cutover strategy — full replacement, git is the rollback
 
-Decision 2026-04-20: full conversion to new logic, no side-by-side comparison. Rationale: current system is idle/losing money; extended A/B keeps the broken state running.
+Decision 2026-04-20: full conversion to new logic. No A/B, no env-var toggle, no dual-runtime code paths.
 
-Mitigation against confirmation bias — one-way deploy with undo switch:
-- Deploy new logic as the only active trader path
-- Keep old code in place, gated by `TRADER_LOGIC_VERSION={v1,v2}` env var (default `v2`)
-- Measure specific outcomes for 2-3 weeks after cutover: buys/day, hold time, win rate, drawdown
-- If metrics clearly worse → flip env to `v1` while diagnosing
-- If metrics clearly better or comparable → delete v1 code in a follow-up patch
+**Rationale:**
+- The premise of v1 is wrong, not just its tuning. It's not a candidate for "maybe revert to." Keeping v1 code around alongside v2 invites reverting to a known-broken state under stress.
+- Git history IS the rollback mechanism. If v2 ships and is materially worse, `git revert <merge_commit>` + redeploy restores v1 in minutes. Same outcome as a feature flag, without the dead-code maintenance tax.
+- Dual code paths encourage "just flip the switch" thinking. Fix-forward discipline is healthier for logic that's fundamentally being rethought.
 
-No dual-runtime complexity. One-config-flag rollback only.
+**Post-cutover discipline (not rollback, but measurement):**
+- Track specific outcomes for 2-3 weeks: buys/day, hold time, win rate, avg win $, avg loss $, max drawdown
+- Baseline = pre-cutover 2-3 weeks of v1 metrics
+- If v2 is clearly worse on multiple metrics after 2 weeks → decide between `git revert` (return to v1 while redesigning) or forward patch (fix what's broken in v2)
+
+The env var pattern is explicitly rejected. v1 code is deleted in the Phase 1 commit that introduces v2.
 
 ---
 
@@ -314,14 +329,14 @@ daily_master_YYYY-MM-DD.log
 | 3 | Trade daemon exit monitoring | Watches prices via window comparison (Change 1b); Alpaca still handles server-side trailing stops |
 | 4 | Decision log location | Shared `bolt_decisions.log`; new `daily_master.log` for end-of-day fused archive |
 | 5 | Cooldown scope | Per-customer — customer situations diverge quickly |
-| 6 | A/B mechanism | No A/B; full conversion with rollback env var (see Cutover strategy) |
+| 6 | A/B mechanism | No A/B, no env-var toggle. Full replacement; git is the rollback (see Cutover strategy) |
 | 7 | Sector momentum scoring origin | Reuses `sector_scores` table; Candidate Generator does not recompute |
 
 ## Open questions (still to design)
 
 1. **Trade daemon cycle time** — bounded by customer count × per-customer evaluation time. Measure during Phase 1 build; target ≤30s full cycle. How does this scale if customer count grows past `MAX_TRADE_PARALLEL=3`?
 2. **Window Calculator frequency** — recomputed every enrichment tick (30 min), but do volatile-ticker windows need more frequent refresh? Possibly — could trigger window recomputation on large intraday moves, not only on cadence.
-3. **Rollback criteria** — what specific metric thresholds flip `TRADER_LOGIC_VERSION` back to `v1`? Need to define before cutover.
+3. **Post-cutover measurement thresholds** — what specific metric thresholds on buys/day, win rate, drawdown etc. would trigger a `git revert` decision vs a forward patch? Need to define before cutover so the decision isn't made in a panic.
 
 ---
 

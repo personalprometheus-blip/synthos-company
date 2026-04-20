@@ -87,9 +87,32 @@ def bootstrap_schema() -> None:
     """
     Create all tables if they don't exist. Safe to call on every startup.
     Reads from company_schema.sql if available, otherwise uses inline DDL.
+
+    Fast path: if `schema_version` table is already populated, we skip the
+    CREATE-TABLE-IF-NOT-EXISTS statements entirely. Rationale: every agent
+    (cron-driven and daemon) calls DB() on startup, which calls this. Each
+    CREATE-IF-NOT-EXISTS briefly acquires the write lock to verify schema.
+    When synthos_monitor or archivist holds the write lock, cron agents hit
+    the 30s busy_timeout and crash ("database is locked"). 22+ such failures
+    observed 2026-04-20. Schema is long since bootstrapped (v2 since Mar 27),
+    so these runs are wasted contention. Fast-path returns in microseconds
+    with just a SELECT (doesn't block in WAL mode).
     """
     conn = _connect()
     try:
+        # Fast path — schema already bootstrapped, nothing to do.
+        # SELECT in WAL mode doesn't block on concurrent writers, so this
+        # path never hits "database is locked" even under load.
+        try:
+            row = conn.execute("SELECT count(*) FROM schema_version").fetchone()
+            if row and row[0] > 0:
+                log.debug("Schema already bootstrapped (fast path)")
+                return
+        except sqlite3.OperationalError:
+            # schema_version table doesn't exist yet — fresh DB, full
+            # bootstrap needed. Fall through.
+            pass
+
         # Try reading from SQL file first
         schema_path = BASE_DIR / "config" / "company_schema.sql"
         if schema_path.exists():

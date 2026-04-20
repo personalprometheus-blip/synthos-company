@@ -28,11 +28,17 @@ data/librarian_latest.json
 data/morning_report.json
 data/patches_latest.json
 data/backup_log.json
+data/backup_status.json
+data/fidget_latest.json
 data/audit_result.json
 data/package_manifest.json
 data/timekeeper_status.json
 config/package_manifest.json
 .known_good/
+
+# Stale backup artifacts from prior refactors (dbleak fix, etc.)
+*.pre_dbleak_bak
+*.pre_*_bak
 
 # Scoop / trigger files
 data/scoop_trigger.json

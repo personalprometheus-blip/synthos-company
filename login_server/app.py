@@ -49,7 +49,7 @@ if not SSO_SECRET:
 
 # ── Flask app ─────────────────────────────────────────────────────────────────
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='../static', static_url_path='/static')
 app.secret_key = SESSION_SECRET
 app.permanent_session_lifetime = timedelta(hours=12)
 

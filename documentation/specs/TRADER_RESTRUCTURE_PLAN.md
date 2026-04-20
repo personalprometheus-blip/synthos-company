@@ -1,6 +1,6 @@
 # Trader Restructure Plan
 
-**Status:** DRAFT · consolidated 2026-04-20 · 10 changes · phases defined · not approved for implementation
+**Status:** DRAFT · consolidated + decisions locked 2026-04-20 · 10 changes (+ 1a/1b window-calculator refinement) · 5 phases · not yet approved for implementation
 **Created:** 2026-04-20
 **Branch:** `patch/logic-review-2026-04-20` (synthos-company)
 **Owner:** Project lead
@@ -112,17 +112,42 @@ Trader runs every 30 minutes. Intraday pullbacks often complete in 5–10 minute
 
 ### 1. Split trader to its own continuous daemon
 - Extract trade logic from `retail_market_daemon.py` into new `retail_trade_daemon.py`
-- Polls `signals.db` + `live_prices` every ~30–60s during market hours only (9:30-16:00 ET)
-- Inherits: halt check, approval notifications, heartbeat, watchdog integration
-- Enrichment daemon keeps: screener, news, sentiment, validator stack — writes `signals` + `sector_scores` + `news_flags`
+- Polls `signals.db` + `live_prices` during market hours only (9:30-16:00 ET)
+- **Cycle time**: bounded by customer count × per-customer evaluation time, running 3-at-a-time per existing `MAX_TRADE_PARALLEL=3`. Target cycle time ≤ 30s. Measure during Phase 1 build.
+- Inherits: halt check (4-layer), heartbeat, watchdog integration
+- **Approval notifications stay in enrichment daemon** (time-based 9:30 / 12:00 / 15:30, not event-driven)
+- **Decision log shared**: trade daemon writes to `bolt_decisions.log` alongside enrichment decisions — one search surface
 
 **Design constraints:**
 - Halt check (4-layer) must run in the trade daemon too; not just market daemon
-- Approval notification logic (9:30, 12:00, 15:30) currently lives in market daemon — decide whether it stays there or moves
-- SQLite busy_timeout already present, but two writers instead of one increases contention probability — verify
+- SQLite busy_timeout already present, but two writers instead of one increases contention probability — verify during build
 - Each daemon needs its own heartbeat + watchdog restart path
 - Alpaca rate limit headroom with continuous polling — implement backoff
-- Decision log: decide whether trade daemon writes to `bolt_decisions.log` or its own
+
+### 1a. Window Calculator (new agent in enrichment daemon)
+
+Keeps the trade daemon lean by precomputing entry/exit conditions per candidate.
+
+For each candidate signal, the Window Calculator computes:
+```
+entry_low       — lowest acceptable entry price (pullback target)
+entry_high      — highest acceptable entry price (above = too extended)
+initial_stop    — stop level if filled (ATR-based, per Change 6)
+take_profit     — optional TP level
+valid_until     — TTL for this window set
+```
+
+Runs as part of each enrichment tick. Writes to a new `trade_windows` table keyed by (signal_id, customer_id). Recomputed every tick so windows stay fresh.
+
+### 1b. Trade daemon reads windows, not raw logic
+
+Trade daemon's per-tick behavior becomes:
+1. Read `trade_windows` for not-yet-filled candidates
+2. For each candidate, compare `live_prices.price` against `(entry_low, entry_high)`
+3. If in window + all downstream gates pass → fire order
+4. Otherwise, move on
+
+This makes the trade daemon O(candidates × customers) per tick with mostly integer comparisons. No heavy computation. The expensive work (ATR, rel_strength, gate scoring) lives in the enrichment tick where it belongs.
 
 ### 2. Candidate Generator (new component in enrichment daemon)
 - Reads `sector_scores` for sectors with positive momentum
@@ -216,15 +241,15 @@ CREATE TABLE position_cooldown (
 
 ## Implementation phasing
 
-Each phase is its own patch branch off main. No phase merges without paper-trading validation. Phases 2 and 5 are low-risk and could theoretically ship independently; phase 3 and 4 are the ones that materially change trader behavior.
+Each phase is its own patch branch off main. No phase merges without a validation window using the cutover strategy above. Phases 2 and 5 are low-risk and could theoretically ship independently; phase 3 and 4 are the ones that materially change trader behavior.
 
 | Phase | Scope | Risk | Depends on |
 |---|---|---|---|
-| **1** | Trade daemon split (#1) — pure refactor, no behavior change | LOW | — |
+| **1** | Trade daemon split (#1) — pure refactor, no behavior change. Trade daemon still runs same 14 gates as today, just in its own process. | LOW | — |
 | **2** | News output reshape (#4) — `news_flags` table, news agent writes flags | LOW | — (independent of Phase 1) |
-| **3** | Candidate Generator (#2) + Gate 5 rebalance (#3) + News integration (#5) | MEDIUM | 1, 2 |
-| **4** | ATR stops + sizing refactor (#6) + Pullback filter (#7) | MEDIUM-HIGH | 1 |
-| **5** | Gate 4 gap fills (#8, #9) + Cooling-off (#10) | LOW | 1 |
+| **3** | Window Calculator agent (#1a) + Candidate Generator (#2) + Gate 5 rebalance (#3) + News integration (#5) + Trade daemon reads windows (#1b) | MEDIUM-HIGH | 1, 2 |
+| **4** | ATR stops + sizing refactor (#6) + Pullback filter (#7) | MEDIUM | 1, 3 |
+| **5** | Gate 4 gap fills (#8, #9) + Cooling-off (#10) + `daily_master.log` end-of-day archival task | LOW | 1 |
 
 ---
 
@@ -238,25 +263,65 @@ Each phase is its own patch branch off main. No phase merges without paper-tradi
 
 ---
 
+## Cutover strategy — no A/B, sequential with rollback switch
+
+Decision 2026-04-20: full conversion to new logic, no side-by-side comparison. Rationale: current system is idle/losing money; extended A/B keeps the broken state running.
+
+Mitigation against confirmation bias — one-way deploy with undo switch:
+- Deploy new logic as the only active trader path
+- Keep old code in place, gated by `TRADER_LOGIC_VERSION={v1,v2}` env var (default `v2`)
+- Measure specific outcomes for 2-3 weeks after cutover: buys/day, hold time, win rate, drawdown
+- If metrics clearly worse → flip env to `v1` while diagnosing
+- If metrics clearly better or comparable → delete v1 code in a follow-up patch
+
+No dual-runtime complexity. One-config-flag rollback only.
+
+---
+
+## Master daily archive log
+
+Separate from `bolt_decisions.log` (per-decision file, live during the day). End-of-day process writes `daily_master.log` that fuses ALL agent decisions in chronological order for the day:
+
+```
+daily_master_YYYY-MM-DD.log
+  06:45 [screener]     XLK published top-10, +0.82 momentum
+  07:00 [news]         AAPL earnings_raise flag written, score +0.7
+  08:00 [auditor]      morning report ...
+  09:32 [trader/CUST1] AAPL candidate: entry_low=184.20 entry_high=185.80
+  09:35 [trader/CUST1] AAPL BUY @ 184.55 (entry window matched)
+  ...
+```
+
+- Written at end-of-day by a cron task (say 16:30 ET, after market close)
+- Read-only archival artifact; not touched during live trading hours
+- Enables "what happened today, in order" review without grepping 5+ log files
+- Kept 90 days, then rotated per existing log rotation policy
+
+---
+
 ## Deferred (on the TODO list, not in this patch queue)
 
 - **News companion daemon** — continuous news-watching daemon on its own process. Future optimization for when 30-min news cadence becomes the bottleneck for breaking-news-sensitive strategies. Defer until baseline v2 is stable and we can measure whether latency is actually costing trades.
-- **A/B testing framework** — how to run new logic side-by-side with old on a single pi before full cutover. Needed before Phase 3 ships. Open question below.
 - **Premium event calendar** — if free APIs (FMP/Finnhub/AlphaVantage) prove unreliable at earnings prediction, upgrade path.
 
 ---
 
-## Open questions (for next pass)
+## Resolved — decisions locked in 2026-04-20
 
-1. **Trade daemon polling cadence** — 5s? 30s? 60s? Tradeoff: lower = more responsive, more Alpaca calls; higher = miss fast moves. Probably 30s during Phase 1 baseline, tune after measurement.
-2. **Approval notification location** — stays in enrichment daemon or moves to trade daemon? Leaning enrichment (time-based, not event-based).
-3. **Does the trade daemon handle exit monitoring beyond Alpaca trailing stops?** Approval-queue execution, user-triggered exits, news-driven exit triggers. Yes for execution, no for monitoring (Alpaca handles price).
-4. **Decision log location** — `bolt_decisions.log` stays or new log per daemon? Leaning same file with a daemon-tag column; single search surface.
-5. **Cooldown scope** — 10's per-customer model correct, or should cooldown apply fleet-wide (if one customer stops MSFT, everyone pauses)? Per-customer is more flexible.
-6. **A/B mechanism** — how to run new trader logic side-by-side with old on one pi. Options:
-   - Shadow mode: new logic runs read-only, writes decisions to separate log; compare vs actual
-   - Customer-level split: half customers on old, half on new — requires customer-level feature flag
-7. **Sector momentum scoring origin** — reuses `sector_scores` table (already written by screener) or does Candidate Generator compute its own? Leaning reuse.
+| # | Question | Decision |
+|---|----------|----------|
+| 2 | Approval notification location | Stays in enrichment daemon |
+| 3 | Trade daemon exit monitoring | Watches prices via window comparison (Change 1b); Alpaca still handles server-side trailing stops |
+| 4 | Decision log location | Shared `bolt_decisions.log`; new `daily_master.log` for end-of-day fused archive |
+| 5 | Cooldown scope | Per-customer — customer situations diverge quickly |
+| 6 | A/B mechanism | No A/B; full conversion with rollback env var (see Cutover strategy) |
+| 7 | Sector momentum scoring origin | Reuses `sector_scores` table; Candidate Generator does not recompute |
+
+## Open questions (still to design)
+
+1. **Trade daemon cycle time** — bounded by customer count × per-customer evaluation time. Measure during Phase 1 build; target ≤30s full cycle. How does this scale if customer count grows past `MAX_TRADE_PARALLEL=3`?
+2. **Window Calculator frequency** — recomputed every enrichment tick (30 min), but do volatile-ticker windows need more frequent refresh? Possibly — could trigger window recomputation on large intraday moves, not only on cadence.
+3. **Rollback criteria** — what specific metric thresholds flip `TRADER_LOGIC_VERSION` back to `v1`? Need to define before cutover.
 
 ---
 

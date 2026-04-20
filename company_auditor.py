@@ -104,6 +104,11 @@ REMOTE_NODES = {
         # PROCESS_DOWN flags per day.
         'services': [],
         'processes': [],
+        # 2026-04-20 — the pi2w monitor node is offline (alongside the
+        # already-removed pi2w_sentinel display). The unreachable SSH was
+        # firing NODE_UNREACHABLE every 5 min (58 hits / day). Skip until
+        # the node comes back — remove 'disabled' to re-enable.
+        'disabled': True,
     },
     # 'pi2w_sentinel' — removed 2026-04-17, confirmed disabled indefinitely
     # 2026-04-20. Display is currently off (power source: was USB from main PC,
@@ -568,6 +573,10 @@ def scan_all_logs() -> dict:
 
     # Remote nodes (pi5, pi2w) via SSH
     for node_id, node_cfg in REMOTE_NODES.items():
+        # Skip nodes flagged 'disabled' — prevents NODE_UNREACHABLE noise
+        # for intentionally-offline hardware (pi2w monitor/display, etc.).
+        if node_cfg.get('disabled'):
+            continue
         try:
             remote_issues = scan_remote_logs(node_id, node_cfg)
             all_issues.extend(remote_issues)

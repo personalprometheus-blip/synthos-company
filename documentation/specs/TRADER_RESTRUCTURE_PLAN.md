@@ -1,6 +1,6 @@
 # Trader Restructure Plan
 
-**Status:** DRAFT · research + spec phase · not approved for implementation
+**Status:** DRAFT · consolidated 2026-04-20 · 10 changes · phases defined · not approved for implementation
 **Created:** 2026-04-20
 **Branch:** `patch/logic-review-2026-04-20` (synthos-company)
 **Owner:** Project lead
@@ -81,7 +81,7 @@ Trader runs every 30 minutes. Intraday pullbacks often complete in 5–10 minute
 
 - `GATE 4_EVENT_RISK — NOT_CHECKED` — TODO: EVENT_CALENDAR not yet integrated. Blind to earnings dates / scheduled events.
 - `GATE 4_SPREAD — SKIP_CHECK` — "no quote data" — spread sanity check silently inoperative.
-- Signal ID 394 (MSFT) appearing multiple times — dedup behavior under a same-ticker-repeated-buy flow worth verifying.
+- Signal ID 394 (MSFT) appearing multiple times — buy-stop-buy cycle; dedup/cooldown behavior worth verifying.
 
 ---
 
@@ -94,139 +94,174 @@ Trader runs every 30 minutes. Intraday pullbacks often complete in 5–10 minute
 | 3 | Initial stop too tight for entry volatility | **HIGH** | E2 — MSFT $424→$420 0.82% |
 | 4 | No entry-timing filter (buys extended moves) | MEDIUM | E2 — implied by stop-out pattern |
 | 5 | Event calendar integration missing (Gate 4) | MEDIUM | E4 — TODO in code |
-| 6 | Spread check silently skipped | LOW | E4 — "no quote data" |
+| 6 | Buy-stop-buy-stop cycles (no cooldown) | MEDIUM | E4 — Signal ID 394 recurrence |
+| 7 | Spread check silently skipped | LOW | E4 — "no quote data" |
 
 ---
 
-## Proposed Restructure
+## Architecture — the shape we're building toward
 
-### Change 1 — Split trader into its own continuous daemon
+- **Enrichment daemon** (30-min cadence) produces *intel*: sector scores, regime, sentiment, news_flags. No buys fired here.
+- **Trade daemon** (continuous, market hours only) produces *action*: watches candidates for entry, executes, monitors exits.
+- **Validation Stack** (Fault / Bias / Market State / Macro) runs at trader gate-time — **source-agnostic**, applies to every trade regardless of origin.
+- **News annotates, never triggers.**
 
-**Current:**
-```
-retail_market_daemon (30-min orchestrator)
-  ├─ screener
-  ├─ news
-  ├─ sentiment
-  └─ trade_logic (runs ONCE per tick)
-```
+---
 
-**Proposed:**
-```
-retail_market_daemon (30-min enrichment only)
-  ├─ screener
-  ├─ news
-  ├─ sentiment
-  └─ writes VALIDATED signals + scores to signals.db
+## Proposed Changes (10 items)
 
-retail_trade_daemon (NEW — continuous during market hours)
-  ├─ polls signals.db every N seconds
-  ├─ reads live_prices (already 60s-fresh)
-  ├─ per-signal state: "watching, ready-to-buy, triggered, cooling-off"
-  ├─ continuous evaluation of entry conditions (pullback filters, etc.)
-  └─ executes buys when conditions fire
-```
+### 1. Split trader to its own continuous daemon
+- Extract trade logic from `retail_market_daemon.py` into new `retail_trade_daemon.py`
+- Polls `signals.db` + `live_prices` every ~30–60s during market hours only (9:30-16:00 ET)
+- Inherits: halt check, approval notifications, heartbeat, watchdog integration
+- Enrichment daemon keeps: screener, news, sentiment, validator stack — writes `signals` + `sector_scores` + `news_flags`
 
-**Why:**
-- Decision cadence (seconds) decouples from intel cadence (minutes)
-- Enables stateful "waiting for pullback" behavior
-- Matches existing `retail_price_poller` pattern — sibling continuous loop
-
-**Risks / design constraints:**
+**Design constraints:**
 - Halt check (4-layer) must run in the trade daemon too; not just market daemon
 - Approval notification logic (9:30, 12:00, 15:30) currently lives in market daemon — decide whether it stays there or moves
 - SQLite busy_timeout already present, but two writers instead of one increases contention probability — verify
 - Each daemon needs its own heartbeat + watchdog restart path
 - Alpaca rate limit headroom with continuous polling — implement backoff
-- Decision log currently shared in `bolt_decisions.log` — decide whether trade daemon writes to same file or its own
+- Decision log: decide whether trade daemon writes to `bolt_decisions.log` or its own
 
-**Open questions:**
-- What's the right polling cadence for the trade daemon — 5s? 30s? 60s?
-- Should the enrichment daemon signal the trade daemon when new VALIDATED signals land, or is pure polling fine?
-- Does the trade daemon watch exit conditions too (trailing stops, take-profits)? Alpaca trailing stops are server-side, so technically no — but human-in-loop exits (approval queue execution) still need a runner.
+### 2. Candidate Generator (new component in enrichment daemon)
+- Reads `sector_scores` for sectors with positive momentum
+- Top-N per strong sector, filtered: validator = GO, not already held, passes liquidity floor
+- Ranks by `sector_momentum × relative_strength × regime_match`
+- Emits candidate signals marked `source='candidate'` into `signals.db`
+- Runs as part of every enrichment tick (30 min)
 
-### Change 2 — Gate 5 composite rebalance
+### 3. Gate 5 composite rebalance
+- Today: news inputs ceiling-limit composite to 0.635 (below 0.75 threshold) = news-required-to-buy
+- Add `sector_momentum_component` as first-class scored input, weight ~0.20
+- Reduce news component weights (tier / politician / interrogation / sentiment) combined to ~±0.2
+- Lower threshold from 0.75 → ~0.55 (compensated by stricter downstream gates)
+- Result: sector-strong tickers pass without news
 
-**Current behavior:** max neutral-news composite = 0.635, threshold 0.75 → news required.
+### 4. News output reshape — from trigger to annotation
 
-**Proposed:**
-- Either lower threshold (e.g. 0.55) and tighten downstream gates (G7 sizing, G8 stop) to compensate for weaker signals getting through
-- Or increase the weight of `screening_adj` (currently neutral = +0.00) so sector momentum can meaningfully boost composite
-- **Preferred:** introduce `sector_momentum_component` as a first-class scored input, weighted ~0.20, so a +0.8 momentum ticker adds ~0.16 to composite → brings a neutral-news signal into the 0.75 threshold if momentum is present
+New table:
+```sql
+CREATE TABLE news_flags (
+  ticker        TEXT NOT NULL,
+  category      TEXT NOT NULL,   -- 'earnings_raise', 'analyst_upgrade', etc.
+  severity      TEXT NOT NULL,   -- 'positive' | 'negative'
+  score         REAL NOT NULL,   -- -1.0 to +1.0
+  fresh_until   TEXT NOT NULL,   -- ISO timestamp, category-specific TTL
+  notes         TEXT,
+  created_at    TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX idx_news_flags_ticker_fresh ON news_flags(ticker, fresh_until);
+```
 
-**Companion change:** introduce a **Candidate Generator** step upstream of the trader (either in enrichment daemon or trade daemon, TBD) that emits sector-driven candidates with no news required. News becomes a veto/flag, not the trigger.
+- Categories positive: `earnings_raise`, `analyst_upgrade`, `guidance_raise`, `breakout`, `catalyst`
+- Categories negative: `earnings_miss`, `guidance_cut`, `regulatory_probe`, `management_change`, `litigation`
+- TTL per category (e.g. earnings_raise = 5 days, regulatory_probe = 30 days)
+- News agent writes to `news_flags` instead of creating VALIDATED signals directly
 
-### Change 3 — ATR-based initial stop
+### 5. News integration at trader — 3-point touch
 
-**Current:** stop distance appears to be fixed percent.
-
-**Proposed:**
-- Initial stop distance = max(1.5 × ATR_14, hardcoded floor %)
-- Lets the thesis breathe within the ticker's normal noise
-- Trailing stop mechanics unchanged — only initial placement changes
-
-**Sizing coupling:** with ATR-based stops, risk-per-trade (dollars lost at stop) should drive sizing, not fixed-percent equity. This means G7 Model B needs to become `position_size = risk_per_trade_dollars / stop_distance_dollars`.
-
-### Change 4 — Entry-timing filter (pullback-only)
-
-**Proposed new gate or addition to G6 (Entry decision):**
-- Reject entry if price within X% of 5-day high
-- Or require RSI_14 < 70 at entry
-- Or require price within 0.5 × ATR of 20-day SMA
-
-Goal: stop buying extended moves. Prefer dips within established momentum.
-
-### Change 5 — Resolve Gate 4 gaps
-
-- `EVENT_RISK`: integrate earnings calendar (free APIs exist — FMP, Finnhub free tier). Refuse entries within N days of earnings.
-- `SPREAD`: ensure live quote data reaches the gate; currently silently skipping.
-
----
-
-## [RESERVED] User-proposed structural changes
-
-*Space below for additional proposals — will be filled in next conversation.*
-
-- Proposal A: —
-- Proposal B: —
-
----
-
-## Implementation phasing (draft)
-
-| Phase | Scope | Depends on |
+| Touch point | Role | Effect |
 |---|---|---|
-| 0 | This spec reviewed + approved | — |
-| 1 | Trade daemon split (Change 1) — trader moves to its own process, no behavior change | 0 |
-| 2 | Candidate Generator (Change 2 companion) + Gate 5 rebalance | 1 |
-| 3 | ATR-based stop + sizing refactor (Change 3) | 1 |
-| 4 | Pullback entry filter (Change 4) | 1, 3 |
-| 5 | Gate 4 gap fills (Change 5) | independent — can happen any time |
+| **Gate 4 EVENT_RISK** | event detection | Reject entry if ticker has upcoming earnings or active event |
+| **Gate 5 composite** | modifier | news_flags score adds/subtracts to composite (±0.2 typical) |
+| **NEW Gate 5.5 VETO** | safety | Any flag with `severity score < −0.7` → reject regardless of composite |
 
-Each phase is its own patch branch off main. No phase merges without its predecessor in place.
+**Exit logic:** news_flags with score < −0.5 on held positions triggers position review (not auto-sell; logged for admin decision or future auto-rule).
+
+### 6. ATR-based initial stop + risk-per-trade sizing
+- **Initial stop**: `max(1.5 × ATR_14, floor_pct)` — lets the thesis breathe within the ticker's normal noise
+- **Sizing (G7 Model B overhaul)**: `position_size = risk_per_trade_dollars / stop_distance_dollars`
+- Total risk per trade capped at ~0.5% of equity (configurable)
+- Trailing stop mechanics unchanged (they work correctly per E2 evidence)
+
+### 7. Pullback entry filter (new rule in Gate 6)
+- Reject entry if ANY of:
+  - price > `day_high − (0.5 × day_range)`  (within 0.5% of day-high)
+  - `RSI_14 > 70` at entry
+  - price more than `0.5 × ATR_14` above 20-day SMA
+- Goal: stop buying extended moves; wait for pullbacks within established trend
+
+### 8. Gate 4 EVENT_RISK — integrate earnings calendar
+- Current: `NOT_CHECKED — TODO: DATA_DEPENDENCY`
+- Free API options: FMP Basic, Finnhub free, Alpha Vantage
+- Refuse entries within 2 days before / 1 day after earnings
+- Pairs with `news_flags` for non-scheduled events
+
+### 9. Gate 4 SPREAD — fix silent skip
+- Current: `SKIP_CHECK — no quote data`
+- Investigate why live quote data isn't reaching the gate (likely Alpaca snapshot timing or stale data path)
+- Ensure spread check runs; add fallback to `(ask − bid) / mid` from `live_prices` if primary source fails
+
+### 10. Cooling-off after stop-out
+
+New table:
+```sql
+CREATE TABLE position_cooldown (
+  ticker          TEXT NOT NULL,
+  customer_id     TEXT NOT NULL,
+  cooldown_until  TEXT NOT NULL,
+  reason          TEXT,
+  created_at      TEXT DEFAULT (datetime('now')),
+  PRIMARY KEY (ticker, customer_id)
+);
+```
+
+- After a stop-out, ticker enters cooldown for N hours (default 24h)
+- Prevents buy-stop-buy-stop cycles (observed with MSFT Signal ID 394 recurrence)
+- Per-customer — different customers can hit different stops
+- Trade daemon consults at Gate 2 (Dedup) — treats ticker-in-cooldown as already-held for entry purposes
+
+---
+
+## Implementation phasing
+
+Each phase is its own patch branch off main. No phase merges without paper-trading validation. Phases 2 and 5 are low-risk and could theoretically ship independently; phase 3 and 4 are the ones that materially change trader behavior.
+
+| Phase | Scope | Risk | Depends on |
+|---|---|---|---|
+| **1** | Trade daemon split (#1) — pure refactor, no behavior change | LOW | — |
+| **2** | News output reshape (#4) — `news_flags` table, news agent writes flags | LOW | — (independent of Phase 1) |
+| **3** | Candidate Generator (#2) + Gate 5 rebalance (#3) + News integration (#5) | MEDIUM | 1, 2 |
+| **4** | ATR stops + sizing refactor (#6) + Pullback filter (#7) | MEDIUM-HIGH | 1 |
+| **5** | Gate 4 gap fills (#8, #9) + Cooling-off (#10) | LOW | 1 |
 
 ---
 
 ## Validation criteria before any phase ships
 
-- [ ] Paper-trading run of at least 5 market days with new logic vs old logic side-by-side
+- [ ] Paper-trading run of at least 5 market days with new logic vs old logic side-by-side (A/B mechanism TBD — see Open Questions)
 - [ ] Compare: buys/day, avg hold time, stop-out rate, win/loss ratio, max drawdown
 - [ ] Log inspection of at least 20 representative decisions, including at least 3 stop-outs and 3 winners
 - [ ] No regression in false-positive rate (entries that should not have fired)
+- [ ] System-map's "Pipeline & Gates" view updated to reflect new gate flow before Phase 3 ships
+
+---
+
+## Deferred (on the TODO list, not in this patch queue)
+
+- **News companion daemon** — continuous news-watching daemon on its own process. Future optimization for when 30-min news cadence becomes the bottleneck for breaking-news-sensitive strategies. Defer until baseline v2 is stable and we can measure whether latency is actually costing trades.
+- **A/B testing framework** — how to run new logic side-by-side with old on a single pi before full cutover. Needed before Phase 3 ships. Open question below.
+- **Premium event calendar** — if free APIs (FMP/Finnhub/AlphaVantage) prove unreliable at earnings prediction, upgrade path.
 
 ---
 
 ## Open questions (for next pass)
 
-1. Should the trade daemon also handle exit monitoring beyond Alpaca trailing stops? Approval-queue execution, user-triggered exits, etc.
-2. Does the trade daemon need its own "cooling off" table to prevent immediate re-entry after a stop-out on the same ticker?
-3. What's the right place for "no news" candidate emission — enrichment daemon (emits candidates as part of its 30-min tick) or trade daemon (pulls sector_scores + synthesizes candidates continuously)?
-4. How do we A/B test a phase safely when it's on a single pi?
+1. **Trade daemon polling cadence** — 5s? 30s? 60s? Tradeoff: lower = more responsive, more Alpaca calls; higher = miss fast moves. Probably 30s during Phase 1 baseline, tune after measurement.
+2. **Approval notification location** — stays in enrichment daemon or moves to trade daemon? Leaning enrichment (time-based, not event-based).
+3. **Does the trade daemon handle exit monitoring beyond Alpaca trailing stops?** Approval-queue execution, user-triggered exits, news-driven exit triggers. Yes for execution, no for monitoring (Alpaca handles price).
+4. **Decision log location** — `bolt_decisions.log` stays or new log per daemon? Leaning same file with a daemon-tag column; single search surface.
+5. **Cooldown scope** — 10's per-customer model correct, or should cooldown apply fleet-wide (if one customer stops MSFT, everyone pauses)? Per-customer is more flexible.
+6. **A/B mechanism** — how to run new trader logic side-by-side with old on one pi. Options:
+   - Shadow mode: new logic runs read-only, writes decisions to separate log; compare vs actual
+   - Customer-level split: half customers on old, half on new — requires customer-level feature flag
+7. **Sector momentum scoring origin** — reuses `sector_scores` table (already written by screener) or does Candidate Generator compute its own? Leaning reuse.
 
 ---
 
 ## Related specs
 
-- `AUTO_USER_TAGGING.md` — per-position management (already patch-complete)
-- `HALT_AGENT_REWRITE.md` — halt system v2 (already patch-complete)
+- `AUTO_USER_TAGGING.md` — per-position management (already patch-complete, awaiting merge)
+- `HALT_AGENT_REWRITE.md` — halt system v2 (already patch-complete, awaiting merge)
 - `BACKUP_ENCRYPT_AND_SPLIT_PLAN.md` — deferred, unrelated

@@ -4,8 +4,8 @@
     "version": "3.1",
     "total_phases": 10,
     "current_phase": 5,
-    "last_updated": "2026-04-20T20:15:00-04:00",
-    "notes": "Post-Phase-5 audit cycle (Rounds 1-10) + Phase C structural refactor (D1-D6) shipped 2026-04-20. See docs/PLAN.md in synthos repo for patch-branch tracker and docs/audit/AUDIT_*.md for audit findings."
+    "last_updated": "2026-04-20T22:00:00-04:00",
+    "notes": "Post-Phase-5 audit cycle (Rounds 1-10) + Phase C structural refactor (D1-D6) shipped 2026-04-20. Installer entry corrected — both node installers already exist, were mislabeled as pending. See docs/PLAN.md in synthos repo for patch-branch tracker and docs/audit/AUDIT_*.md for audit findings."
   },
   "phases": [
     {
@@ -80,7 +80,7 @@
         {"task": "Audit Rounds 1-10 + Phase C refactor (2026-04-20) — D1 trader run() 897→15 lines, D2 portal hotspots extracted, D4 utcnow deprecation, D5 dead IDs, D6 retail_shared.py; transaction-safety rewrites; news circuit breaker recovery; see docs/audit/AUDIT_*.md", "done": true},
         {"task": "USB SSD for pi4b (ordered, pending install)", "done": false},
         {"task": "Full disaster recovery drill", "done": false},
-        {"task": "Unified installer (company/retail/monitor node types)", "done": false}
+        {"task": "Node installers — install_retail.py (1196 LOC, state-machine + web wizard on :8080) + install_company.py (778 LOC, CLI-only); shared helpers in installers/common/. Both idempotent, --repair, --status. Not a single entry-point but functionally equivalent per-node-type.", "done": true}
       ]
     },
     {

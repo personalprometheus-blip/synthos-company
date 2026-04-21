@@ -1,10 +1,11 @@
 {
   "meta": {
     "project": "Synthos",
-    "version": "3.0",
+    "version": "3.1",
     "total_phases": 10,
     "current_phase": 5,
-    "last_updated": "2026-04-13T16:30:00-04:00"
+    "last_updated": "2026-04-20T20:15:00-04:00",
+    "notes": "Post-Phase-5 audit cycle (Rounds 1-10) + Phase C structural refactor (D1-D6) shipped 2026-04-20. See docs/PLAN.md in synthos repo for patch-branch tracker and docs/audit/AUDIT_*.md for audit findings."
   },
   "phases": [
     {
@@ -70,9 +71,14 @@
         {"task": "company_lock.py write-access protection for company.db", "done": true},
         {"task": "Auditor cross-node SSH scanning (pi4b, pi5, pi2w)", "done": true},
         {"task": "Backup chain: pi5 nightly archive to pi4b staging", "done": true},
-        {"task": "NVMe SSD for pi5 (ordered, pending install)", "done": false},
+        {"task": "NVMe SSD for pi5 (Patriot M.2 P300 256GB — migrated 2026-04-18)", "done": true},
+        {"task": "Strongbox R2 cloud backup (AES-256 encrypted, 30-day retention)", "done": true},
+        {"task": "Phase 5.a — Gate 4 EVENT_RISK scheduled-event calendar (Nasdaq earnings + macro_events table)", "done": true},
+        {"task": "Phase 5.b — cooling_off after stop-out (24h default; Gate 4 sub-gate)", "done": true},
+        {"task": "Phase 5.c — daily_master.md end-of-day audit rollup", "done": true},
+        {"task": "Systemd migration — portal/watchdog/market-daemon/trade-daemon moved from cron to systemd service/timer units", "done": true},
+        {"task": "Audit Rounds 1-10 + Phase C refactor (2026-04-20) — D1 trader run() 897→15 lines, D2 portal hotspots extracted, D4 utcnow deprecation, D5 dead IDs, D6 retail_shared.py; transaction-safety rewrites; news circuit breaker recovery; see docs/audit/AUDIT_*.md", "done": true},
         {"task": "USB SSD for pi4b (ordered, pending install)", "done": false},
-        {"task": "Strongbox R2 cloud backup (needs Cloudflare setup)", "done": false},
         {"task": "Full disaster recovery drill", "done": false},
         {"task": "Unified installer (company/retail/monitor node types)", "done": false}
       ]
@@ -81,12 +87,19 @@
       "id": 6, "name": "Agent Optimization", "status": "in_progress",
       "tasks": [
         {"task": "Yahoo Finance circuit breaker (sentiment agent)", "done": true},
+        {"task": "News-agent fetch_with_retry circuit recovery (R10-9 — was permanently sticky once tripped)", "done": true},
         {"task": "Interrogation skip for WATCH signals (news agent)", "done": true},
         {"task": "Numeric tier fix in trade agent", "done": true},
         {"task": "BIL excluded from deployed capital calculation", "done": true},
         {"task": "get_bars null safety fix", "done": true},
-        {"task": "Position reconciliation with Alpaca", "done": true},
+        {"task": "Position reconciliation with Alpaca (auto-adopt orphans, auto-close ghosts)", "done": true},
         {"task": "Agent lock graceful degradation (portal shows DB data)", "done": true},
+        {"task": "Phase 3b — Candidate Generator + trade_windows table", "done": true},
+        {"task": "Phase 3b — Window Calculator precomputes macro+minor entry/exit windows per signal × customer", "done": true},
+        {"task": "Phase 3c — Gate 5 window proximity nudge + trader window-driven entry", "done": true},
+        {"task": "Phase 4.a/b/d — ATR column on trade_windows + ATR-scaled bands + trader reads ATR from window", "done": true},
+        {"task": "BIL concentration alert (Gate 0 sub-gate) + tradable-asset cache filter", "done": true},
+        {"task": "Atomic transaction safety — open_position / reduce_position / update_portfolio / sweep_monthly_tax race conditions closed", "done": true},
         {"task": "Sentiment agent reads from live_prices (Phase 2)", "done": false},
         {"task": "Validation peer framework (Phase 10 — interrogation)", "done": false}
       ]
@@ -130,20 +143,34 @@
   ],
   "agents": {
     "retail_pi": [
-      {"alias": "trader", "file": "retail_trade_logic_agent.py", "job": "14-gate trade execution", "status": "built"},
+      {"alias": "trader", "file": "retail_trade_logic_agent.py", "job": "14-gate trade execution (Phase C D1: run() 897→15 lines via 11 helpers)", "status": "built"},
       {"alias": "research", "file": "retail_news_agent.py", "job": "22-gate news classification", "status": "built"},
       {"alias": "sentiment", "file": "retail_market_sentiment_agent.py", "job": "27-gate deterioration detection", "status": "built"},
       {"alias": "screener", "file": "retail_sector_screener.py", "job": "Sector momentum scoring", "status": "built"},
       {"alias": "scheduler", "file": "retail_scheduler.py", "job": "Session orchestrator + DB locks", "status": "built"},
+      {"alias": "market_daemon", "file": "retail_market_daemon.py", "job": "Enrichment pipeline 9:10-16:00 ET (systemd timer)", "status": "built"},
+      {"alias": "trade_daemon", "file": "retail_trade_daemon.py", "job": "Continuous trader 9:30-16:00 ET (systemd timer, currently paused)", "status": "built"},
       {"alias": "watchdog", "file": "retail_watchdog.py", "job": "Crash monitor, auto-restart", "status": "built"},
-      {"alias": "portal", "file": "retail_portal.py", "job": "Customer web dashboard + API", "status": "built"},
+      {"alias": "portal", "file": "retail_portal.py", "job": "Customer web dashboard + API (Phase C D2: 12 helpers extracted from 4 hotspots)", "status": "built"},
       {"alias": "heartbeat", "file": "retail_heartbeat.py", "job": "Agent status POST to monitor", "status": "built"},
       {"alias": "boot", "file": "retail_boot_sequence.py", "job": "Network wait, integrity check", "status": "built"},
       {"alias": "shutdown", "file": "retail_shutdown.py", "job": "Graceful pre-maintenance shutdown", "status": "built"},
       {"alias": "backup", "file": "retail_backup.py", "job": "Nightly archive to pi4b", "status": "built"},
       {"alias": "poller", "file": "retail_price_poller.py", "job": "Shared live_prices for all customers", "status": "built"},
       {"alias": "patcher", "file": "retail_patch.py", "job": "Safe file updater with rollback", "status": "built"},
-      {"alias": "listener", "file": "retail_interrogation_listener.py", "job": "UDP cross-validation responder", "status": "built"}
+      {"alias": "listener", "file": "retail_interrogation_listener.py", "job": "UDP cross-validation responder", "status": "built"},
+      {"alias": "macro_regime", "file": "retail_macro_regime_agent.py", "job": "Macro regime classifier (BEAR/BULL/NORMAL × volatility)", "status": "built"},
+      {"alias": "market_state", "file": "retail_market_state_agent.py", "job": "Market state detector (open/close/holiday)", "status": "built"},
+      {"alias": "bias_detection", "file": "retail_bias_detection_agent.py", "job": "Behavioral-bias detector (sector concentration, loss aversion)", "status": "built"},
+      {"alias": "fault_detection", "file": "retail_fault_detection_agent.py", "job": "Data freshness + system resources + account health", "status": "built"},
+      {"alias": "validator_stack", "file": "retail_validator_stack_agent.py", "job": "Final enrichment stamp — QUEUED → VALIDATED", "status": "built"},
+      {"alias": "candidate_gen", "file": "retail_candidate_generator.py", "job": "Phase 3b — sector-driven candidate signals", "status": "built"},
+      {"alias": "window_calc", "file": "retail_window_calculator.py", "job": "Phase 3b/4 — precomputes trade_windows (macro+minor entry/exit bands)", "status": "built"},
+      {"alias": "event_calendar", "file": "retail_event_calendar.py", "job": "Phase 5.a — Gate 4 EVENT_RISK earnings + macro events", "status": "built"},
+      {"alias": "tradable_cache", "file": "retail_tradable_cache.py", "job": "Alpaca /v2/assets filter for Candidate Generator", "status": "built"},
+      {"alias": "daily_master", "file": "retail_daily_master.py", "job": "Phase 5.c — end-of-day audit rollup markdown", "status": "built"},
+      {"alias": "sector_backfill", "file": "retail_sector_backfill_agent.py", "job": "Periodic backfill for missing sector_screening rows", "status": "built"},
+      {"alias": "shared", "file": "retail_shared.py", "job": "Phase C D6 — canonical kill_switch / get_active_customers / is_market_hours", "status": "built"}
     ],
     "company_pi": [
       {"alias": "monitor", "file": "synthos_monitor.py", "job": "Admin portal + fleet dashboard", "status": "built"},
@@ -155,7 +182,7 @@
       {"alias": "vault", "file": "company_vault.py", "job": "License keys, compliance, secrets", "status": "built"},
       {"alias": "fidget", "file": "company_fidget.py", "job": "Keep-alive, usage anomaly detection", "status": "built"},
       {"alias": "librarian", "file": "company_librarian.py", "job": "Package audit, CVE scan, all nodes", "status": "built"},
-      {"alias": "strongbox", "file": "company_strongbox.py", "job": "Encrypt + R2 cloud upload", "status": "planned"}
+      {"alias": "strongbox", "file": "company_strongbox.py", "job": "Encrypt + R2 cloud upload (nightly 2am ET, 30-day retention, AES-256)", "status": "built"}
     ]
   },
   "security": [
@@ -165,13 +192,14 @@
     {"item": "Admin-only API key fallback", "repo": "retail_portal", "status": "done"},
     {"item": "fcntl write locks (retail scheduler + company_lock)", "repo": "both", "status": "done"},
     {"item": "EEPROM NVMe/USB boot priority", "repo": "hardware", "status": "done"},
-    {"item": "AES-256 backup encryption (Strongbox)", "repo": "company", "status": "pending"},
-    {"item": "R2 off-site cloud backup", "repo": "company", "status": "pending"},
+    {"item": "AES-256 backup encryption (Strongbox)", "repo": "company", "status": "done"},
+    {"item": "R2 off-site cloud backup", "repo": "company", "status": "done"},
     {"item": "Rate limiting on login", "repo": "retail_portal", "status": "done"},
     {"item": "CSP + security headers on all responses", "repo": "retail_portal", "status": "done"}
   ],
   "blockers": [
-    {"title": "NVMe + USB SSD hardware pending", "severity": "low", "note": "Ordered. Current SD cards work, SSDs improve reliability + speed."},
-    {"title": "Strongbox needs Cloudflare R2 setup", "severity": "medium", "note": "Backups stage locally on pi4b. No off-site copy until R2 configured."}
+    {"title": "pi4b USB SSD install pending", "severity": "low", "note": "pi4b still on SD. pi5 already migrated to NVMe (Patriot M.2 P300, 2026-04-18). Current SD works; SSD improves reliability + speed."},
+    {"title": "pi2w monitor node offline", "severity": "low", "note": "Power-source relocation pending. Auditor now skips via 'disabled': True flag (was generating 58 NODE_UNREACHABLE hits/day). No impact on trading."},
+    {"title": "Trade daemon systemd timer paused on pi5", "severity": "low", "note": "Intentionally disabled post-Phase-C until monitoring window (end of week) confirms refactor stability. Re-enable with `sudo systemctl enable --now synthos-trade-daemon.timer` on pi5."}
   ]
 }

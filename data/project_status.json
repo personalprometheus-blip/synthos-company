@@ -1,11 +1,11 @@
 {
   "meta": {
     "project": "Synthos",
-    "version": "3.1",
+    "version": "3.2",
     "total_phases": 10,
     "current_phase": 5,
-    "last_updated": "2026-04-20T22:00:00-04:00",
-    "notes": "Post-Phase-5 audit cycle (Rounds 1-10) + Phase C structural refactor (D1-D6) shipped 2026-04-20. Installer entry corrected — both node installers already exist, were mislabeled as pending. See docs/PLAN.md in synthos repo for patch-branch tracker and docs/audit/AUDIT_*.md for audit findings."
+    "last_updated": "2026-04-21T12:00:00-04:00",
+    "notes": "Post-Phase-5 audit (Rounds 1-10) + Phase C structural refactor (D1-D6) shipped 2026-04-20. Enrichment pipeline reconstruction shipped 2026-04-21 (5 commits) after discovering market_daemon had been running a 54-second overnight one-shot each morning instead of the full intraday loop — fixed timer alignment, completed overnight_cycle, extracted price_poller to 24/7 timer, added premarket_selfcheck, added _MARKET_STATE_UPDATED key, switched candidate filter from combined_score (news+sentiment bias) to momentum_score (sector-driven as designed), and doubled sector screener cadence (pre-market + close). See system_architecture.json 'data_flow.pipeline_variants' + 'daily_timeline_weekday_et' for the full topology."
   },
   "phases": [
     {
@@ -78,6 +78,7 @@
         {"task": "Phase 5.c — daily_master.md end-of-day audit rollup", "done": true},
         {"task": "Systemd migration — portal/watchdog/market-daemon/trade-daemon moved from cron to systemd service/timer units", "done": true},
         {"task": "Audit Rounds 1-10 + Phase C refactor (2026-04-20) — D1 trader run() 897→15 lines, D2 portal hotspots extracted, D4 utcnow deprecation, D5 dead IDs, D6 retail_shared.py; transaction-safety rewrites; news circuit breaker recovery; see docs/audit/AUDIT_*.md", "done": true},
+        {"task": "Enrichment pipeline reconstruction (2026-04-21) — market_daemon timer 09:10→09:15 aligns with dispatcher's PREMARKET_START, overnight_cycle completed with all missing agents, standalone 24/7 price-poller systemd timer, run_premarket_selfcheck advisory gate, mid-day restart fires enrichment immediately, _MARKET_STATE_UPDATED key fix", "done": true},
         {"task": "USB SSD for pi4b (ordered, pending install)", "done": false},
         {"task": "Full disaster recovery drill", "done": false},
         {"task": "Node installers — install_retail.py (1196 LOC, state-machine + web wizard on :8080) + install_company.py (778 LOC, CLI-only); shared helpers in installers/common/. Both idempotent, --repair, --status. Not a single entry-point but functionally equivalent per-node-type.", "done": true}
@@ -100,6 +101,8 @@
         {"task": "Phase 4.a/b/d — ATR column on trade_windows + ATR-scaled bands + trader reads ATR from window", "done": true},
         {"task": "BIL concentration alert (Gate 0 sub-gate) + tradable-asset cache filter", "done": true},
         {"task": "Atomic transaction safety — open_position / reduce_position / update_portfolio / sweep_monthly_tax race conditions closed", "done": true},
+        {"task": "Candidate filter switched to momentum_score (2026-04-21) — sector-driven candidate_generator was filtering on combined_score (news+sentiment+weight, zero sector momentum) so sector leaders with 0.90 momentum scores weren't being emitted. Added momentum_score column to sector_screening, set threshold to 0.45; all 11 sectors now represented in emission pool", "done": true},
+        {"task": "Sector screener 2×/day cadence (2026-04-21) — added close-of-day pass (16:00 ET) in run_close_session, in addition to pre-market 09:15 pass. Gives tomorrow's pre-market <17h-old data vs ~24h-old; feeds overnight_cycle runs. Graceful degradation preserved (missed close → pre-market rebuilds from scratch)", "done": true},
         {"task": "Sentiment agent reads from live_prices (Phase 2)", "done": false},
         {"task": "Validation peer framework (Phase 10 — interrogation)", "done": false}
       ]
@@ -146,9 +149,9 @@
       {"alias": "trader", "file": "retail_trade_logic_agent.py", "job": "14-gate trade execution (Phase C D1: run() 897→15 lines via 11 helpers)", "status": "built"},
       {"alias": "research", "file": "retail_news_agent.py", "job": "22-gate news classification", "status": "built"},
       {"alias": "sentiment", "file": "retail_market_sentiment_agent.py", "job": "27-gate deterioration detection", "status": "built"},
-      {"alias": "screener", "file": "retail_sector_screener.py", "job": "Sector momentum scoring", "status": "built"},
+      {"alias": "screener", "file": "retail_sector_screener.py", "job": "Sector momentum scoring (11 S&P sector ETFs × top-10 holdings; 3m-return + SMA + volume formula). Runs 2×/day as of 2026-04-21: pre-market 09:15 + close 16:00. Persists momentum_score on sector_screening table.", "status": "built"},
       {"alias": "scheduler", "file": "retail_scheduler.py", "job": "Session orchestrator + DB locks", "status": "built"},
-      {"alias": "market_daemon", "file": "retail_market_daemon.py", "job": "Enrichment pipeline 9:10-16:00 ET (systemd timer)", "status": "built"},
+      {"alias": "market_daemon", "file": "retail_market_daemon.py", "job": "Enrichment pipeline 9:15-16:00 ET (timer fixed 2026-04-21). Pre-market prep 09:15 + intraday every 30min + close_session 16:00 (incl sector screener 2nd pass). 24/7 overnight_cycle off-hours.", "status": "built"},
       {"alias": "trade_daemon", "file": "retail_trade_daemon.py", "job": "Continuous trader 9:30-16:00 ET (systemd timer, currently paused)", "status": "built"},
       {"alias": "watchdog", "file": "retail_watchdog.py", "job": "Crash monitor, auto-restart", "status": "built"},
       {"alias": "portal", "file": "retail_portal.py", "job": "Customer web dashboard + API (Phase C D2: 12 helpers extracted from 4 hotspots)", "status": "built"},
@@ -156,7 +159,7 @@
       {"alias": "boot", "file": "retail_boot_sequence.py", "job": "Network wait, integrity check", "status": "built"},
       {"alias": "shutdown", "file": "retail_shutdown.py", "job": "Graceful pre-maintenance shutdown", "status": "built"},
       {"alias": "backup", "file": "retail_backup.py", "job": "Nightly archive to pi4b", "status": "built"},
-      {"alias": "poller", "file": "retail_price_poller.py", "job": "Shared live_prices for all customers", "status": "built"},
+      {"alias": "poller", "file": "retail_price_poller.py", "job": "Shared live_prices refresh — standalone 24/7 systemd timer (OnUnitActiveSec=60s) as of 2026-04-21, decoupled from market_daemon loop", "status": "built"},
       {"alias": "patcher", "file": "retail_patch.py", "job": "Safe file updater with rollback", "status": "built"},
       {"alias": "listener", "file": "retail_interrogation_listener.py", "job": "UDP cross-validation responder", "status": "built"},
       {"alias": "macro_regime", "file": "retail_macro_regime_agent.py", "job": "Macro regime classifier (BEAR/BULL/NORMAL × volatility)", "status": "built"},
@@ -164,7 +167,7 @@
       {"alias": "bias_detection", "file": "retail_bias_detection_agent.py", "job": "Behavioral-bias detector (sector concentration, loss aversion)", "status": "built"},
       {"alias": "fault_detection", "file": "retail_fault_detection_agent.py", "job": "Data freshness + system resources + account health", "status": "built"},
       {"alias": "validator_stack", "file": "retail_validator_stack_agent.py", "job": "Final enrichment stamp — QUEUED → VALIDATED", "status": "built"},
-      {"alias": "candidate_gen", "file": "retail_candidate_generator.py", "job": "Phase 3b — sector-driven candidate signals", "status": "built"},
+      {"alias": "candidate_gen", "file": "retail_candidate_generator.py", "job": "Phase 3b — sector-driven candidate signals. Filters sector_screening rows by momentum_score >= 0.45 (2026-04-21, was combined_score >= 0.55 which mixed news/sentiment and missed sector momentum entirely). MAX_PER_SECTOR=3, MAX_TOTAL=30.", "status": "built"},
       {"alias": "window_calc", "file": "retail_window_calculator.py", "job": "Phase 3b/4 — precomputes trade_windows (macro+minor entry/exit bands)", "status": "built"},
       {"alias": "event_calendar", "file": "retail_event_calendar.py", "job": "Phase 5.a — Gate 4 EVENT_RISK earnings + macro events", "status": "built"},
       {"alias": "tradable_cache", "file": "retail_tradable_cache.py", "job": "Alpaca /v2/assets filter for Candidate Generator", "status": "built"},

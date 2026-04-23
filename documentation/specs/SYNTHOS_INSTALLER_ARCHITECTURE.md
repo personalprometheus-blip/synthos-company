@@ -1,11 +1,36 @@
 # SYNTHOS INSTALLER ARCHITECTURE
+
+> ## ⚠️ PARTIALLY STALE — installer concept stable, agent names retired
+>
+> **Stamped 2026-04-23.** The installer architecture itself (5-step
+> bootstrap, env writer, boot sequence, DB initialization) is still
+> largely valid — retail and company installers shipped per this design
+> and run in production. Any operator using this doc for installer
+> concepts will not be led far astray.
+>
+> **What's STALE:**
+> - References to retail agent filenames `agent1_trader.py`,
+>   `agent2_research.py`, `agent3_sentiment.py` (4 occurrences) and
+>   codenames Bolt / Scout / Pulse (1 each). Actual agent files are
+>   14 `retail_*_agent.py`.
+> - The **Authority** field points to "SYSTEM_MANIFEST.md v2.0" — but
+>   SYSTEM_MANIFEST.md was stamped OUTDATED on 2026-04-23 itself. Use
+>   `synthos_build/data/system_architecture.json` v3.10 as current
+>   authority.
+>
+> **Current-truth supplements:**
+> - Installer code: `synthos_build/src/install_retail.py` and
+>   `synthos-company/install_company.py` are the source of truth
+> - Env schema: was supposed to live in SYSTEM_MANIFEST §8; see that
+>   doc's OUTDATED banner for where this is heading
+
 ## Implementation-Ready Specification + Full Code
 
 **Version:** 1.0  
 **Date:** 2026-03-26  
 **Authority:** SYSTEM_MANIFEST.md v2.0 (ground truth)  
 **Addendum:** SYNTHOS_OPERATIONS_SPEC_ADDENDUM_1.md v1.0  
-**Status:** Implementation-ready
+**Status:** ⚠️ Partially stale as of 2026-04-23 — concept valid, agent refs retired
 
 ---
 

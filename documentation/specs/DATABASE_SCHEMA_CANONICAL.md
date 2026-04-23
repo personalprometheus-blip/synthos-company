@@ -1,9 +1,36 @@
 # DATABASE SCHEMA — CANONICAL
 
+> ## ⚠️ PARTIALLY STALE — schema largely current, agent references retired
+>
+> **Stamped 2026-04-23.** The schema itself (table shapes, columns,
+> indexes) is mostly still accurate — the live DBs on pi5 have evolved
+> additively since this doc was written (added `tradable_assets.name`,
+> `signal_attribution_flags` table, `system_halt` table, etc.).
+>
+> **What's STALE**: the "Who reads / Who writes" columns throughout
+> reference retired agent filenames — `agent1_trader.py`,
+> `agent2_research.py`, `agent3_sentiment.py` (22 occurrences). Actual
+> agents are 14 `retail_*_agent.py` files. When consulting this spec,
+> translate as:
+>
+> | Old name in spec | Actual agent |
+> |---|---|
+> | agent1_trader.py | retail_trade_logic_agent.py |
+> | agent2_research.py | retail_news_agent.py |
+> | agent3_sentiment.py | retail_market_sentiment_agent.py |
+>
+> **Current-truth supplements**:
+> - Live tables on pi5: run `PRAGMA table_info(<table>)` against
+>   `synthos_build/data/customers/<OWNER>/signals.db`
+> - Schema migrations: `synthos_build/src/retail_database.py` MIGRATIONS
+>   list (append-only; carries 2026-04 additions)
+> - Current agent ↔ table map: `system_architecture.json` v3.10
+
 **Date:** 2026-03-29
 **Version:** v1.2 (retail) / v2.0 (company)
 **Authority:** This document is the single source of truth for all Synthos database schema definitions.
 **Supersedes:** Schema sections in SYNTHOS_TECHNICAL_ARCHITECTURE.md §2.3 and §3.3
+**Status:** ⚠️ Partially stale as of 2026-04-23 — see banner above
 
 ---
 

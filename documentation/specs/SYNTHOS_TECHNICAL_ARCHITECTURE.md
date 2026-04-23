@@ -1,4 +1,35 @@
 # SYNTHOS TECHNICAL ARCHITECTURE
+
+> ## 🚨 OUTDATED — DO NOT TRUST THIS DOCUMENT AS-IS
+>
+> **Stamped 2026-04-23.** This spec (v4.0, March 2026) has drifted from
+> reality with the same pattern as SYSTEM_MANIFEST.md. Using it for
+> architecture decisions, onboarding, or "what talks to what" will
+> produce wrong answers.
+>
+> **Known drift** (from 2026-04-23 bulk scan):
+> - **11 references to `process_node`** — that node was cancelled;
+>   its role merged into retail_node (PROJECT_STATUS.md Phase 4).
+> - **14 references to Redis** (Streams/Pub-Sub as inter-agent comms) —
+>   Redis is not used. Zero `import redis` in the codebase. Comms are
+>   SQLite + HTTP heartbeats + UDP interrogation.
+> - **12 references to retired agent filenames** `agent1_trader.py` /
+>   `agent2_research.py` / `agent3_sentiment.py` — replaced by 14
+>   `retail_*_agent.py` files.
+> - **4 references to `Pi 2W`** as the retail node — retired 2026-04-05;
+>   retail runs on Pi 5.
+> - **Bolt / Scout / Pulse** codenames (2 each) — retired.
+>
+> **Current truth lives in:**
+> - `synthos_build/data/system_architecture.json` v3.10 — live nodes,
+>   agents, data flow, pipeline variants, daily timeline
+> - `synthos_build/PROJECT_STATUS.md` — phase state, cross-repo blockers
+> - Agent code itself — `synthos_build/agents/retail_*_agent.py`
+>
+> **Rewrite-or-retire decision tracked alongside SYSTEM_MANIFEST in
+> `synthos/TODO.md`.** Until resolved, treat everything below as
+> historical context, not architectural truth.
+
 ## System-Wide Design and Agent Integration Model
 
 **Document Version:** 4.0
@@ -6,6 +37,7 @@
 **Supersedes:** v3.0
 **Audience:** Engineers, AI agents building/maintaining the system
 **Scope:** Retail customer deployments + company infrastructure + web access layer
+**Status:** 🚨 OUTDATED — see banner above (stamped 2026-04-23)
 
 ---
 

@@ -1,10 +1,52 @@
 # SYNTHOS — SYSTEM MANIFEST
 
+> ## 🚨 OUTDATED — DO NOT TRUST THIS DOCUMENT AS-IS
+>
+> **Stamped 2026-04-23.** This manifest (v5.0, last touched 2026-03-30) has
+> drifted from reality in fundamental ways. Using it to onboard an agent,
+> plan a change, or answer "what runs on which node" will produce **wrong
+> answers**.
+>
+> **Known drift** (from 2026-04-23 ground-truth audit):
+> - Declares a `process_node` (Pi 3) as part of a three-node architecture.
+>   **That node was cancelled** — its role merged into retail_node per
+>   PROJECT_STATUS.md Phase 4. There is no Pi 3 in the system.
+> - Declares **Redis (Streams + Pub/Sub)** as the inter-node communication
+>   layer. **Redis is not used.** Zero `import redis` anywhere. Actual
+>   comms: SQLite + HTTP heartbeats + UDP interrogation.
+> - FILE_REGISTRY lists the three retail agents as `agent1_trader.py`,
+>   `agent2_research.py`, `agent3_sentiment.py`. **None of those filenames
+>   exist.** Actual retail agents are 14 `retail_*_agent.py` files in
+>   `synthos_build/agents/`.
+> - Line 290 asserts *"File names are unchanged and remain the canonical
+>   reference"* — false; they were comprehensively renamed.
+> - `system_version: 3.0`, `status: deploy_ready`, `audit_status: passed` —
+>   all stale from 2026-03-28 audit, pre-Phase-5, pre-attribution-patch,
+>   pre-tightening-disable, pre-Pi5-NVMe-migration.
+>
+> **Current truth lives in:**
+> - `synthos_build/data/system_architecture.json` (v3.10, live) — nodes,
+>   agents, services, resolved_items
+> - `synthos_build/PROJECT_STATUS.md` — phase state, cross-repo blockers
+> - `synthos_build/STATUS.md` — retail node operational status
+>
+> **Still-valuable sections that would survive a rewrite:**
+> - §2 SYSTEM_PATHS (mostly stable; SYNTHOS_HOME layout unchanged)
+> - §8 ENV_SCHEMA (arch.json doesn't cover env requirements)
+> - §11 UPGRADE_RULES (safe-upgrade invariants)
+> - §7 DEPENDENCY_GRAPH (which file imports which — hard to generate elsewhere)
+>
+> **Next step (tracked in TODO.md):** decide whether to rewrite as v6.0
+> reflecting actual architecture, or formally retire this doc and redistribute
+> its unique content (ENV_SCHEMA + UPGRADE_RULES + DEPENDENCY_GRAPH) into
+> smaller focused docs. Until that decision is made, treat everything below
+> as historical context, not operational truth.
+
 **Document Version:** 5.0
 **Supersedes:** SYSTEM_MANIFEST_1_.md v4.0
 **Last Updated:** 2026-03-30
 **Audience:** Engineers, AI agents, automated deployment systems
-**Status:** Active
+**Status:** 🚨 OUTDATED — see banner above (stamped 2026-04-23)
 
 ---
 

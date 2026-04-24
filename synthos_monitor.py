@@ -4158,6 +4158,8 @@ def receive_backup():
 def _subpage_header(page_name):
     """Return a complete sub-page header HTML block. Works in Jinja, f-strings, and plain strings."""
     return (
+        '<title>Synthos — ' + page_name + '</title>'
+        
         '<style>'
         '.syn-hdr{position:sticky;top:0;z-index:200;background:rgba(8,11,18,0.9);backdrop-filter:blur(20px);border-bottom:1px solid rgba(255,255,255,0.07);padding:0 24px;height:52px;display:flex;align-items:center;gap:12px}'
         '.syn-wm{font-family:var(--mono,"JetBrains Mono",monospace);font-size:1rem;font-weight:600;letter-spacing:0.15em;color:#00f5d4;text-shadow:0 0 20px rgba(0,245,212,0.4);flex-shrink:0}'
@@ -8077,11 +8079,11 @@ body{background:#0a0c14;color:rgba(255,255,255,0.88);font-family:'Inter',system-
       <div style="margin-bottom:16px">
         <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.4);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:10px">Create New Test</div>
         <div style="display:flex;flex-direction:column;gap:8px">
-          <input class="sq-input" id="bt-title" placeholder="Test title (e.g. Signup flow verification)">
-          <textarea class="sq-input" id="bt-desc" placeholder="Description of what to test..." style="min-height:60px;resize:vertical"></textarea>
+          <input class="sq-input" id="bt-title" aria-label="Beta test title" placeholder="Test title (e.g. Signup flow verification)">
+          <textarea class="sq-input" id="bt-desc" aria-label="Beta test description" placeholder="Description of what to test..." style="min-height:60px;resize:vertical"></textarea>
           <div style="display:flex;gap:8px;align-items:center">
             <span style="font-size:10px;color:rgba(255,255,255,0.35)">Required:</span>
-            <input class="sq-input" id="bt-required" type="number" value="2" min="1" max="10" style="width:50px">
+            <input class="sq-input" id="bt-required" aria-label="Required tester count" type="number" value="2" min="1" max="10" style="width:50px">
             <button type="button" class="sq-create-btn pink" id="bt-create-btn">Create &amp; Broadcast</button>
           </div>
         </div>
@@ -8092,10 +8094,10 @@ body{background:#0a0c14;color:rgba(255,255,255,0.88);font-family:'Inter',system-
     <div class="sq-tab-content" id="sq-tc-dm">
       <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.4);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:10px">Send Direct Message</div>
       <div style="display:flex;flex-direction:column;gap:8px">
-        <select class="sq-input" id="dm-customer"><option value="">Loading customers...</option></select>
-        <select class="sq-input" id="dm-category"><option value="account">Account</option><option value="system">System</option><option value="alert">Alert</option><option value="daily">Daily</option></select>
-        <input class="sq-input" id="dm-title" placeholder="Message title">
-        <textarea class="sq-input" id="dm-body" placeholder="Message body..." style="min-height:80px;resize:vertical"></textarea>
+        <select class="sq-input" id="dm-customer" aria-label="Customer"><option value="">Loading customers...</option></select>
+        <select class="sq-input" id="dm-category" aria-label="Message category"><option value="account">Account</option><option value="system">System</option><option value="alert">Alert</option><option value="daily">Daily</option></select>
+        <input class="sq-input" id="dm-title" aria-label="Message title" placeholder="Message title">
+        <textarea class="sq-input" id="dm-body" aria-label="Message body" placeholder="Message body..." style="min-height:80px;resize:vertical"></textarea>
         <button type="button" class="sq-create-btn teal" id="dm-send-btn">Send to Customer</button>
       </div>
     </div>
@@ -8213,7 +8215,7 @@ async function sqViewTicket(ticketId,customerId){
       html+="<div class='sq-msg-head'>"+(m.sender==="admin"?"You":"Customer")+" &middot; "+(m.created_at||"").slice(0,16)+"</div>";
       html+="<div class='sq-msg-body'>"+m.message+"</div></div>";
     });
-    html+="<textarea class='sq-reply-box' id='sq-reply' placeholder='Write a reply...'></textarea>";
+    html+="<textarea class='sq-reply-box' id='sq-reply' aria-label='Reply to customer' placeholder='Write a reply...'></textarea>";
     html+="<div style='display:flex;justify-content:space-between;align-items:center'>";
     html+="<button class='sq-reply-btn' data-action='reply' data-tid='"+ticketId+"' data-cid='"+customerId+"'>Send Reply</button>";
     html+="<div class='sq-status-btns'>";

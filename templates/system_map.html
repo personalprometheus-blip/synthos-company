@@ -434,6 +434,103 @@
   #legend-toggle{ padding:6px 12px; font-family:var(--mono); font-size:10px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; background:rgba(13,17,32,0.88); border:1px solid var(--border2); border-radius:99px; color:var(--text2); cursor:pointer; backdrop-filter:blur(12px); transition:all .15s; }
   #legend-toggle:hover{ border-color:var(--teal3); color:var(--teal); }
   #legend-toggle.open{ border-color:var(--teal3); color:var(--teal); background:var(--teal2); }
+
+  /* ═════════ DATA PROVENANCE VIEW ═════════ */
+  #provenance-wrap{ position:absolute; inset:0; background:var(--bg); display:none; overflow:auto; z-index:2; padding:20px 24px 48px; }
+  #provenance-wrap.active{ display:block; }
+  #canvas-wrap.hidden-provenance > #legend-wrap, #canvas-wrap.hidden-provenance > #log, #canvas-wrap.hidden-provenance > #hover-card{ display:none; }
+  .prov-header{ display:flex; align-items:center; gap:16px; margin-bottom:14px; flex-wrap:wrap; }
+  .prov-header h2{ font-family:var(--mono); font-size:12px; color:var(--text); font-weight:700; letter-spacing:0.18em; text-transform:uppercase; display:flex; align-items:center; gap:12px; margin:0; }
+  .prov-header h2::before{ content:''; width:3px; height:16px; background:linear-gradient(180deg, var(--teal), var(--amber) 50%, var(--purple)); border-radius:99px; box-shadow:0 0 10px var(--teal-glow); }
+  .prov-header h2 span{ color:var(--muted); font-weight:500; letter-spacing:0.08em; text-transform:none; font-size:10.5px; }
+  .prov-controls{ display:flex; gap:8px; margin-left:auto; font-family:var(--mono); align-items:center; font-size:10px; color:var(--muted); }
+  .prov-btn{ background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:7px 12px; font-family:var(--mono); font-weight:600; font-size:10px; cursor:pointer; border-radius:8px; transition:all .15s; letter-spacing:0.06em; text-transform:uppercase; }
+  .prov-btn:hover{ background:var(--teal2); color:var(--teal); border-color:var(--teal3); }
+  .prov-btn.playing{ background:var(--teal2); color:var(--teal); border-color:var(--teal3); box-shadow:0 0 10px rgba(0,245,212,0.15); }
+
+  .prov-legend-row{ display:flex; gap:10px; margin-bottom:14px; flex-wrap:wrap; font-family:var(--mono); font-size:10px; letter-spacing:0.04em; }
+  .prov-lgd{ display:flex; align-items:center; gap:8px; padding:6px 12px; background:var(--surface); border:1px solid var(--border); border-radius:8px; cursor:pointer; transition:all .15s; user-select:none; }
+  .prov-lgd:hover{ background:var(--surface2); }
+  .prov-lgd.isolated{ box-shadow:0 0 0 1px currentColor inset; }
+  .prov-lgd .dot{ width:10px; height:10px; border-radius:50%; box-shadow:0 0 10px currentColor; flex-shrink:0; }
+  .prov-lgd.news{ color:var(--teal); }
+  .prov-lgd.news .dot{ background:var(--teal); }
+  .prov-lgd.screener{ color:var(--amber); }
+  .prov-lgd.screener .dot{ background:var(--amber); }
+  .prov-lgd.edgar{ color:var(--purple); }
+  .prov-lgd.edgar .dot{ background:var(--purple); }
+  .prov-lgd .lbl{ color:var(--text); font-weight:600; letter-spacing:0.04em; }
+  .prov-lgd .sub{ color:var(--muted); }
+
+  .prov-canvas-wrap{ background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:12px 8px 8px; position:relative; }
+  .prov-canvas-wrap::before{ content:''; position:absolute; top:0; left:0; right:0; height:2px; background:linear-gradient(90deg, transparent, var(--teal), var(--amber) 50%, var(--purple), transparent); opacity:0.35; border-radius:14px 14px 0 0; }
+  .prov-svg{ width:100%; height:auto; display:block; }
+
+  /* Lane paths — background (always visible, dim) */
+  .prov-lane-bg{ fill:none; stroke-width:2.5; opacity:0.18; }
+  .prov-lane-bg.news{ stroke:var(--teal); }
+  .prov-lane-bg.screener{ stroke:var(--amber); }
+  .prov-lane-bg.edgar{ stroke:var(--purple); }
+
+  /* Lane paths — animated (visible when playing) */
+  .prov-lane-flow{ fill:none; stroke-width:3; stroke-linecap:round; stroke-dasharray:6 14; stroke-dashoffset:0; opacity:0; transition:opacity .2s; filter:drop-shadow(0 0 3px currentColor); }
+  .prov-playing .prov-lane-flow{ opacity:0.92; animation:prov-flow linear infinite; }
+  .prov-lane-flow.news{ stroke:var(--teal); color:var(--teal); animation-duration:2.4s; }
+  .prov-lane-flow.screener{ stroke:var(--amber); color:var(--amber); animation-duration:3.1s; }
+  .prov-lane-flow.edgar{ stroke:var(--purple); color:var(--purple); animation-duration:3.7s; }
+  @keyframes prov-flow{ to { stroke-dashoffset:-40; } }
+
+  /* Isolation — when user hovers/clicks a legend swatch, other lanes dim */
+  #provenance-wrap[data-isolate="news"] .prov-lane-bg:not(.news),
+  #provenance-wrap[data-isolate="news"] .prov-lane-flow:not(.news){ opacity:0.06 !important; }
+  #provenance-wrap[data-isolate="screener"] .prov-lane-bg:not(.screener),
+  #provenance-wrap[data-isolate="screener"] .prov-lane-flow:not(.screener){ opacity:0.06 !important; }
+  #provenance-wrap[data-isolate="edgar"] .prov-lane-bg:not(.edgar),
+  #provenance-wrap[data-isolate="edgar"] .prov-lane-flow:not(.edgar){ opacity:0.06 !important; }
+
+  /* Nodes */
+  .prov-node rect.box{ fill:var(--surface2); stroke:var(--border2); stroke-width:1; rx:8; ry:8; transition:all .2s; }
+  .prov-node:hover rect.box{ stroke:var(--border3); fill:var(--surface3); }
+  .prov-node.src rect.box{ stroke-width:1.5; }
+  .prov-node.src.news rect.box{ stroke:var(--teal); fill:rgba(0,245,212,0.08); }
+  .prov-node.src.screener rect.box{ stroke:var(--amber); fill:rgba(255,179,71,0.08); }
+  .prov-node.src.edgar rect.box{ stroke:var(--purple); fill:rgba(123,97,255,0.08); }
+  .prov-node.converge rect.box{ stroke:var(--border3); fill:var(--surface3); stroke-dasharray:3 3; }
+  .prov-node.enrich rect.box{ stroke:var(--border2); }
+  .prov-node.sink rect.box{ stroke:var(--pink3); fill:rgba(255,75,110,0.06); stroke-width:1.5; }
+
+  .prov-node text.label{ fill:var(--text); font-family:var(--sans); font-size:13px; font-weight:600; text-anchor:middle; }
+  .prov-node text.sub{ fill:var(--muted); font-family:var(--mono); font-size:9.5px; letter-spacing:0.06em; text-anchor:middle; text-transform:uppercase; }
+  .prov-node text.kicker{ fill:var(--muted); font-family:var(--mono); font-size:8.5px; letter-spacing:0.1em; text-anchor:middle; text-transform:uppercase; }
+  .prov-node.src text.label{ font-size:12px; }
+
+  /* Stage headers (column labels) */
+  .prov-stage-label{ fill:var(--muted); font-family:var(--mono); font-size:9.5px; font-weight:700; letter-spacing:0.16em; text-anchor:middle; text-transform:uppercase; }
+  .prov-stage-tick{ stroke:var(--border); stroke-width:1; stroke-dasharray:2 4; }
+
+  /* Info panel under diagram */
+  .prov-info{ margin-top:14px; display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
+  .prov-info-card{ background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px 14px; position:relative; overflow:hidden; }
+  .prov-info-card::before{ content:''; position:absolute; top:0; left:0; bottom:0; width:3px; }
+  .prov-info-card.news::before{ background:var(--teal); box-shadow:0 0 10px var(--teal-glow); }
+  .prov-info-card.screener::before{ background:var(--amber); box-shadow:0 0 10px rgba(255,179,71,0.4); }
+  .prov-info-card.edgar::before{ background:var(--purple); box-shadow:0 0 10px var(--purple-glow); }
+  .prov-info-card h4{ font-family:var(--mono); font-size:10.5px; letter-spacing:0.1em; text-transform:uppercase; font-weight:700; margin:0 0 6px; }
+  .prov-info-card.news h4{ color:var(--teal); }
+  .prov-info-card.screener h4{ color:var(--amber); }
+  .prov-info-card.edgar h4{ color:var(--purple); }
+  .prov-info-card p{ font-size:11.5px; color:var(--text2); line-height:1.5; margin:0; }
+  .prov-info-card code{ font-family:var(--mono); font-size:10px; background:var(--surface2); color:var(--text); padding:1px 5px; border-radius:3px; border:1px solid var(--border); }
+
+  .prov-note{ margin-top:12px; font-family:var(--mono); font-size:10px; color:var(--muted); letter-spacing:0.04em; line-height:1.6; background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:10px 14px; }
+  .prov-note b{ color:var(--text2); font-weight:600; }
+  .prov-note .hl-teal{ color:var(--teal); }
+  .prov-note .hl-amber{ color:var(--amber); }
+  .prov-note .hl-purple{ color:var(--purple); }
+
+  @media (max-width: 900px){
+    .prov-info{ grid-template-columns:1fr; }
+  }
 </style>
 </head>
 <body>
@@ -449,6 +546,7 @@
     <div class="tabs">
       <button class="tab active" data-view="topology">Topology</button>
       <button class="tab" data-view="pipeline">Pipeline & Gates</button>
+      <button class="tab" data-view="provenance">Data Provenance</button>
       <button class="tab" data-view="timeline">24h Timeline</button>
     </div>
     <div id="controls">
@@ -530,6 +628,7 @@
     </svg>
     <div id="timeline-wrap"></div>
     <div id="pipeline-wrap"></div>
+    <div id="provenance-wrap"></div>
     <div id="hover-card"></div>
     <div id="legend-wrap">
       <button id="legend-toggle">ⓘ Legend</button>
@@ -1505,10 +1604,12 @@ document.querySelectorAll('.tab').forEach(tab => {
     const view = tab.dataset.view;
     const tl = document.getElementById('timeline-wrap');
     const pw = document.getElementById('pipeline-wrap');
+    const provw = document.getElementById('provenance-wrap');
     const cw = document.getElementById('canvas-wrap');
     tl.classList.remove('active');
     pw.classList.remove('active');
-    cw.classList.remove('hidden-topology','hidden-pipeline');
+    provw.classList.remove('active','prov-playing');
+    cw.classList.remove('hidden-topology','hidden-pipeline','hidden-provenance');
     if (view === 'timeline') {
       tl.classList.add('active');
       cw.classList.add('hidden-topology');
@@ -1517,6 +1618,10 @@ document.querySelectorAll('.tab').forEach(tab => {
       pw.classList.add('active');
       cw.classList.add('hidden-topology','hidden-pipeline');
       renderPipeline();
+    } else if (view === 'provenance') {
+      provw.classList.add('active');
+      cw.classList.add('hidden-topology','hidden-provenance');
+      renderProvenance();
     }
   });
 });
@@ -2765,6 +2870,288 @@ function showArchMeta(arch) {
   stamp.title = `system_architecture.json · last updated ${lastUpdated} · source: ${src || 'unknown'}`;
   stamp.textContent = `json v${version}${src === 'github' ? ' · gh' : src === 'local' ? ' · local' : ''}`;
   headerRight.parentNode.insertBefore(stamp, headerRight.nextSibling);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DATA PROVENANCE VIEW
+// ═══════════════════════════════════════════════════════════════
+// Three signal-origination bands flow through the enrichment stack
+// as parallel colored threads. They stay distinct all the way to
+// the trader so you can eyeball: "this decision was informed by
+// <which> data source(s)." Animation is opt-in (press PLAY) so the
+// view costs zero CPU when idle.
+//
+// Model:
+//   Alpaca News feed ─┐                        ┌─ signals(source=news) ─┐
+//                     ├─→ retail_news_agent ───┤                         │
+//   SEC EDGAR feed  ──┘   (22 gates)           └─ signals(source=edgar) ─┤
+//                                                                        ├─→ enrichment
+//   Sector Screener ─→ sector_screener ─→ candidate_generator ────────── │    (all 3 threads
+//                      (momentum)         (source=candidate)              │     pass through,
+//                                                                         │     do NOT blend)
+//   Enrichment: sentiment → market_state → validator → TRADER
+//
+// The 3 threads remain separate colors right through the shared
+// enrichment nodes; the trader's Gate 5 composite consumes all 3
+// equally today (no origin-based discrimination wired).
+//
+// Rendering: SVG with stroke-dasharray flowing-dot animation per
+// lane. Three parallel paths with small y-offsets so they read as
+// a braided bundle rather than a single blended line.
+
+const PROV_LANES = [
+  { id:'news',     label:'Alpaca News',     sub:'news API feed',      color:'teal',   yOffset:-16, desc:"Alpaca's live news feed — press releases, analyst actions, earnings headlines. Feeds <code>retail_news_agent.py</code> which runs 22 gates (ticker extraction, event detection, sentiment, novelty, confirmation). Output: <code>signals(source='news')</code>. Can generate its own buy/watch signals without any other input." },
+  { id:'screener', label:'Sector Screener', sub:'11 SPDR ETFs · momentum', color:'amber', yOffset:0,   desc:"11 S&P SPDR sector ETFs × top-10 holdings, scored by calc_momentum_score (3m return 50% + 20d/50d SMA 30% + 10d/30d volume 20%). Runs 2×/day (pre-market 09:15 + close 16:00). Output feeds <code>retail_candidate_generator.py</code> which emits <code>signals(source='candidate', status='WATCHING')</code> for top-N per sector." },
+  { id:'edgar',    label:'SEC EDGAR',       sub:'STOCK Act · Form 4 · filings', color:'purple', yOffset:16,  desc:"SEC EDGAR feed — Congressional STOCK Act periodic transaction reports, Form 4 insider filings, 13F/13D institutional moves. Same <code>retail_news_agent.py</code> processes these through its 22-gate spine. Politician-weight adjustment flows back here after outcomes close. Output: <code>signals(source='news')</code> with EDGAR provenance." },
+];
+
+const PROV_STAGES = [
+  { x: 80,   w:140, label:'SOURCE',       kicker:'raw feed',        kind:'src'       },
+  { x: 320,  w:180, label:'ORIGIN AGENT', kicker:'first classifier', kind:'origin'    },
+  { x: 580,  w:160, label:'SIGNALS TABLE', kicker:'convergence',    kind:'converge'  },
+  { x: 800,  w:160, label:'SENTIMENT',    kicker:'27 gates',         kind:'enrich'    },
+  { x: 1000, w:160, label:'MARKET STATE', kicker:'sentiment 40 + news 25 + macro 35', kind:'enrich' },
+  { x: 1200, w:160, label:'VALIDATOR',    kicker:'5 gates · verdict', kind:'enrich'   },
+  { x: 1400, w:160, label:'TRADER',       kicker:'13 gates',         kind:'sink'      },
+];
+
+const PROV_STATE = { rendered:false, playing:false };
+
+function renderProvenance() {
+  const w = document.getElementById('provenance-wrap');
+  if (PROV_STATE.rendered) return;
+  PROV_STATE.rendered = true;
+
+  // Layout constants
+  const VB_W = 1580, VB_H = 720;
+  const LANE_Y = { news:180, screener:360, edgar:540 };
+  // After convergence (x >= CONVERGE_X), lanes ride together with small offsets
+  const CONVERGE_X = 660; // right edge of signals-table box
+  const BUNDLE_Y = 360;   // centerline of the bundled flow
+
+  // Build SVG — 3 distinct paths before convergence, 3 braided after.
+  function lanePath(laneId) {
+    const startX = 150;                 // right edge of source box
+    const originX = 320;                // left edge of origin-agent box
+    const originMidX = 410;             // middle of origin agent
+    const originRightX = 500;           // right edge of origin agent
+    const convergeLeftX = 580;          // left edge of signals table
+    const convergeRightX = CONVERGE_X;  // right edge of signals table
+    const yStart = LANE_Y[laneId];
+    const lane = PROV_LANES.find(l => l.id === laneId);
+    const yBundle = BUNDLE_Y + lane.yOffset;
+
+    // Screener has an extra segment because it goes through TWO agents
+    // (sector_screener → candidate_generator) before joining the signals
+    // table. News + EDGAR both pass through news_agent only.
+    // Geometry: curve from source-y into origin-agent-y, then curve to bundle-y.
+    let d;
+    if (laneId === 'screener') {
+      // Straight through origin (single x-band), then converge
+      d = `M${startX},${yStart}
+           L${originX},${yStart}
+           L${originRightX},${yStart}
+           C${originRightX + 40},${yStart} ${convergeLeftX - 40},${yStart}  ${convergeLeftX},${yStart}
+           L${convergeRightX},${yStart}
+           C${convergeRightX + 40},${yStart} ${800 - 40},${yBundle} ${800},${yBundle}
+           L${1560},${yBundle}`;
+    } else {
+      // News + EDGAR both terminate into the shared news_agent box, so they
+      // arc to the centerline at originMidX (visual: they enter the same
+      // agent), then exit to their own output lane on the right side.
+      const agentY = LANE_Y[laneId];  // keep same y through origin agent
+      d = `M${startX},${yStart}
+           L${originX},${yStart}
+           L${originRightX},${yStart}
+           C${originRightX + 40},${yStart} ${convergeLeftX - 40},${yStart} ${convergeLeftX},${yStart}
+           L${convergeRightX},${yStart}
+           C${convergeRightX + 40},${yStart} ${800 - 40},${yBundle} ${800},${yBundle}
+           L${1560},${yBundle}`;
+    }
+    return d;
+  }
+
+  // Build stage column ticks (vertical dashed lines)
+  let ticks = '';
+  PROV_STAGES.forEach(s => {
+    const cx = s.x + s.w/2;
+    ticks += `<line class="prov-stage-tick" x1="${cx}" y1="80" x2="${cx}" y2="${VB_H - 40}"/>`;
+    ticks += `<text class="prov-stage-label" x="${cx}" y="62">${s.label}</text>`;
+    ticks += `<text class="prov-stage-label" x="${cx}" y="78" style="opacity:0.55; letter-spacing:0.06em">${s.kicker}</text>`;
+  });
+
+  // Build source nodes (left column) — 3 distinct
+  let srcNodes = '';
+  PROV_LANES.forEach(lane => {
+    const y = LANE_Y[lane.id];
+    const stage = PROV_STAGES[0];
+    const x = stage.x, width = stage.w, height = 52;
+    srcNodes += `
+      <g class="prov-node src ${lane.id}">
+        <rect class="box" x="${x}" y="${y - height/2}" width="${width}" height="${height}"/>
+        <text class="label" x="${x + width/2}" y="${y - 3}">${lane.label}</text>
+        <text class="sub"   x="${x + width/2}" y="${y + 14}">${lane.sub}</text>
+      </g>`;
+  });
+
+  // Build origin-agent nodes — news + edgar share retail_news_agent, screener has its own pair
+  let originNodes = '';
+  const originStage = PROV_STAGES[1];
+  // News + EDGAR → retail_news_agent (shared)
+  const newsAgentY = (LANE_Y.news + LANE_Y.edgar) / 2;
+  originNodes += `
+    <g class="prov-node">
+      <rect class="box" x="${originStage.x}" y="${newsAgentY - 60}" width="${originStage.w}" height="120"/>
+      <text class="kicker" x="${originStage.x + originStage.w/2}" y="${newsAgentY - 36}">AGENT · 22 GATES</text>
+      <text class="label"  x="${originStage.x + originStage.w/2}" y="${newsAgentY - 12}">retail_news_agent</text>
+      <text class="sub"    x="${originStage.x + originStage.w/2}" y="${newsAgentY + 10}">ticker · event · sentiment</text>
+      <text class="sub"    x="${originStage.x + originStage.w/2}" y="${newsAgentY + 26}">novelty · confirmation</text>
+    </g>`;
+  // Screener → candidate_generator (sequential pair visualized as a single wide node)
+  originNodes += `
+    <g class="prov-node">
+      <rect class="box" x="${originStage.x}" y="${LANE_Y.screener - 36}" width="${originStage.w}" height="72"/>
+      <text class="kicker" x="${originStage.x + originStage.w/2}" y="${LANE_Y.screener - 14}">SECTOR + CANDIDATE</text>
+      <text class="label"  x="${originStage.x + originStage.w/2}" y="${LANE_Y.screener + 8}">candidate_generator</text>
+      <text class="sub"    x="${originStage.x + originStage.w/2}" y="${LANE_Y.screener + 24}">top-N per sector</text>
+    </g>`;
+
+  // Build convergence node (signals table) — large box spanning all 3 y-positions
+  const convStage = PROV_STAGES[2];
+  const convY0 = LANE_Y.news - 30, convY1 = LANE_Y.edgar + 30;
+  const convH = convY1 - convY0;
+  const convNode = `
+    <g class="prov-node converge">
+      <rect class="box" x="${convStage.x}" y="${convY0}" width="${convStage.w}" height="${convH}"/>
+      <text class="kicker" x="${convStage.x + convStage.w/2}" y="${convY0 + 22}">CONVERGENCE</text>
+      <text class="label"  x="${convStage.x + convStage.w/2}" y="${convY0 + 48}">signals table</text>
+      <text class="sub"    x="${convStage.x + convStage.w/2}" y="${convY0 + 68}">source column preserved</text>
+      <text class="sub"    x="${convStage.x + convStage.w/2}" y="${convY0 + convH - 44}">queued → validated</text>
+      <text class="kicker" x="${convStage.x + convStage.w/2}" y="${convY0 + convH - 20}" style="fill:var(--teal)">bands stay distinct</text>
+    </g>`;
+
+  // Build enrichment nodes (sentiment, market_state, validator) — centered on bundle, thin tall box
+  let enrichNodes = '';
+  [PROV_STAGES[3], PROV_STAGES[4], PROV_STAGES[5]].forEach((stage, i) => {
+    const nodeH = 110;
+    const y0 = BUNDLE_Y - nodeH/2;
+    const extras = ['sentiment_score → scan_log','_MARKET_STATE_SCORE','_VALIDATOR_VERDICT'];
+    enrichNodes += `
+      <g class="prov-node enrich">
+        <rect class="box" x="${stage.x}" y="${y0}" width="${stage.w}" height="${nodeH}"/>
+        <text class="kicker" x="${stage.x + stage.w/2}" y="${y0 + 24}">${stage.kicker}</text>
+        <text class="label"  x="${stage.x + stage.w/2}" y="${y0 + 50}">${stage.label.toLowerCase()}</text>
+        <text class="sub"    x="${stage.x + stage.w/2}" y="${y0 + 78}">${extras[i]}</text>
+      </g>`;
+  });
+
+  // Build trader sink node
+  const tStage = PROV_STAGES[6];
+  const tNode = `
+    <g class="prov-node sink">
+      <rect class="box" x="${tStage.x}" y="${BUNDLE_Y - 80}" width="${tStage.w}" height="160"/>
+      <text class="kicker" x="${tStage.x + tStage.w/2}" y="${BUNDLE_Y - 54}">13 GATES</text>
+      <text class="label"  x="${tStage.x + tStage.w/2}" y="${BUNDLE_Y - 28}">trader</text>
+      <text class="sub"    x="${tStage.x + tStage.w/2}" y="${BUNDLE_Y - 8}">Gate 1: validator verdict</text>
+      <text class="sub"    x="${tStage.x + tStage.w/2}" y="${BUNDLE_Y + 10}">Gate 5: composite + MS</text>
+      <text class="sub"    x="${tStage.x + tStage.w/2}" y="${BUNDLE_Y + 28}">Gate 10: pulse exit</text>
+      <text class="kicker" x="${tStage.x + tStage.w/2}" y="${BUNDLE_Y + 58}" style="fill:var(--pink)">BUY · WATCH · SKIP</text>
+    </g>`;
+
+  // Lane paths — bg (always visible) + flow (animated when playing)
+  let lanePaths = '';
+  ['news','screener','edgar'].forEach(id => {
+    const d = lanePath(id);
+    lanePaths += `<path class="prov-lane-bg ${id}" d="${d}"/>`;
+    lanePaths += `<path class="prov-lane-flow ${id}" d="${d}"/>`;
+  });
+
+  // Compose SVG
+  const svg = `
+    <svg class="prov-svg" viewBox="0 0 ${VB_W} ${VB_H}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+      <g class="prov-ticks">${ticks}</g>
+      <g class="prov-lanes">${lanePaths}</g>
+      <g class="prov-nodes">
+        ${srcNodes}
+        ${originNodes}
+        ${convNode}
+        ${enrichNodes}
+        ${tNode}
+      </g>
+    </svg>`;
+
+  // Header + legend + canvas + info cards + caveat note
+  w.innerHTML = `
+    <div class="prov-header">
+      <h2>DATA PROVENANCE <span>three signal-origination bands · flow through enrichment as parallel colored threads</span></h2>
+      <div class="prov-controls">
+        <button class="prov-btn" id="prov-play">▶ PLAY</button>
+        <button class="prov-btn" id="prov-clear">Clear highlight</button>
+      </div>
+    </div>
+
+    <div class="prov-legend-row">
+      <div class="prov-lgd news"     data-lane="news"><span class="dot"></span><span class="lbl">Alpaca News</span><span class="sub">· news API</span></div>
+      <div class="prov-lgd screener" data-lane="screener"><span class="dot"></span><span class="lbl">Sector Screener</span><span class="sub">· 11 SPDR ETFs</span></div>
+      <div class="prov-lgd edgar"    data-lane="edgar"><span class="dot"></span><span class="lbl">SEC EDGAR</span><span class="sub">· STOCK Act + filings</span></div>
+      <span style="margin-left:auto; color:var(--muted); font-size:10px; letter-spacing:0.04em">Click a band → isolate · click again or "Clear" → restore</span>
+    </div>
+
+    <div class="prov-canvas-wrap">${svg}</div>
+
+    <div class="prov-info">
+      ${PROV_LANES.map(l => `
+        <div class="prov-info-card ${l.id}">
+          <h4>${l.label}</h4>
+          <p>${l.desc}</p>
+        </div>`).join('')}
+    </div>
+
+    <div class="prov-note">
+      <b>Reading the diagram.</b>
+      Three origin streams (<span class="hl-teal">News</span>,
+      <span class="hl-amber">Screener</span>,
+      <span class="hl-purple">EDGAR</span>) hit the signals table as
+      distinct rows (<code>source</code> column preserved). After
+      that, every signal passes through the same enrichment stack —
+      <b>sentiment → market_state → validator</b> — and the three
+      threads run in parallel through each node rather than blending.
+      The trader's <b>Gate 5 composite</b> today treats all three
+      origins equally (no origin-weighted discrimination is wired).
+      The market-state score added on 2026-04-24 is a regime-level
+      nudge that applies symmetrically across all three bands.
+    </div>
+  `;
+
+  // Wire controls
+  const playBtn = document.getElementById('prov-play');
+  playBtn.addEventListener('click', () => {
+    PROV_STATE.playing = !PROV_STATE.playing;
+    w.classList.toggle('prov-playing', PROV_STATE.playing);
+    playBtn.textContent = PROV_STATE.playing ? '❚❚ PAUSE' : '▶ PLAY';
+    playBtn.classList.toggle('playing', PROV_STATE.playing);
+  });
+
+  document.getElementById('prov-clear').addEventListener('click', () => {
+    w.removeAttribute('data-isolate');
+    document.querySelectorAll('.prov-lgd.isolated').forEach(e => e.classList.remove('isolated'));
+  });
+
+  // Legend isolate: click to isolate a single band, click again to clear
+  w.querySelectorAll('.prov-lgd').forEach(lgd => {
+    lgd.addEventListener('click', () => {
+      const lane = lgd.dataset.lane;
+      const current = w.dataset.isolate;
+      if (current === lane) {
+        w.removeAttribute('data-isolate');
+        lgd.classList.remove('isolated');
+      } else {
+        w.dataset.isolate = lane;
+        document.querySelectorAll('.prov-lgd').forEach(e => e.classList.remove('isolated'));
+        lgd.classList.add('isolated');
+      }
+    });
+  });
 }
 
 // Kick off the merge after initial render (defaults show first, then upgrade).

@@ -473,24 +473,24 @@
   .prov-lane-bg.edgar{ stroke:var(--purple); }
 
   /* Lane paths — animated (visible when playing) */
-  /* opacity uses !important on the play state because SVG cascade with
-     transitions occasionally fails to upgrade computed opacity past 0
-     when the same property has a transition declared. !important is
-     the cleanest guarantee. */
-  .prov-lane-flow{ fill:none; stroke-width:3; stroke-linecap:round; stroke-dasharray:6 14; stroke-dashoffset:0; opacity:0; transition:opacity .25s; filter:drop-shadow(0 0 3px currentColor); }
-  .prov-playing .prov-lane-flow{ opacity:0.92 !important; animation:prov-flow linear infinite; }
+  /* display:none on the base means the flow paths are off when paused
+     (no animation cost, no SVG opacity-cascade quirks). The play state
+     flips to display:inline. Isolation dimming uses opacity on top —
+     no specificity fight because base/play don't touch opacity. */
+  .prov-lane-flow{ fill:none; stroke-width:3; stroke-linecap:round; stroke-dasharray:6 14; stroke-dashoffset:0; display:none; opacity:0.92; filter:drop-shadow(0 0 3px currentColor); }
+  .prov-playing .prov-lane-flow{ display:inline; animation:prov-flow linear infinite; }
   .prov-lane-flow.news{ stroke:var(--teal); color:var(--teal); animation-duration:2.4s; }
   .prov-lane-flow.screener{ stroke:var(--amber); color:var(--amber); animation-duration:3.1s; }
   .prov-lane-flow.edgar{ stroke:var(--purple); color:var(--purple); animation-duration:3.7s; }
   @keyframes prov-flow{ to { stroke-dashoffset:-40; } }
 
-  /* Isolation — when user hovers/clicks a legend swatch, other lanes dim */
+  /* Isolation — when user clicks a legend swatch, other lanes dim. */
   #provenance-wrap[data-isolate="news"] .prov-lane-bg:not(.news),
-  #provenance-wrap[data-isolate="news"] .prov-lane-flow:not(.news){ opacity:0.06 !important; }
+  #provenance-wrap[data-isolate="news"] .prov-lane-flow:not(.news){ opacity:0.08; }
   #provenance-wrap[data-isolate="screener"] .prov-lane-bg:not(.screener),
-  #provenance-wrap[data-isolate="screener"] .prov-lane-flow:not(.screener){ opacity:0.06 !important; }
+  #provenance-wrap[data-isolate="screener"] .prov-lane-flow:not(.screener){ opacity:0.08; }
   #provenance-wrap[data-isolate="edgar"] .prov-lane-bg:not(.edgar),
-  #provenance-wrap[data-isolate="edgar"] .prov-lane-flow:not(.edgar){ opacity:0.06 !important; }
+  #provenance-wrap[data-isolate="edgar"] .prov-lane-flow:not(.edgar){ opacity:0.08; }
 
   /* Nodes */
   .prov-node rect.box{ fill:var(--surface2); stroke:var(--border2); stroke-width:1; rx:8; ry:8; transition:all .2s; }

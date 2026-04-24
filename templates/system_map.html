@@ -473,8 +473,12 @@
   .prov-lane-bg.edgar{ stroke:var(--purple); }
 
   /* Lane paths — animated (visible when playing) */
-  .prov-lane-flow{ fill:none; stroke-width:3; stroke-linecap:round; stroke-dasharray:6 14; stroke-dashoffset:0; opacity:0; transition:opacity .2s; filter:drop-shadow(0 0 3px currentColor); }
-  .prov-playing .prov-lane-flow{ opacity:0.92; animation:prov-flow linear infinite; }
+  /* opacity uses !important on the play state because SVG cascade with
+     transitions occasionally fails to upgrade computed opacity past 0
+     when the same property has a transition declared. !important is
+     the cleanest guarantee. */
+  .prov-lane-flow{ fill:none; stroke-width:3; stroke-linecap:round; stroke-dasharray:6 14; stroke-dashoffset:0; opacity:0; transition:opacity .25s; filter:drop-shadow(0 0 3px currentColor); }
+  .prov-playing .prov-lane-flow{ opacity:0.92 !important; animation:prov-flow linear infinite; }
   .prov-lane-flow.news{ stroke:var(--teal); color:var(--teal); animation-duration:2.4s; }
   .prov-lane-flow.screener{ stroke:var(--amber); color:var(--amber); animation-duration:3.1s; }
   .prov-lane-flow.edgar{ stroke:var(--purple); color:var(--purple); animation-duration:3.7s; }

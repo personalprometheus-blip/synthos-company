@@ -533,15 +533,35 @@ def _upload_to_r2(file_path: Path, pi_id: str, filename: str) -> bool:
 
 def run_all_backups() -> None:
     """
-    Run backups for all active customers.
+    Run per-customer license-state backups for all active paying customers.
+
+    NOTE — this is the *fleet management* backup (per-customer DB rows
+    backed up for support/restore on commercial customer Pis), NOT the
+    operator's own data backup chain. The operator backup goes:
+    pi5 retail_backup.py → POST → pi4b /receive_backup → company_strongbox
+    → R2 (s3://synthos-backups/synthos-pi-retail/...). Strongbox is the
+    one to check if you're worried about your own data integrity.
+
+    This function does meaningful work only when paying customers exist
+    (customers table has status='ACTIVE' rows). Pre-launch / paper-only
+    operation produces "Backup run complete: 0/0 succeeded" — that's
+    correct behavior, not a fault.
+
     Called daily at 2am ET.
     """
-    log.info("Starting daily backup run")
+    log.info("Starting daily backup run (per-customer fleet backup)")
 
     with get_db() as conn:
         customers = conn.execute("""
             SELECT pi_id FROM customers WHERE status='ACTIVE'
         """).fetchall()
+
+    if not customers:
+        log.info(
+            "No ACTIVE customers in fleet — nothing to back up. "
+            "(Operator's own backup runs separately via company_strongbox.)"
+        )
+        return
 
     results    = []
     failed_pis = []

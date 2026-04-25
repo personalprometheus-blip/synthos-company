@@ -1,9 +1,45 @@
 # COMPANY NODE STATUS
 
+> **⚠ This file is a historical Phase-1-through-5 snapshot (frozen
+> 2026-04-05).** It captures the pre-Pi-5-deployment era. Everything
+> below is preserved for audit trail; none of it is the live state.
+>
+> **Current state (2026-04-25):** pi4b is the live company node
+> running synthos_monitor.py (the command portal) at
+> `command.synth-cloud.com`, plus auditor / archivist / vault /
+> librarian / sentinel / strongbox / fidget / heartbeat / monitor.
+> The retail node (pi5) deployed 2026-04-18; it owns all trading
+> agents and the customer portal.
+>
+> **Recent landmark changes on this repo (synthos-company):**
+> - Data Provenance tab on `/system-architecture` (2026-04-24 / 2026-04-25):
+>   4th tab in synthos_monitor.py's system map, 3-banded
+>   parallel-thread visualization showing where each trade signal's
+>   data came from (Alpaca News / Sector Screener / SEC EDGAR).
+>   Animated SVG with flowing-dot rendering, click-to-isolate
+>   per-band. Templates in `templates/system_map.html`.
+> - company_vault.py log-clarification patch (2026-04-24): when no
+>   active customers exist, the daily backup loop logs "No ACTIVE
+>   customers in fleet — backup is a no-op (correct behavior)"
+>   instead of cryptic "0/0 succeeded".
+> - Cloudflare tunnel ingress: `portal.synth-cloud.com` (→ pi5),
+>   `command.synth-cloud.com` (→ pi4b:5050),
+>   `monitor.synth-cloud.com` (→ pi2w_monitor:5000),
+>   `ssh.synth-cloud.com` (→ pi4b:22). Configured in
+>   `/etc/cloudflared/config.yml` on pi4b.
+>
+> **Single source of truth for live operational state lives in the
+> companion repo:** `synthos/synthos_build/data/system_architecture.json`
+> (v3.13 as of 2026-04-25).
+>
 > **REPO IDENTITY:** `personalprometheus-blip/synthos-company` — local: `/home/pi/synthos-company/`
-> **This repo owns:** company_node (Pi 4B) — blueprint, sentinel, vault, patches, librarian, scoop, etc.
-> **Companion:** `synthos` owns retail_node (Pi 5, incoming) + master PROJECT_STATUS.md — do NOT put retail code here
+> **This repo owns:** company_node (Pi 4B) — synthos_monitor (command portal), auditor, archivist, vault, librarian, sentinel, strongbox, scoop
+> **Companion:** `synthos` owns retail_node (Pi 5) + master PROJECT_STATUS.md — do NOT put retail code here
 > **Separate:** `Sentinel` repo is unrelated to Synthos
+
+---
+
+## HISTORICAL SNAPSHOT (frozen 2026-04-05) — preserved for audit trail
 
 **Last Updated:** 2026-04-05
 **Current Phase:** Phase 5 complete — Pi 5 retail build pending

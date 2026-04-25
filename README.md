@@ -2,8 +2,18 @@
 
 The operator-side intelligence layer for the Synthos trading assistant system. Manages licensing, deployment, monitoring, alerting, backups, and code quality for all retail nodes.
 
+> **Current state (2026-04-25).** The sections below describe the
+> repo's role generically. For the live operational map of what's
+> running where, see the companion repo:
+> `synthos/synthos_build/data/system_architecture.json` (v3.13).
+> Today this repo deploys synthos_monitor.py (command portal at
+> `command.synth-cloud.com`) plus auditor / archivist / vault /
+> librarian / sentinel / strongbox / fidget on pi4b. The Cloudflare
+> tunnel that fronts pi4b also routes `portal.synth-cloud.com` →
+> pi5 (retail node).
+
 ## Status
-See [STATUS.md](./STATUS.md) for current progress.
+See [STATUS.md](./STATUS.md) — historical Phase 1-5 record + current-state summary at the top.
 
 ## Hardware
 

@@ -28,6 +28,20 @@
 >   `ssh.synth-cloud.com` (→ pi4b:22). Configured in
 >   `/etc/cloudflared/config.yml` on pi4b.
 >
+> **Companion-repo activity (synthos / pi5) on 2026-04-25** —
+> entire customer-facing dashboard / news / intel pages overhauled
+> in a one-day sprint (~20 commits, Phases 5–7L). Sparklines,
+> four specialized slide-out drawers (Position / History /
+> Approval / Planning), Signal Trust widget replacing internal-
+> score leak, news + watchlist page redesigns, two new endpoints
+> (`/api/ticker-news`, `/api/ticker-context`), three new schema
+> columns (`positions.entry_pattern`, `positions.entry_thesis`,
+> `pending_approvals.entry_pattern`), watchlist wiring fix that
+> changed `/api/watchlist` to read the signals table instead of
+> news_feed. No company-side changes required for any of it —
+> all retail. See `synthos/synthos_build/PROJECT_STATUS.md` Phase
+> 7+ section for the full breakdown.
+>
 > **Single source of truth for live operational state lives in the
 > companion repo:** `synthos/synthos_build/data/system_architecture.json`
 > (v3.13 as of 2026-04-25).

@@ -1,11 +1,16 @@
 {
   "meta": {
     "project": "Synthos",
-    "version": "3.2",
-    "total_phases": 10,
-    "current_phase": 5,
-    "last_updated": "2026-04-21T12:00:00-04:00",
-    "notes": "Post-Phase-5 audit (Rounds 1-10) + Phase C structural refactor (D1-D6) shipped 2026-04-20. Enrichment pipeline reconstruction shipped 2026-04-21 (5 commits) after discovering market_daemon had been running a 54-second overnight one-shot each morning instead of the full intraday loop — fixed timer alignment, completed overnight_cycle, extracted price_poller to 24/7 timer, added premarket_selfcheck, added _MARKET_STATE_UPDATED key, switched candidate filter from combined_score (news+sentiment bias) to momentum_score (sector-driven as designed), and doubled sector screener cadence (pre-market + close). See system_architecture.json 'data_flow.pipeline_variants' + 'daily_timeline_weekday_et' for the full topology."
+    "version": "3.3",
+    "total_phases": 11,
+    "current_phase": 6,
+    "last_updated": "2026-04-25T20:00:00-04:00",
+    "notes": "Post-Phase-5 audit + Phase C refactor + enrichment pipeline reconstruction all shipped 2026-04-20/21. Pre-launch security audit (2026-04-24/25) closed 2 CRITICAL + 2 HIGH escalation paths. Attribution patch enforcement flipped True 2026-04-25 (TICKER_REMAP + TICKER_REJECT). Customer Dashboard UX overhaul shipped 2026-04-25 in a one-day sprint (~20 commits, Phases 5–7L on the synthos repo) — sparklines, four specialized slide-out drawers, Signal Trust widget, news + watchlist page redesigns, /api/ticker-news + /api/ticker-context endpoints, watchlist wiring fix. No company-side changes required. See synthos/synthos_build/PROJECT_STATUS.md Phase 7+ section for full breakdown.",
+    "recent_milestones": [
+      "2026-04-24/25 — Pre-launch security audit (CRITICAL-1 admin-override flip, CRITICAL-2 /api/keys env rewrite, HIGH-1 reset-password handler missing, HIGH-3 /api/audit not admin-gated; 50/50 smoke probes pass).",
+      "2026-04-25 — Attribution patch enforcement: TICKER_REMAP + TICKER_REJECT flipped True after 4.5-day shadow review.",
+      "2026-04-25 — Customer Dashboard UX overhaul on retail portal (Phases 5–7L, ~20 commits): sparklines, four slide-out drawers, Signal Trust widget, news/intel page redesigns, watchlist wiring fix. All retail-side work — synthos-company unchanged."
+    ]
   },
   "phases": [
     {
@@ -82,6 +87,24 @@
         {"task": "USB SSD for pi4b (ordered, pending install)", "done": false},
         {"task": "Full disaster recovery drill", "done": false},
         {"task": "Node installers — install_retail.py (1196 LOC, state-machine + web wizard on :8080) + install_company.py (778 LOC, CLI-only); shared helpers in installers/common/. Both idempotent, --repair, --status. Not a single entry-point but functionally equivalent per-node-type.", "done": true}
+      ]
+    },
+    {
+      "id": 5.5, "name": "Customer Dashboard UX Overhaul (2026-04-25)", "status": "complete",
+      "tasks": [
+        {"task": "Phase 5 — entry_pattern column on positions; row badge (MOMO/BRKO/MEAN/PULL/RSRV) + trail-stop% + days held + sector", "done": true},
+        {"task": "Phase 6 — kill Regime Strip (data redundant with Agent Status); planning card upgrade (buy zone/stop/target/thesis)", "done": true},
+        {"task": "Phase 7a — quick wins: lock chip, Bot Active dot, history WIN/LOSS reclassified by P&L sign, Signal Trust widget", "done": true},
+        {"task": "Phase 7b — circular lock icon (header-bell style), drawer header = company name + inline sparkline", "done": true},
+        {"task": "Phase 7c — new History drawer (replaces openLogicModal hack)", "done": true},
+        {"task": "Phase 7d — new Approval drawer (replaces inline expansion)", "done": true},
+        {"task": "Phase 7f — cleanup: remove openLogicModal (~60 lines), Cost Basis dedup, ESC-to-close", "done": true},
+        {"task": "Phase 7g — Planning drawer (watchlist deep-dive); /api/ticker-news endpoint", "done": true},
+        {"task": "Phase 7h — tighten ticker-news (fresh-only top-10); new /api/ticker-context (live price + ADR + today's range + sector ETF %)", "done": true},
+        {"task": "Phase 7i — News page: kill dead category buttons, add Tracked-tickers filter, Hide-low-quality toggle, ticker chips", "done": true},
+        {"task": "Phase 7j — Intel page → 'Bot Watchlist' rename + drop internal score leak + click → openPlanningDrawer + ticker chips", "done": true},
+        {"task": "Phase 7k — Watchlist wiring fix: /api/watchlist now reads signals table (was reading news_feed which had MACR/? sentinels)", "done": true},
+        {"task": "Phase 7L — punch-list cleanup (8 items): openSigModal removed, /api/planning fallback fixed, sizing reads window cache, sync_to_github wrong-dir fix (MEDIUM-C audit), news dedup tightened, positions.entry_thesis column, computeSignalTrust unified across 4 widgets", "done": true}
       ]
     },
     {

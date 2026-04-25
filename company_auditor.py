@@ -575,7 +575,24 @@ def scan_all_logs() -> dict:
     for node_id, node_cfg in REMOTE_NODES.items():
         # Skip nodes flagged 'disabled' — prevents NODE_UNREACHABLE noise
         # for intentionally-offline hardware (pi2w monitor/display, etc.).
+        # Phase 7L (2026-04-25): also auto-resolve any historical
+        # NODE_UNREACHABLE findings for this node so old hits drop off
+        # the dashboard. The skip clause above covers future runs; this
+        # block clears the residue. Each call is idempotent — once
+        # resolved, the WHERE-resolved=0 in subsequent updates is a
+        # no-op.
         if node_cfg.get('disabled'):
+            try:
+                with sqlite3.connect(DB_PATH, timeout=5) as _c:
+                    _c.execute(
+                        "UPDATE detected_issues SET resolved=1 "
+                        "WHERE resolved=0 "
+                        "  AND source_file=? "
+                        "  AND pattern='NODE_UNREACHABLE'",
+                        (f'{node_id}::unreachable',)
+                    )
+            except Exception as _e:
+                log.debug(f"Auto-resolve for disabled {node_id} failed: {_e}")
             continue
         try:
             remote_issues = scan_remote_logs(node_id, node_cfg)

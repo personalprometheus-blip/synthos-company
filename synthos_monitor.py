@@ -1936,8 +1936,27 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
       </div>
     </div>
 
-    <!-- RIGHT COLUMN: ISSUES + AGENT FLEET -->
+    <!-- RIGHT COLUMN: BEHAVIOR BASELINE + ISSUES + AGENT FLEET -->
     <div>
+      <!-- Behavior baseline counter (Phase 7L+, 2026-04-26) — moved from
+           customer dashboard 2026-04-26. Shows how long the trader has
+           been running on stable decision-logic; useful for deciding
+           when the paper-trading observation window is enough to flip
+           LIVE. Populated via /api/behavior-baseline which proxies to
+           pi5. -->
+      <div class="sec-title">Trader Behavior</div>
+      <div class="todo-panel" id="bb-panel" style="margin-bottom:14px">
+        <div class="todo-header">
+          <span class="todo-title">Behavior Baseline</span>
+          <span class="todo-count clear" id="bb-days">—</span>
+        </div>
+        <div style="padding:10px 14px 12px;font-size:11px;color:var(--text);line-height:1.5">
+          <div id="bb-line1" style="font-family:var(--mono);color:var(--muted)">Loading…</div>
+          <div id="bb-line2" style="margin-top:4px;color:var(--muted);font-size:10px;line-height:1.4"></div>
+          <div id="bb-line3" style="margin-top:6px;font-size:9px;color:var(--dim);font-family:var(--mono)"></div>
+        </div>
+      </div>
+
       <div class="sec-title">Open Issues</div>
       <div class="todo-panel">
         <div class="todo-header">
@@ -3611,13 +3630,50 @@ async function setAdmOverride(field, val) {
   } catch(e) { toast('Override push failed', 'err'); }
 }
 
+// Behavior baseline counter (Phase 7L+ 2026-04-26) — calls
+// /api/behavior-baseline which proxies to pi5. Populates the small
+// panel above the AI Triage list. Operator-only — moved off the
+// customer portal because it doesn't help end users.
+async function fetchBehaviorBaseline() {
+  try {
+    const r = await fetch('/api/behavior-baseline');
+    if (!r.ok) return;
+    const d = await r.json();
+    const days  = document.getElementById('bb-days');
+    const line1 = document.getElementById('bb-line1');
+    const line2 = document.getElementById('bb-line2');
+    const line3 = document.getElementById('bb-line3');
+    if (!days || !line1) return;
+    const b = d.baseline;
+    if (!b) {
+      days.textContent  = '—';
+      line1.textContent = 'No baseline set';
+      line2.textContent = 'Call db.set_behavior_baseline(reason, commit_sha) on pi5 to record one.';
+      line3.textContent = '';
+      return;
+    }
+    const td = (typeof d.trading_days_since === 'number') ? d.trading_days_since : null;
+    const cd = (typeof d.calendar_days_since === 'number') ? d.calendar_days_since : null;
+    days.textContent  = (td !== null) ? `${td}td` : '—';
+    days.title        = (td !== null) ? `${td} trading day${td===1?'':'s'} stable` : '';
+    line1.innerHTML   = `<span style="color:var(--teal);font-weight:700;letter-spacing:0.06em">STABLE</span> — last change ${(b.set_at||'').slice(0,10)}`
+                      + (b.commit_sha ? ` <span style="opacity:0.5">(${b.commit_sha.slice(0,7)})</span>` : '')
+                      + ` · ${td !== null ? td + ' trading day' + (td===1?'':'s') : '—'}`
+                      + (cd !== null ? ` <span style="opacity:0.5">(${cd}d cal)</span>` : '');
+    line2.textContent = b.reason || '';
+    line3.textContent = `set_by=${b.set_by||'?'}`;
+  } catch (e) { /* silent */ }
+}
+
 fetchStatus();
 fetchTodos();
 fetchMktActivity();
 fetchAdminOverrides();
+fetchBehaviorBaseline();
 setInterval(tickCountdown, 1000);
 setInterval(fetchTodos, 30000);
 setInterval(fetchMktActivity, 60000);
+setInterval(fetchBehaviorBaseline, 60000);
 function toggleMenu(){const m=document.getElementById('hmenu');m.classList.toggle('open')}
 document.addEventListener('click',function(e){if(!document.getElementById('hbtn').contains(e.target)&&!document.getElementById('hmenu').contains(e.target)){document.getElementById('hmenu').classList.remove('open')}});
 </script>
@@ -6807,6 +6863,50 @@ def api_todos():
 def api_auditor():
     """Return auditor findings by reading auditor.db directly."""
     return api_auditor_findings()
+
+
+@app.route("/api/behavior-baseline")
+def api_behavior_baseline_proxy():
+    """Proxy to the retail node's /api/behavior-baseline endpoint.
+
+    Phase 7L+ (2026-04-26) — the trader-behavior baseline counter moved
+    off the customer dashboard (it doesn't help end users) and lives on
+    the command portal instead. Same proxy pattern as /api/audit/<pi_id>:
+    cmd portal forwards the SECRET_TOKEN-bearing request to pi5 over
+    the local network.
+
+    pi5's IP is read from the heartbeat registry (no IP guessing).
+    """
+    # Find the retail Pi from the registry
+    retail_pi = None
+    with registry_lock:
+        for pid, p in pi_registry.items():
+            if p.get("pi_id", "").startswith("synthos-retail") or p.get("pi_id") == "synthos-retail":
+                retail_pi = p
+                break
+        # Fall back: any Pi whose label includes 'retail'
+        if not retail_pi:
+            for pid, p in pi_registry.items():
+                if 'retail' in str(p.get("label", "")).lower():
+                    retail_pi = p
+                    break
+    if not retail_pi:
+        return jsonify({"error": "Retail Pi not found in registry — waiting for heartbeat"}), 503
+    pi_ip = retail_pi.get("pi_ip")
+    if not pi_ip:
+        return jsonify({"error": "Retail Pi IP unknown — waiting for heartbeat"}), 503
+    try:
+        import requests as _req
+        r = _req.get(
+            f"http://{pi_ip}:5001/api/behavior-baseline",
+            headers={"Authorization": f"Bearer {SECRET_TOKEN}"},
+            timeout=5,
+        )
+        if r.status_code == 200:
+            return jsonify(r.json())
+        return jsonify({"error": f"Retail returned {r.status_code}"}), 503
+    except Exception as e:
+        return jsonify({"error": f"Could not reach retail at {pi_ip}:5001 — {e}"}), 503
 
 
 @app.route("/api/audit/<pi_id>")

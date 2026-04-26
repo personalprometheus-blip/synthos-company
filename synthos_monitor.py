@@ -6877,22 +6877,23 @@ def api_behavior_baseline_proxy():
 
     pi5's IP is read from the heartbeat registry (no IP guessing).
     """
-    # Find the retail Pi from the registry
+    # Find the retail Pi from the registry. The pi_id is set by the
+    # heartbeat poster (retail_heartbeat.py) — current value is
+    # 'synthos-pi-retail' but match liberally on 'retail' in either
+    # pi_id or label so a future rename doesn't break this lookup.
     retail_pi = None
     with registry_lock:
         for pid, p in pi_registry.items():
-            if p.get("pi_id", "").startswith("synthos-retail") or p.get("pi_id") == "synthos-retail":
+            if 'retail' in str(p.get("pi_id", "")).lower() \
+               or 'retail' in str(p.get("label", "")).lower():
                 retail_pi = p
                 break
-        # Fall back: any Pi whose label includes 'retail'
-        if not retail_pi:
-            for pid, p in pi_registry.items():
-                if 'retail' in str(p.get("label", "")).lower():
-                    retail_pi = p
-                    break
     if not retail_pi:
         return jsonify({"error": "Retail Pi not found in registry — waiting for heartbeat"}), 503
-    pi_ip = retail_pi.get("pi_ip")
+    # Heartbeat stores requester IP under key 'ip' (set from
+    # request.remote_addr at heartbeat time). Older code paths
+    # used 'pi_ip' — check both for compatibility.
+    pi_ip = retail_pi.get("ip") or retail_pi.get("pi_ip")
     if not pi_ip:
         return jsonify({"error": "Retail Pi IP unknown — waiting for heartbeat"}), 503
     try:

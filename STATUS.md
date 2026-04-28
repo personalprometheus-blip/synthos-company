@@ -12,6 +12,16 @@
 > agents and the customer portal.
 >
 > **Recent landmark changes on this repo (synthos-company):**
+> - **Auditor auto-resolve sweep (2026-04-28)**: company_auditor now
+>   auto-clears resolved conditions instead of leaving them flagged
+>   forever. Two policies: customer_db::* conditions cleared on
+>   re-evaluation (catches NEGATIVE_CASH self-correction directly),
+>   and a 24h generic stale rule for log-scan issues (anything not
+>   firing for a day gets resolved; fresh re-occurrences re-INSERT
+>   via the existing dedup logic). Restart triggered an immediate
+>   sweep that resolved 27 stale rows from this and prior weeks.
+>   Operator-side bulk-ack cleared the remaining 14 today. Issue
+>   queue went 41 → 0.
 > - **Pill Usage telemetry panel (2026-04-27)**: new `/pill-usage`
 >   page with `/api/proxy/pill-usage` proxy to retail. Renders
 >   1d/7d/30d/90d window switcher + 4 totals tiles + ranked

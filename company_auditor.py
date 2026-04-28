@@ -771,12 +771,13 @@ def run_scan() -> dict:
     # bumped (customer_db cleared, or log-scan that's been quiet for
     # 24h) gets resolved here.
     auto_resolved = _auto_resolve_stale_issues(scan_start_iso)
-    if auto_resolved:
-        if isinstance(summary, dict):
-            summary['auto_resolved'] = auto_resolved
 
+    # auto_resolved is a separate metric from "new issues this scan" —
+    # don't let it inflate total_new in the log lines below.
     surges    = summary.pop('surges', 0) if isinstance(summary, dict) else 0
     total_new = sum(summary.values())
+    if auto_resolved and isinstance(summary, dict):
+        summary['auto_resolved'] = auto_resolved
     crit_new  = summary.get('critical', 0)
     high_new  = summary.get('high', 0)
 

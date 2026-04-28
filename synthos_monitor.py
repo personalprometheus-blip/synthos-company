@@ -9124,6 +9124,197 @@ def customer_activity_page():
                                      secret_token=SECRET_TOKEN))
 
 
+# ── PILL USAGE TELEMETRY (Phase G, 2026-04-27) ────────────────────────────────
+# Operator-facing rollup of which drawer/screener pills users actually
+# click on. Drives the "ship a generous pill set, prune by usage" plan.
+
+@app.route("/api/proxy/pill-usage")
+def proxy_pill_usage():
+    """Forward a pill-usage request to retail portal. Auth converted
+    from session-cookie (cmd portal) to Bearer SECRET_TOKEN."""
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    import requests as _req
+    days = request.args.get("days", "7")
+    try:
+        r = _req.get(
+            f"{RETAIL_PORTAL_URL}/api/admin/pill-usage",
+            params={"days": days},
+            headers={"Authorization": f"Bearer {SECRET_TOKEN}"},
+            timeout=15,
+        )
+        try:
+            return jsonify(r.json()), r.status_code
+        except Exception:
+            return jsonify({"error": f"retail returned non-JSON ({r.status_code})",
+                            "body": r.text[:500]}), 502
+    except Exception as e:
+        return jsonify({"error": f"proxy failed: {e}"}), 502
+
+
+_PILL_USAGE_TEMPLATE = """
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0a0c14;color:rgba(255,255,255,0.88);font-family:'Inter',system-ui,sans-serif;font-size:14px;min-height:100vh}
+::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:99px}
+.pu-wrap{max-width:1100px;margin:0 auto;padding:20px 24px}
+.pu-h{font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.4);margin-bottom:14px}
+.pu-controls{display:flex;gap:8px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
+.pu-controls button{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);color:rgba(255,255,255,0.6);font-size:11px;padding:6px 14px;border-radius:6px;cursor:pointer;font-family:inherit;letter-spacing:0.04em;text-transform:uppercase}
+.pu-controls button:hover{background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.88)}
+.pu-controls button.active{background:rgba(0,245,212,0.10);border-color:rgba(0,245,212,0.3);color:#00f5d4}
+.pu-controls .pu-meta{font-size:11px;color:rgba(255,255,255,0.4);font-family:'JetBrains Mono',monospace;margin-left:auto}
+.pu-totals{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:18px}
+.pu-stat{padding:14px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;text-align:center}
+.pu-stat-val{font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:700;color:#00f5d4}
+.pu-stat-label{font-size:9px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.08em;margin-top:4px}
+.pu-section{background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px 16px;margin-bottom:14px}
+.pu-section-h{font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:rgba(255,255,255,0.55);margin-bottom:10px}
+.pu-table{width:100%;border-collapse:collapse;font-size:12px;font-family:'JetBrains Mono',monospace}
+.pu-table th{text-align:left;padding:6px 10px;border-bottom:1px solid rgba(255,255,255,0.1);font-weight:600;color:rgba(255,255,255,0.4);font-size:10px;text-transform:uppercase;letter-spacing:0.06em}
+.pu-table td{padding:7px 10px;border-bottom:1px solid rgba(255,255,255,0.04);color:rgba(255,255,255,0.85)}
+.pu-table tr:hover td{background:rgba(255,255,255,0.02)}
+.pu-table td.pu-num{text-align:right;color:#00f5d4;font-weight:700}
+.pu-table td.pu-num-mut{text-align:right;color:rgba(255,255,255,0.5)}
+.pu-pill-tag{display:inline-block;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700;letter-spacing:0.05em;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);color:rgba(255,255,255,0.7)}
+.pu-empty{text-align:center;padding:30px;color:rgba(255,255,255,0.25);font-size:12px}
+.pu-bar{display:inline-block;height:5px;background:linear-gradient(90deg,rgba(0,245,212,0.6),rgba(0,245,212,0.25));border-radius:99px;vertical-align:middle;margin-left:8px;min-width:4px}
+</style>
+
+<div class="pu-wrap">
+  <div class="pu-h">Pill Usage Telemetry</div>
+
+  <div class="pu-controls">
+    <button data-days="1"  onclick="loadPillUsage(this)">1d</button>
+    <button data-days="7"  onclick="loadPillUsage(this)" class="active">7d</button>
+    <button data-days="30" onclick="loadPillUsage(this)">30d</button>
+    <button data-days="90" onclick="loadPillUsage(this)">90d</button>
+    <span class="pu-meta" id="pu-meta">Loading…</span>
+  </div>
+
+  <div class="pu-totals" id="pu-totals"></div>
+
+  <div class="pu-section">
+    <div class="pu-section-h">By Pill Type · ranked by clicks</div>
+    <div id="pu-pills">Loading…</div>
+  </div>
+
+  <div class="pu-section">
+    <div class="pu-section-h">By Drawer / Surface</div>
+    <div id="pu-drawers"></div>
+  </div>
+
+  <div class="pu-section">
+    <div class="pu-section-h">By Customer · top 50</div>
+    <div id="pu-customers"></div>
+  </div>
+</div>
+
+<script>
+function _esc(s){var d=document.createElement('div');d.textContent=s||'';return d.innerHTML;}
+
+async function loadPillUsage(btn) {
+  const days = btn ? btn.getAttribute('data-days') : '7';
+  document.querySelectorAll('.pu-controls button').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  document.getElementById('pu-meta').textContent = 'Loading…';
+
+  try {
+    const r = await fetch('/api/proxy/pill-usage?days=' + encodeURIComponent(days));
+    const d = await r.json();
+    if (d.error) {
+      document.getElementById('pu-meta').textContent = 'Error: ' + d.error;
+      return;
+    }
+    const tot = d.total || {n:0, users:0, pill_types:0};
+    document.getElementById('pu-meta').textContent =
+      'Window: ' + d.days + 'd · ' + tot.n + ' clicks · ' + tot.users + ' users · ' + tot.pill_types + ' pill types';
+
+    document.getElementById('pu-totals').innerHTML =
+      '<div class="pu-stat"><div class="pu-stat-val">' + tot.n + '</div><div class="pu-stat-label">Clicks</div></div>'
+    + '<div class="pu-stat"><div class="pu-stat-val">' + tot.users + '</div><div class="pu-stat-label">Distinct users</div></div>'
+    + '<div class="pu-stat"><div class="pu-stat-val">' + tot.pill_types + '</div><div class="pu-stat-label">Distinct pill types</div></div>'
+    + '<div class="pu-stat"><div class="pu-stat-val">' + d.days + '</div><div class="pu-stat-label">Window (days)</div></div>';
+
+    // By pill type
+    const pills = d.by_pill_type || [];
+    if (!pills.length) {
+      document.getElementById('pu-pills').innerHTML = '<div class="pu-empty">No clicks yet in this window.</div>';
+    } else {
+      const maxClicks = pills[0].clicks || 1;
+      let html = '<table class="pu-table"><thead><tr>'
+        + '<th>Type</th><th>Label</th>'
+        + '<th style="text-align:right">Clicks</th>'
+        + '<th style="text-align:right">Users</th>'
+        + '<th style="text-align:right">Tickers</th>'
+        + '<th style="width:25%"></th></tr></thead><tbody>';
+      pills.forEach(p => {
+        const w = Math.round(80 * p.clicks / maxClicks);
+        html += '<tr>'
+          + '<td><span class="pu-pill-tag">' + _esc(p.pill_type) + '</span></td>'
+          + '<td>' + _esc(p.pill_label || '—') + '</td>'
+          + '<td class="pu-num">' + p.clicks + '</td>'
+          + '<td class="pu-num-mut">' + p.distinct_users + '</td>'
+          + '<td class="pu-num-mut">' + p.distinct_tickers + '</td>'
+          + '<td><span class="pu-bar" style="width:' + w + '%"></span></td>'
+          + '</tr>';
+      });
+      html += '</tbody></table>';
+      document.getElementById('pu-pills').innerHTML = html;
+    }
+
+    // By drawer
+    const drawers = d.by_drawer || [];
+    if (!drawers.length) {
+      document.getElementById('pu-drawers').innerHTML = '<div class="pu-empty">No drawer data yet.</div>';
+    } else {
+      let html = '<table class="pu-table"><thead><tr>'
+        + '<th>Surface</th>'
+        + '<th style="text-align:right">Clicks</th>'
+        + '<th style="text-align:right">Users</th></tr></thead><tbody>';
+      drawers.forEach(d => {
+        html += '<tr><td><span class="pu-pill-tag">' + _esc(d.drawer_kind) + '</span></td>'
+              + '<td class="pu-num">' + d.clicks + '</td>'
+              + '<td class="pu-num-mut">' + d.distinct_users + '</td></tr>';
+      });
+      html += '</tbody></table>';
+      document.getElementById('pu-drawers').innerHTML = html;
+    }
+
+    // By customer
+    const custs = d.by_customer || [];
+    if (!custs.length) {
+      document.getElementById('pu-customers').innerHTML = '<div class="pu-empty">No customer data yet.</div>';
+    } else {
+      let html = '<table class="pu-table"><thead><tr>'
+        + '<th>Customer ID</th>'
+        + '<th style="text-align:right">Clicks</th>'
+        + '<th style="text-align:right">Distinct pills</th></tr></thead><tbody>';
+      custs.forEach(c => {
+        html += '<tr><td>' + _esc((c.customer_id || '').slice(0, 36)) + '</td>'
+              + '<td class="pu-num">' + c.clicks + '</td>'
+              + '<td class="pu-num-mut">' + c.distinct_pills + '</td></tr>';
+      });
+      html += '</tbody></table>';
+      document.getElementById('pu-customers').innerHTML = html;
+    }
+  } catch (e) {
+    document.getElementById('pu-meta').textContent = 'Failed: ' + e.message;
+  }
+}
+
+loadPillUsage();
+</script>
+"""
+
+
+@app.route("/pill-usage")
+def pill_usage_page():
+    if not _authorized():
+        return redirect(url_for("login"))
+    return _subpage_header('Pill Usage') + _PILL_USAGE_TEMPLATE
+
+
 # ── CUSTOMER BILLING PAGE ─────────────────────────────────────────────────────
 
 @app.route("/customer-billing")

@@ -4253,6 +4253,7 @@ def _subpage_header(page_name):
         '<a href="/approvals">Approvals</a>'
         '<a href="/support-queue">Customer Support</a>'
         '<a href="/customer-billing">Customer Billing</a>'
+        '<a href="/customer-activity">Customer Activity</a>'
         '<a href="/company-finances">Company Finances</a>'
         '<a href="/reports">Reports</a>'
         '<div style="height:1px;background:rgba(255,255,255,0.07);margin:4px 0"></div>'
@@ -8736,6 +8737,391 @@ def reports_page():
   </div>
 </div>
 """
+
+
+# ── CUSTOMER ACTIVITY REPORT (V1, 2026-04-28) ────────────────────────────
+#
+# Operator-facing cross-customer trading activity report.
+#
+# Data flow:
+#   browser → /customer-activity page (form: dates + customer scope)
+#           → POST /api/proxy/activity-report
+#           → forwards to RETAIL_PORTAL_URL/api/admin/activity-report
+#               (with Bearer SECRET_TOKEN; bypasses customer-session auth)
+#           → retail engine reads stored data, returns structured JSON
+#           → cmd portal renders as HTML tables.
+#
+# Engine: synthos_build/tools/customer_activity_report.py on pi5.
+# Why on pi5: the per-customer signals.db files live there; pi4b is
+# a thin viewing surface.
+# No live Alpaca calls — everything from stored data per operator
+# preference.
+
+
+@app.route("/api/proxy/activity-report", methods=["POST"])
+def proxy_activity_report():
+    """Forward an activity-report request to retail portal.  POST body
+    is passed through unchanged; auth converted from session-cookie
+    (cmd portal) to Bearer SECRET_TOKEN (retail portal monitor auth)."""
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    import requests as _req
+    body = request.get_json(silent=True) or {}
+    try:
+        r = _req.post(
+            f"{RETAIL_PORTAL_URL}/api/admin/activity-report",
+            json=body,
+            headers={"Authorization": f"Bearer {SECRET_TOKEN}"},
+            timeout=30,
+        )
+        try:
+            return jsonify(r.json()), r.status_code
+        except Exception:
+            return jsonify({"error": f"retail returned non-JSON ({r.status_code})",
+                            "body": r.text[:500]}), 502
+    except Exception as e:
+        return jsonify({"error": f"proxy failed: {e}"}), 502
+
+
+_CUSTOMER_ACTIVITY_TEMPLATE = """
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0a0c14;color:rgba(255,255,255,0.88);font-family:'Inter',system-ui,sans-serif;font-size:14px;min-height:100vh}
+::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:99px}
+.ca-wrap{max-width:1200px;margin:0 auto;padding:20px 24px}
+.ca-h{font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.4);margin-bottom:14px}
+.ca-form{background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:16px;margin-bottom:18px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;align-items:end}
+.ca-form label{display:block;font-size:10px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px}
+.ca-form input,.ca-form select{width:100%;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:8px 10px;color:rgba(255,255,255,0.88);font-family:'JetBrains Mono',monospace;font-size:12px}
+.ca-form input:focus,.ca-form select:focus{outline:none;border-color:rgba(0,245,212,0.4)}
+.ca-form button{background:rgba(0,245,212,0.1);border:1px solid rgba(0,245,212,0.3);color:#00f5d4;border-radius:6px;padding:8px 16px;font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer}
+.ca-form button:hover{background:rgba(0,245,212,0.18)}
+.ca-presets{display:flex;gap:6px;flex-wrap:wrap;grid-column:1/-1}
+.ca-presets button{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);color:rgba(255,255,255,0.6);font-size:10px;padding:5px 10px;text-transform:none;letter-spacing:0}
+.ca-presets button:hover{background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.88)}
+.ca-customer-list{max-height:140px;overflow-y:auto;border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:6px;background:rgba(255,255,255,0.02)}
+.ca-customer-list label{display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:4px;cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:10px;color:rgba(255,255,255,0.6);text-transform:none;letter-spacing:0;margin:0}
+.ca-customer-list label:hover{background:rgba(255,255,255,0.04)}
+.ca-customer-list input[type=checkbox]{margin-right:4px;width:auto}
+.ca-customer-list .ca-bulk{padding:4px 6px;border-bottom:1px solid rgba(255,255,255,0.06);margin-bottom:4px;display:flex;gap:8px}
+.ca-customer-list .ca-bulk a{font-size:10px;color:rgba(0,245,212,0.7);text-decoration:none;cursor:pointer}
+.ca-customer-list .ca-bulk a:hover{color:#00f5d4}
+.ca-out{background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px;margin-bottom:14px}
+.ca-customer-block{margin-bottom:18px;padding:12px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.06);border-radius:8px}
+.ca-cust-h{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid rgba(255,255,255,0.06)}
+.ca-cust-name{font-size:14px;font-weight:600;color:rgba(255,255,255,0.95)}
+.ca-cust-cid{font-family:'JetBrains Mono',monospace;font-size:10px;color:rgba(255,255,255,0.3)}
+.ca-stat-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-bottom:10px}
+.ca-stat{padding:8px 10px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.06);border-radius:6px}
+.ca-stat-label{font-size:9px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:3px}
+.ca-stat-val{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700}
+.ca-pos{color:#00f5d4}.ca-neg{color:#ff4b6e}.ca-mut{color:rgba(255,255,255,0.5)}
+.ca-table{width:100%;border-collapse:collapse;font-size:11px;font-family:'JetBrains Mono',monospace;margin-top:6px}
+.ca-table th{text-align:left;padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.1);font-weight:600;color:rgba(255,255,255,0.4);font-size:10px;text-transform:uppercase;letter-spacing:0.06em}
+.ca-table td{padding:5px 8px;border-bottom:1px solid rgba(255,255,255,0.04);color:rgba(255,255,255,0.85)}
+.ca-table tr:hover td{background:rgba(255,255,255,0.02)}
+.ca-section-h{font-size:10px;font-weight:700;color:rgba(255,255,255,0.55);letter-spacing:0.08em;text-transform:uppercase;margin:14px 0 6px}
+.ca-empty{text-align:center;padding:30px;color:rgba(255,255,255,0.25);font-size:12px}
+.ca-cluster{padding:10px 12px;background:rgba(245,166,35,0.06);border:1px solid rgba(245,166,35,0.2);border-radius:6px;margin-bottom:6px}
+.ca-cluster-header{font-size:11px;font-weight:600;color:#f5a623;margin-bottom:4px}
+.ca-tools{display:flex;gap:8px;justify-content:flex-end;margin-bottom:8px}
+.ca-tools button{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);color:rgba(255,255,255,0.6);font-size:10px;padding:4px 10px;border-radius:4px;cursor:pointer;font-family:inherit;letter-spacing:0.04em}
+.ca-tools button:hover{background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.88)}
+</style>
+
+<div class="ca-wrap">
+  <div class="ca-h">Customer Activity Report</div>
+
+  <form class="ca-form" id="ca-form" onsubmit="return runCAReport(event)">
+    <div>
+      <label>Start date</label>
+      <input type="date" id="ca-start" required>
+    </div>
+    <div>
+      <label>End date</label>
+      <input type="date" id="ca-end" required>
+    </div>
+    <div style="grid-column:1/-1">
+      <label>Customers</label>
+      <div class="ca-customer-list" id="ca-customers">
+        <div class="ca-bulk">
+          <a onclick="caCustToggle(true)">all</a>
+          <a onclick="caCustToggle(false)">none</a>
+        </div>
+        <label><input type="checkbox" value="owner" checked> owner only (Patrick)</label>
+        <label><input type="checkbox" value="all"> ALL customers</label>
+        <div id="ca-customer-checkboxes"><div style="font-size:10px;color:rgba(255,255,255,0.3);padding:4px">loading customer list...</div></div>
+      </div>
+    </div>
+    <div class="ca-presets">
+      <button type="button" onclick="caPreset('today')">Today</button>
+      <button type="button" onclick="caPreset('yesterday')">Yesterday</button>
+      <button type="button" onclick="caPreset('this_week')">This week</button>
+      <button type="button" onclick="caPreset('last_week')">Last week</button>
+      <button type="button" onclick="caPreset('mtd')">MTD</button>
+      <button type="button" onclick="caPreset('since_baseline')">Since 2026-04-23</button>
+    </div>
+    <div style="grid-column:1/-1;display:flex;justify-content:flex-end">
+      <button type="submit">Run report</button>
+    </div>
+  </form>
+
+  <div id="ca-output">
+    <div class="ca-empty">Pick a date range + customers above and click "Run report".</div>
+  </div>
+</div>
+
+<script>
+const SECRET_TOKEN = '{{ secret_token }}';
+
+function ymd(d){
+  const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), dd=String(d.getDate()).padStart(2,'0');
+  return y+'-'+m+'-'+dd;
+}
+
+function caPreset(kind){
+  const today = new Date();
+  let s, e;
+  if (kind === 'today')         { s = today; e = today; }
+  else if (kind === 'yesterday'){ s = new Date(today); s.setDate(today.getDate()-1); e = s; }
+  else if (kind === 'this_week'){
+    s = new Date(today);
+    const dow = today.getDay() || 7; // Mon=1..Sun=7 → 7
+    s.setDate(today.getDate() - (dow-1));
+    e = today;
+  } else if (kind === 'last_week'){
+    e = new Date(today); const dow = today.getDay() || 7; e.setDate(today.getDate() - dow);
+    s = new Date(e); s.setDate(e.getDate() - 6);
+  } else if (kind === 'mtd'){
+    s = new Date(today.getFullYear(), today.getMonth(), 1); e = today;
+  } else if (kind === 'since_baseline'){
+    s = new Date('2026-04-23'); e = today;
+  }
+  document.getElementById('ca-start').value = ymd(s);
+  document.getElementById('ca-end').value   = ymd(e);
+}
+
+function caCustToggle(on){
+  document.querySelectorAll('#ca-customer-checkboxes input').forEach(cb=>cb.checked=on);
+}
+
+async function loadCustomerList(){
+  // Pull from existing billing endpoint to populate the customer multi-select.
+  try {
+    const r = await fetch('/api/proxy/billing/all-customers', {headers:{'X-Token':SECRET_TOKEN}});
+    if (!r.ok) throw new Error('billing fetch '+r.status);
+    const d = await r.json();
+    const custs = (d.customers || []).filter(c => c.id);
+    const el = document.getElementById('ca-customer-checkboxes');
+    if (!custs.length) { el.innerHTML = '<div style="font-size:10px;color:rgba(255,255,255,0.3);padding:4px">no customers found</div>'; return; }
+    el.innerHTML = custs.map(c => {
+      const name = c.display_name || c.email || c.id.slice(0,8);
+      return `<label><input type="checkbox" value="${c.id}"> ${name} <span style="color:rgba(255,255,255,0.3);margin-left:auto">${c.id.slice(0,8)}</span></label>`;
+    }).join('');
+  } catch(e) {
+    document.getElementById('ca-customer-checkboxes').innerHTML =
+      '<div style="font-size:10px;color:#ff4b6e;padding:4px">failed to load customer list ('+e+'). You can still use "owner" or "ALL".</div>';
+  }
+}
+
+function fmtDollar(n, sign){
+  if (n === null || n === undefined) return '—';
+  const abs = Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  if (sign) return (n >= 0 ? '+' : '-') + '$' + abs;
+  return '$' + abs;
+}
+
+function fmtPct(n){
+  if (n === null || n === undefined) return '—';
+  return (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
+}
+
+function classOf(n){ return n > 0 ? 'ca-pos' : (n < 0 ? 'ca-neg' : 'ca-mut'); }
+
+function renderCustomerBlock(cr){
+  const a = cr.activity, p = cr.positions;
+  const equity = (a.equity_start !== null && a.equity_end !== null)
+    ? `<div class="ca-stat"><div class="ca-stat-label">Equity</div><div class="ca-stat-val ${classOf(a.equity_change||0)}">${fmtDollar(a.equity_start)} → ${fmtDollar(a.equity_end)}</div><div style="font-size:10px;color:rgba(255,255,255,0.4);margin-top:2px">${fmtDollar(a.equity_change, true)} (${fmtPct(a.equity_change_pct)})</div></div>`
+    : `<div class="ca-stat"><div class="ca-stat-label">Equity</div><div class="ca-stat-val ca-mut">no snapshots</div></div>`;
+  const stats = `
+    ${equity}
+    <div class="ca-stat"><div class="ca-stat-label">Trades opened</div><div class="ca-stat-val">${a.opened_count}</div><div style="font-size:10px;color:rgba(255,255,255,0.4)">${fmtDollar(a.opened_volume)}</div></div>
+    <div class="ca-stat"><div class="ca-stat-label">Trades closed</div><div class="ca-stat-val">${a.closed_count}</div><div style="font-size:10px;color:rgba(255,255,255,0.4)">${a.wins}W / ${a.losses}L · ${a.win_rate_pct}%</div></div>
+    <div class="ca-stat"><div class="ca-stat-label">Realized P&amp;L</div><div class="ca-stat-val ${classOf(a.realized_pnl)}">${fmtDollar(a.realized_pnl, true)}</div></div>
+    <div class="ca-stat"><div class="ca-stat-label">Open at end</div><div class="ca-stat-val">${a.open_count}</div><div style="font-size:10px;color:rgba(255,255,255,0.4)">${fmtDollar(a.open_value)}</div></div>
+  `;
+  let closedTable = '';
+  if (p.closed && p.closed.length) {
+    const rows = p.closed.slice(0,30).map(t => `
+      <tr>
+        <td>${t.ticker}</td>
+        <td style="color:rgba(255,255,255,0.5)">${t.sector || '—'}</td>
+        <td style="text-align:right">${(t.shares||0).toFixed(2)}</td>
+        <td style="text-align:right">${fmtDollar(t.entry)}</td>
+        <td style="text-align:right">${fmtDollar(t.exit)}</td>
+        <td style="text-align:right" class="${classOf(t.pnl)}">${fmtDollar(t.pnl, true)}</td>
+        <td style="text-align:right" class="${classOf(t.pnl)}">${fmtPct(t.ret_pct)}</td>
+        <td style="text-align:right">${t.days_held !== null ? t.days_held.toFixed(1) + 'd' : '—'}</td>
+        <td style="color:rgba(255,255,255,0.5)">${t.exit_reason || '—'}</td>
+      </tr>
+    `).join('');
+    closedTable = `
+      <div class="ca-section-h">Closed trades (${p.closed.length})</div>
+      <table class="ca-table">
+        <thead><tr><th>Ticker</th><th>Sector</th><th style="text-align:right">Shares</th><th style="text-align:right">Entry</th><th style="text-align:right">Exit</th><th style="text-align:right">P&amp;L</th><th style="text-align:right">Return</th><th style="text-align:right">Held</th><th>Exit</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  }
+  let sectorTable = '';
+  if (p.sectors && p.sectors.length) {
+    sectorTable = `
+      <div class="ca-section-h">Sectors traded</div>
+      <table class="ca-table">
+        <thead><tr><th>Sector</th><th style="text-align:right">Trades</th><th style="text-align:right">P&amp;L</th></tr></thead>
+        <tbody>${p.sectors.map(s => `
+          <tr><td>${s.sector}</td><td style="text-align:right">${s.trades}</td><td style="text-align:right" class="${classOf(s.pnl)}">${fmtDollar(s.pnl, true)}</td></tr>
+        `).join('')}</tbody>
+      </table>
+    `;
+  }
+  return `
+    <div class="ca-customer-block">
+      <div class="ca-cust-h">
+        <div class="ca-cust-name">${cr.display_name}</div>
+        <div class="ca-cust-cid">${cr.customer_id.slice(0,8)}</div>
+      </div>
+      <div class="ca-stat-row">${stats}</div>
+      ${closedTable}
+      ${sectorTable}
+    </div>
+  `;
+}
+
+function renderAggregate(agg){
+  if (!agg) return '';
+  const ft = agg.fleet_totals;
+  let clusterHtml = '';
+  if (agg.signal_clusters && agg.signal_clusters.length) {
+    clusterHtml = '<div class="ca-section-h">⚠ Signal clusters (≥3 customers traded)</div>' +
+      agg.signal_clusters.map(t => `
+        <div class="ca-cluster">
+          <div class="ca-cluster-header">${t.ticker} — ${t.customers} customers, ${t.trades} trades</div>
+          <div style="font-size:10px;color:rgba(255,255,255,0.5)">Net P&amp;L: <span class="${classOf(t.pnl)}">${fmtDollar(t.pnl, true)}</span></div>
+        </div>
+      `).join('');
+  }
+  let topTickers = '';
+  if (agg.top_tickers && agg.top_tickers.length) {
+    topTickers = `
+      <div class="ca-section-h">Top tickers across fleet</div>
+      <table class="ca-table">
+        <thead><tr><th>Ticker</th><th style="text-align:right">Customers</th><th style="text-align:right">Trades</th><th style="text-align:right">P&amp;L</th></tr></thead>
+        <tbody>${agg.top_tickers.slice(0,15).map(t => `
+          <tr><td>${t.ticker}</td><td style="text-align:right">${t.customers}</td><td style="text-align:right">${t.trades}</td><td style="text-align:right" class="${classOf(t.pnl)}">${fmtDollar(t.pnl, true)}</td></tr>
+        `).join('')}</tbody>
+      </table>
+    `;
+  }
+  let topSectors = '';
+  if (agg.top_sectors && agg.top_sectors.length) {
+    topSectors = `
+      <div class="ca-section-h">Top sectors across fleet</div>
+      <table class="ca-table">
+        <thead><tr><th>Sector</th><th style="text-align:right">Customers</th><th style="text-align:right">Trades</th><th style="text-align:right">P&amp;L</th></tr></thead>
+        <tbody>${agg.top_sectors.slice(0,10).map(s => `
+          <tr><td>${s.sector}</td><td style="text-align:right">${s.customers}</td><td style="text-align:right">${s.trades}</td><td style="text-align:right" class="${classOf(s.pnl)}">${fmtDollar(s.pnl, true)}</td></tr>
+        `).join('')}</tbody>
+      </table>
+    `;
+  }
+  return `
+    <div class="ca-customer-block" style="border-color:rgba(0,245,212,0.2);background:rgba(0,245,212,0.02)">
+      <div class="ca-cust-h"><div class="ca-cust-name" style="color:#00f5d4">Fleet aggregate</div></div>
+      <div class="ca-stat-row">
+        <div class="ca-stat"><div class="ca-stat-label">Active customers</div><div class="ca-stat-val">${ft.active_customers}</div></div>
+        <div class="ca-stat"><div class="ca-stat-label">Trades opened</div><div class="ca-stat-val">${ft.trades_opened}</div></div>
+        <div class="ca-stat"><div class="ca-stat-label">Trades closed</div><div class="ca-stat-val">${ft.trades_closed}</div></div>
+        <div class="ca-stat"><div class="ca-stat-label">Realized P&amp;L</div><div class="ca-stat-val ${classOf(ft.realized_pnl)}">${fmtDollar(ft.realized_pnl, true)}</div></div>
+      </div>
+      ${clusterHtml}
+      ${topTickers}
+      ${topSectors}
+    </div>
+  `;
+}
+
+async function runCAReport(ev){
+  ev.preventDefault();
+  const start = document.getElementById('ca-start').value;
+  const end   = document.getElementById('ca-end').value;
+  if (!start || !end) return false;
+  const checked = Array.from(document.querySelectorAll('#ca-customers input:checked')).map(cb=>cb.value);
+  const body = {start, end, customer: checked.length ? checked : ['all']};
+
+  const out = document.getElementById('ca-output');
+  out.innerHTML = '<div class="ca-empty">Running report...</div>';
+
+  try {
+    const r = await fetch('/api/proxy/activity-report', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-Token': SECRET_TOKEN},
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (!r.ok || d.error) {
+      out.innerHTML = '<div class="ca-empty" style="color:#ff4b6e">' + (d.error || ('HTTP ' + r.status)) + '</div>';
+      return false;
+    }
+    let html = '<div class="ca-tools"><button onclick="caCopyJSON()">Copy JSON</button><button onclick="caDownloadCSV()">Download CSV</button></div>';
+    html += '<div style="font-size:10px;color:rgba(255,255,255,0.4);margin-bottom:10px;font-family:JetBrains Mono,monospace">' +
+            d.meta.start + ' → ' + d.meta.end + ' · ' + d.meta.customer_count + ' customers · generated ' + d.meta.generated_at + '</div>';
+    html += renderAggregate(d.aggregate);
+    html += (d.customers || []).map(renderCustomerBlock).join('');
+    out.innerHTML = html;
+    window._caLastReport = d;
+  } catch(e) {
+    out.innerHTML = '<div class="ca-empty" style="color:#ff4b6e">' + e + '</div>';
+  }
+  return false;
+}
+
+function caCopyJSON(){
+  if (!window._caLastReport) return;
+  navigator.clipboard.writeText(JSON.stringify(window._caLastReport, null, 2));
+}
+
+function caDownloadCSV(){
+  const r = window._caLastReport;
+  if (!r) return;
+  const rows = [['customer','ticker','sector','shares','entry','exit','pnl','ret_pct','days_held','exit_reason','opened_at','closed_at']];
+  (r.customers || []).forEach(cr => {
+    (cr.positions.closed || []).forEach(t => {
+      rows.push([cr.display_name, t.ticker, t.sector, t.shares, t.entry, t.exit, t.pnl, t.ret_pct, t.days_held, t.exit_reason, t.opened_at, t.closed_at]);
+    });
+  });
+  const csv = rows.map(r => r.map(c => '"' + String(c == null ? '' : c).replace(/"/g, '""') + '"').join(',')).join('\\n');
+  const blob = new Blob([csv], {type: 'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'activity-' + r.meta.start + '_' + r.meta.end + '.csv';
+  a.click();
+}
+
+// Default to today on first load
+caPreset('today');
+loadCustomerList();
+</script>
+"""
+
+
+@app.route("/customer-activity")
+def customer_activity_page():
+    if not _authorized():
+        return redirect(url_for("login"))
+    return (_subpage_header('Customer Activity')
+            + render_template_string(_CUSTOMER_ACTIVITY_TEMPLATE,
+                                     secret_token=SECRET_TOKEN))
 
 
 # ── CUSTOMER BILLING PAGE ─────────────────────────────────────────────────────

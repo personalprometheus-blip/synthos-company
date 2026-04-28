@@ -714,9 +714,66 @@ def check_customer_db_health() -> list[dict]:
 
     return issues
 
+def _auto_resolve_stale_issues(scan_start_iso: str) -> int:
+    """Phase H+ (2026-04-28) — auto-resolve issues whose underlying
+    condition has cleared. Two policies:
+
+      1. customer_db::* — these conditions are re-evaluated freshly on
+         every scan (NEGATIVE_CASH / BIL_OVER_ALLOCATED / orphans /
+         stale heartbeats — emitted by check_customer_db_health).
+         If an open row's last_seen is older than the current scan's
+         start time, the condition no longer fires this cycle →
+         resolve. Catches the common case where a transient mid-trade
+         negative-cash blip self-corrects within minutes but the
+         auditor flag previously sat unresolved indefinitely.
+
+      2. Other source_files (log scans) — generic 24h stale rule. Once
+         a log error pattern stops firing for a full day, treat as
+         resolved. If the same pattern re-emerges later, the dedup
+         WHERE-resolved=0 clause already inserts a fresh row so we
+         don't lose the new occurrence.
+
+    Returns the count of rows newly marked resolved.
+    """
+    resolved = 0
+    cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    try:
+        with _db() as c:
+            cur = c.execute(
+                "UPDATE detected_issues SET resolved=1 "
+                "WHERE resolved=0 "
+                "  AND source_file LIKE 'customer_db::%' "
+                "  AND last_seen < ?",
+                (scan_start_iso,)
+            )
+            resolved += cur.rowcount
+            cur = c.execute(
+                "UPDATE detected_issues SET resolved=1 "
+                "WHERE resolved=0 "
+                "  AND source_file NOT LIKE 'customer_db::%' "
+                "  AND last_seen < ?",
+                (cutoff_24h,)
+            )
+            resolved += cur.rowcount
+    except Exception as e:
+        log.warning(f"Auto-resolve sweep failed: {e}")
+    if resolved:
+        log.info(f"Auto-resolved {resolved} stale/cleared issue(s)")
+    return resolved
+
+
 def run_scan() -> dict:
     """Run one audit scan. Returns summary dict."""
+    scan_start_iso = datetime.now(timezone.utc).isoformat()
     summary = scan_all_logs()
+    # Sweep stale + cleared conditions AFTER scan_all_logs has updated
+    # last_seen on still-active issues. Anything that didn't get
+    # bumped (customer_db cleared, or log-scan that's been quiet for
+    # 24h) gets resolved here.
+    auto_resolved = _auto_resolve_stale_issues(scan_start_iso)
+    if auto_resolved:
+        if isinstance(summary, dict):
+            summary['auto_resolved'] = auto_resolved
 
     surges    = summary.pop('surges', 0) if isinstance(summary, dict) else 0
     total_new = sum(summary.values())

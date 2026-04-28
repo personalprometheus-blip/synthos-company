@@ -4,7 +4,7 @@
 > 2026-04-05).** It captures the pre-Pi-5-deployment era. Everything
 > below is preserved for audit trail; none of it is the live state.
 >
-> **Current state (2026-04-25):** pi4b is the live company node
+> **Current state (2026-04-27):** pi4b is the live company node
 > running synthos_monitor.py (the command portal) at
 > `command.synth-cloud.com`, plus auditor / archivist / vault /
 > librarian / sentinel / strongbox / fidget / heartbeat / monitor.
@@ -12,6 +12,14 @@
 > agents and the customer portal.
 >
 > **Recent landmark changes on this repo (synthos-company):**
+> - **Customer Activity Report engine (2026-04-27)**: new `/customer-activity`
+>   page on the command portal with form (customer dropdown + date-range
+>   picker + report-type selector). Hits a new `/api/proxy/activity-report`
+>   endpoint that proxies to the retail portal's admin-side report
+>   generator (Bearer MONITOR_TOKEN auth) and renders the JSON response
+>   inline. Lets the operator pull a per-customer activity rollup
+>   (signals seen, approvals queued, gates failed, trades opened/closed,
+>   P&L) without SSH'ing to pi5.
 > - Data Provenance tab on `/system-architecture` (2026-04-24 / 2026-04-25):
 >   4th tab in synthos_monitor.py's system map, 3-banded
 >   parallel-thread visualization showing where each trade signal's
@@ -42,9 +50,28 @@
 > all retail. See `synthos/synthos_build/PROJECT_STATUS.md` Phase
 > 7+ section for the full breakdown.
 >
+> **Companion-repo activity (synthos / pi5) on 2026-04-27** —
+> trader-visibility audit landed three changes verifying Gate 5
+> actually consumes every screener input:
+> sector_screener.combined_score re-weighted 40/40/0/20 → 30/30/30/10
+> so momentum is included in candidate ranking; ret_3m raw 3-month
+> return persisted on sector_screening + surfaced on portal screener
+> page + planning drawer; trader gate5 emits a single consolidated
+> decision_log entry containing every screener field considered
+> (visibility-only, zero behavior change). Plus documented intentional
+> sentiment dual-write (sector_screening per-ticker vs signals
+> per-signal — same detect_cascade computation). Earlier same day:
+> MRVL trail-stop -491% display bug, settlement-lag race in Gate 0
+> orphan adoption, rotation-at-loss reversed (winners-only), BIL
+> excluded from Gate 10, CBOE put_call_ratio caching + None-safe
+> formatting (had been pinning every screener-sentiment fulfilment
+> to 0.5 since CBOE Cloudflare block), P&L report polish. No
+> company-side changes required except the customer-activity report
+> page noted above.
+>
 > **Single source of truth for live operational state lives in the
 > companion repo:** `synthos/synthos_build/data/system_architecture.json`
-> (v3.13 as of 2026-04-25).
+> (v3.15 as of 2026-04-27).
 >
 > **REPO IDENTITY:** `personalprometheus-blip/synthos-company` — local: `/home/pi/synthos-company/`
 > **This repo owns:** company_node (Pi 4B) — synthos_monitor (command portal), auditor, archivist, vault, librarian, sentinel, strongbox, scoop

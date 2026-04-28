@@ -1628,6 +1628,8 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
         <a href="/logs" class="hmenu-item">Logs</a>
         <a href="/support-queue" class="hmenu-item">Customer Support</a>
         <a href="/customer-billing" class="hmenu-item">Customer Billing</a>
+        <a href="/customer-activity" class="hmenu-item">Customer Activity</a>
+        <a href="/pill-usage" class="hmenu-item">Pill Usage</a>
         <a href="/company-finances" class="hmenu-item">Company Finances</a>
         <a href="/reports" class="hmenu-item">Reports</a>
         <div style="height:1px;background:rgba(255,255,255,0.07);margin:4px 0"></div>
@@ -4254,6 +4256,7 @@ def _subpage_header(page_name):
         '<a href="/support-queue">Customer Support</a>'
         '<a href="/customer-billing">Customer Billing</a>'
         '<a href="/customer-activity">Customer Activity</a>'
+        '<a href="/pill-usage">Pill Usage</a>'
         '<a href="/company-finances">Company Finances</a>'
         '<a href="/reports">Reports</a>'
         '<div style="height:1px;background:rgba(255,255,255,0.07);margin:4px 0"></div>'

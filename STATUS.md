@@ -12,6 +12,14 @@
 > agents and the customer portal.
 >
 > **Recent landmark changes on this repo (synthos-company):**
+> - **Pill Usage telemetry panel (2026-04-27)**: new `/pill-usage`
+>   page with `/api/proxy/pill-usage` proxy to retail. Renders
+>   1d/7d/30d/90d window switcher + 4 totals tiles + ranked
+>   by_pill_type / by_drawer / by_customer rollups. Drives the
+>   prune decision for the Phase E+F drawer/screener pills landed
+>   on the retail side same day — observe usage, drop the bottom
+>   pill categories after ~2 weeks of data. Linked from both nav
+>   menus (subpage + dashboard hmenu).
 > - **Customer Activity Report engine (2026-04-27)**: new `/customer-activity`
 >   page on the command portal with form (customer dropdown + date-range
 >   picker + report-type selector). Hits a new `/api/proxy/activity-report`

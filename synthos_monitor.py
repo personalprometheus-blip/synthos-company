@@ -3404,7 +3404,13 @@ function buildMktChart() {
       responsive:true, maintainAspectRatio:false,
       interaction:{mode:'index',intersect:false},
       plugins:{
-        legend:{display:true,position:'bottom',labels:{color:'rgba(255,255,255,0.35)',font:{size:9},boxWidth:8,padding:8}},
+        // Bottom legend disabled 2026-04-28 — operator note: it grew
+        // proportionally with the customer count and dominated the
+        // chart's vertical space. Tooltip on hover already gives the
+        // per-customer label + dollar amount, so the legend was
+        // redundant. Re-enable here if a non-hover identification
+        // path is ever needed.
+        legend:{display:false},
         tooltip:{
           backgroundColor:'rgba(13,17,32,0.95)',borderColor:'rgba(255,255,255,0.1)',borderWidth:1,
           titleColor:'rgba(255,255,255,0.5)',bodyColor:'rgba(255,255,255,0.85)',

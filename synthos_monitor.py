@@ -8845,15 +8845,22 @@ async function loadExpenses() {
     var d = await r.json();
     var exps = d.expenses || [];
 
-    // Summary
-    var monthly = exps.filter(function(e){return e.frequency==='monthly'}).reduce(function(s,e){return s+e.amount},0);
-    var yearly = exps.filter(function(e){return e.frequency==='yearly'}).reduce(function(s,e){return s+e.amount},0);
-    var onetime = exps.filter(function(e){return !e.frequency||e.frequency==='one-time'}).reduce(function(s,e){return s+e.amount},0);
-    var total = exps.reduce(function(s,e){return s+e.amount},0);
-    document.getElementById('fin-monthly').textContent = fmt(monthly) + '/mo';
-    document.getElementById('fin-yearly').textContent = fmt(yearly) + '/yr';
+    // Summary — both monthly + yearly cards now sum the SAME pool of
+    // recurring obligations, just in different time units. Bug 2026-04-28:
+    // previously the yearly card filtered for frequency==='yearly' only,
+    // so a $50/mo subscription contributed $0 to the yearly total instead
+    // of $600. Symmetric fix on the monthly card so both views stay
+    // consistent. one-time and total cards unchanged.
+    var monthlySum = exps.filter(function(e){return e.frequency==='monthly'}).reduce(function(s,e){return s+e.amount},0);
+    var yearlySum  = exps.filter(function(e){return e.frequency==='yearly'}).reduce(function(s,e){return s+e.amount},0);
+    var onetime    = exps.filter(function(e){return !e.frequency||e.frequency==='one-time'}).reduce(function(s,e){return s+e.amount},0);
+    var total      = exps.reduce(function(s,e){return s+e.amount},0);
+    var mrr_eq     = monthlySum + yearlySum / 12;   // monthly recurring (yearly prorated to /mo)
+    var arr_eq     = monthlySum * 12 + yearlySum;   // yearly recurring (monthly annualized)
+    document.getElementById('fin-monthly').textContent = fmt(mrr_eq) + '/mo';
+    document.getElementById('fin-yearly').textContent  = fmt(arr_eq) + '/yr';
     document.getElementById('fin-onetime').textContent = fmt(onetime);
-    document.getElementById('fin-total').textContent = fmt(total);
+    document.getElementById('fin-total').textContent   = fmt(total);
 
     // Recurring section
     var recurring = exps.filter(function(e){return e.frequency && e.frequency !== 'one-time'});

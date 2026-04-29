@@ -3356,13 +3356,28 @@ function buildMktChart() {
   var customers  = ma.customers || {};
   var custIds    = Object.keys(customers);
 
+  // 2026-04-30 — V2 customers (parallel-test bot) get pinned to purple
+  // and a [V2] suffix in the legend so they're immediately distinguishable
+  // from the v1 fleet in the stacked chart. The v2 SELL color is purple-
+  // toned too so when the test bot exits a position it doesn't blur into
+  // the fleet's pink sells.
+  function _custColor(c, i, side) {
+    if (c.variant === 'v2') {
+      return side === 'sell' ? '#c084fc' : '#a78bfa';   // purple shades
+    }
+    return side === 'sell' ? '#ff4b6e' : custColors[i % custColors.length];
+  }
+  function _custLabel(c, side) {
+    var base = c.name + ' ' + side + 's';
+    return c.variant === 'v2' ? c.name + ' [V2] ' + side + 's' : base;
+  }
   if (_mktVis.buys) {
     if (custIds.length > 0) {
       custIds.forEach(function(cid, i) {
         var c = customers[cid];
-        var color = custColors[i % custColors.length];
+        var color = _custColor(c, i, 'buy');
         datasets.push({
-          type:'bar', label:c.name+' buys', data:c.buys, stack:'buys',
+          type:'bar', label:_custLabel(c, 'buy'), data:c.buys, stack:'buys',
           backgroundColor:colorWithAlpha(color,0.7), borderColor:color,
           borderWidth:1, borderRadius:2, yAxisID:'y', order:2
         });
@@ -3380,9 +3395,10 @@ function buildMktChart() {
       custIds.forEach(function(cid, i) {
         var c = customers[cid];
         var negSells = c.sells.map(function(v){return -v;});
+        var color = _custColor(c, i, 'sell');
         datasets.push({
-          type:'bar', label:c.name+' sells', data:negSells, stack:'sells',
-          backgroundColor:colorWithAlpha('#ff4b6e',0.5), borderColor:'#ff4b6e',
+          type:'bar', label:_custLabel(c, 'sell'), data:negSells, stack:'sells',
+          backgroundColor:colorWithAlpha(color,0.5), borderColor:color,
           borderWidth:1, borderRadius:2, yAxisID:'y', order:2
         });
       });

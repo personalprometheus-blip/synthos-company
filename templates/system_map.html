@@ -1641,13 +1641,13 @@ document.querySelectorAll('.tab').forEach(tab => {
 // ═══════════════════════════════════════════════════════════════
 const PIPELINE_V1_DEAD = {
   ingest: [
-    { id:'screener', num:'AGENT 5', name:'Sector Screener', sub:'Once/day pre-market · 5 gates · sector momentum',
+    { id:'screener', num:'AGENT 5', name:'Sector Screener', sub:'2x/day (premarket + close) · 5 gates · sector momentum',
       gates:[
-        {n:'G1', name:'Holdings lookup (hand-curated top-10)'},
-        {n:'G2', name:'Liquidity floor'},
-        {n:'G3', name:'Momentum calc'},
-        {n:'G4', name:'Rank by score'},
-        {n:'G5', name:'Publish top-N → signals.db'},
+        {n:'G1', name:'Holdings lookup (hand-curated top-10, quarterly drift)'},
+        {n:'G2', name:'Liquidity floor (≥$1M avg daily dollar volume)'},
+        {n:'G3', name:'Momentum score (3m return + SMA + volume, sigmoid-smoothed)'},
+        {n:'G4', name:'Sort by momentum_score DESC'},
+        {n:'G5', name:'Persist all rows → sector_screening (top-N filter is downstream in candidate_generator)'},
       ],
     },
     { id:'news', num:'AGENT 2', name:'News Agent', sub:'22 gates · per article · 100% deterministic',

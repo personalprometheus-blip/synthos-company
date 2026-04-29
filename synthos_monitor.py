@@ -3877,6 +3877,58 @@ document.addEventListener('click',function(e){if(!document.getElementById('hbtn'
 # COMPANY SERVER ROUTES (merged from company_server.py)
 # ══════════════════════════════════════════════════════════════════════════════
 
+@app.route("/api/queue/stats", methods=["GET"])
+def api_queue_stats():
+    """Status-bucketed counts for the /console stat-card grid.
+
+    Added 2026-04-28 — operator caught that the cards at the top of
+    the page (Pending / Sent / Failed / Skipped / Total) were all
+    showing '—' or 0. Root cause: the page's refresh() was reading
+    counts from /health, but /health doesn't expose queue counts
+    (intentionally — it's unauthenticated and used by external
+    uptime monitors). Added a dedicated auth-gated endpoint here.
+
+    Returns:
+      {
+        total: int                      — every row in scoop_queue
+        by_status: {pending,sent,failed,skipped,...}
+                   — exact-status counts, lowercased
+        sent_combined: int              — sent + SENT + dispatched,
+                   the page uses this for the "Sent" card since
+                   'dispatched' is a successful in-flight state
+                   (daemon already submitted to Resend, awaiting
+                   final confirmation)
+        skipped_combined: int           — skipped + expired,
+                   both are administratively cleared
+      }
+    """
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    try:
+        with _db_conn() as conn:
+            rows = conn.execute(
+                "SELECT LOWER(status) AS status, COUNT(*) AS n "
+                "FROM scoop_queue GROUP BY LOWER(status)"
+            ).fetchall()
+        by_status = {r["status"]: r["n"] for r in rows}
+        total = sum(by_status.values())
+        sent_combined = (by_status.get("sent", 0)
+                         + by_status.get("dispatched", 0))
+        skipped_combined = (by_status.get("skipped", 0)
+                            + by_status.get("expired", 0))
+        return jsonify({
+            "total":             total,
+            "by_status":         by_status,
+            "sent_combined":     sent_combined,
+            "skipped_combined":  skipped_combined,
+            "pending":           by_status.get("pending", 0),
+            "failed":            by_status.get("failed", 0),
+        })
+    except Exception as e:
+        log.warning(f"/api/queue/stats failed: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/queue", methods=["GET"])
 def api_queue():
     """
@@ -4242,16 +4294,22 @@ async function fetchHealth(){
 }
 
 async function refresh(){
-  // Update counts
+  // Update counts.
+  // 2026-04-28 — switched from /health (returns no queue field, so
+  // the cards always showed 0) to /api/queue/stats which is purpose-
+  // built. 'dispatched' rolled into Sent (successful in-flight to
+  // Resend); 'expired' rolled into Skipped (admin-cleared).
   try {
-    const h = await fetchHealth();
-    const counts = h.queue || {};
-    ['pending','sent','failed','skipped'].forEach(s=>{
-      const el = document.getElementById('cnt-'+s);
-      if(el) el.textContent = counts[s] || 0;
-    });
-    const total = Object.values(counts).reduce((a,b)=>a+b,0);
-    document.getElementById('cnt-total').textContent = total;
+    const r = await fetch('/api/queue/stats',{headers:{'X-Token':SECRET_TOKEN}});
+    if (r.ok) {
+      const s = await r.json();
+      const set = (id,v)=>{var el=document.getElementById(id);if(el)el.textContent=v;};
+      set('cnt-pending', s.pending           || 0);
+      set('cnt-sent',    s.sent_combined     || 0);
+      set('cnt-failed',  s.failed            || 0);
+      set('cnt-skipped', s.skipped_combined  || 0);
+      set('cnt-total',   s.total             || 0);
+    }
   } catch(e){}
 
   // Update queue table

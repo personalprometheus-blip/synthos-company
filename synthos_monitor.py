@@ -4439,6 +4439,7 @@ def _subpage_header(page_name):
         '<a href="/console">Scoop Queue</a>'
         '<a href="/maintenance">Maintenance</a>'
         '<a href="/project-status">Project Status</a>'
+        '<a href="/system-architecture">System Architecture</a>'
         '<a href="/display">Sentinel Display</a>'
         '<a href="/audit">Auditor</a>'
         '<a href="/logs">Logs</a>'
@@ -5427,7 +5428,13 @@ def system_architecture_page():
                 "<h2>Synthos — System Architecture</h2>"
                 "<p style='color:rgba(255,255,255,0.5)'>Pass <code>?token=SECRET_TOKEN</code> to access.</p>"
                 "</body></html>"), 401
-    return render_template('system_map.html')
+    # 2026-04-28 — pass subpage_hdr so the system map page gets the
+    # standard sticky header (back-to-Monitor + hamburger menu) like
+    # every other subpage. Operator caught: this page used to be a
+    # nav dead-end, no way to jump to other pages without browser
+    # back button.
+    return render_template('system_map.html',
+                           subpage_hdr=_subpage_header('System Architecture'))
 
 
 

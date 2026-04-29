@@ -538,6 +538,12 @@
 </style>
 </head>
 <body>
+{# 2026-04-28 — standard cmd-portal sticky nav header injected above the
+   page-specific <header> below. Gives operator the same Back-to-Monitor
+   button + hamburger menu as every other subpage. The two headers
+   stack: subpage_hdr (52px sticky), then the system-map's own controls
+   header below it. #}
+{{ subpage_hdr|safe }}
 <div id="app">
   <header>
     <div class="wordmark">SYNTHOS</div>

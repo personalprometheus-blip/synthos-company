@@ -334,7 +334,24 @@ def send_email(to_email: str, subject: str, body_text: str,
 def resolve_recipient(event: dict):
     eid = event.get("id", "?")[:8]
     audience = event.get("audience", "internal")
+    # 2026-04-28 — explicit recipient_email in payload wins over the
+    # pi_id → company.db.customers lookup. Lets the retail trader on
+    # pi5 push customer-facing emails through without requiring every
+    # retail customer to ALSO have a row in pi4b's customers table.
+    # Producer fetches the email from auth.db (where it actually lives)
+    # and passes it directly. Bell-notification path is independent of
+    # this and always fires regardless of email config.
     if audience == "customer":
+        try:
+            payload = event.get("payload") or "{}"
+            if isinstance(payload, str):
+                payload = json.loads(payload) if payload else {}
+            explicit_email = (payload or {}).get("recipient_email")
+            if explicit_email:
+                log.debug(f"Recipient: {explicit_email} (payload-explicit)  id={eid}")
+                return explicit_email
+        except Exception as e:
+            log.debug(f"recipient_email payload parse failed: {e}")
         pi_id = event.get("pi_id")
         if pi_id:
             email = get_customer_email(pi_id)

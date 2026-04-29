@@ -1736,6 +1736,9 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
 <div class="mon-panel" id="mon-panel">
   <div class="mon-panel-head">
     <div class="mon-panel-title">Control Center</div>
+    <button class="mon-panel-close" id="mon-mark-all-read" onclick="markAllBellRead()"
+            style="background:none;border:1px solid rgba(255,255,255,0.10);color:var(--muted);font-size:9px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:4px 10px;margin-right:4px;display:none"
+            title="Hide the bell badge until something new arrives. Items stay visible in the list.">Mark read</button>
     <button class="mon-panel-close" onclick="closeMonPanel()">&#x2715;</button>
   </div>
   <div class="mon-tabs">
@@ -3559,14 +3562,109 @@ function updateMktSummary() {
 
 // ── MONITOR CONTROL CENTER ──
 var _monPanelOpen=false, _monTab='notif';
-function toggleMonPanel(){_monPanelOpen=!_monPanelOpen;document.getElementById('mon-panel').classList.toggle('open',_monPanelOpen);document.getElementById('mon-overlay').classList.toggle('open',_monPanelOpen);if(_monPanelOpen)switchMonTab(_monTab);}
+function toggleMonPanel(){_monPanelOpen=!_monPanelOpen;document.getElementById('mon-panel').classList.toggle('open',_monPanelOpen);document.getElementById('mon-overlay').classList.toggle('open',_monPanelOpen);if(_monPanelOpen){switchMonTab(_monTab);_updateBellBadge();}}
 function closeMonPanel(){_monPanelOpen=false;document.getElementById('mon-panel').classList.remove('open');document.getElementById('mon-overlay').classList.remove('open');}
 function switchMonTab(tab){_monTab=tab;document.querySelectorAll('.mon-tab').forEach(function(t){t.classList.remove('active');});document.getElementById('mon-tab-'+tab).classList.add('active');if(tab==='notif')loadMonNotifications();else if(tab==='cmd')loadMonCommands();else if(tab==='wave')loadWaveControls();}
 async function loadMonNotifications(){var el=document.getElementById('mon-tab-content');el.innerHTML='<div class="mon-empty">Loading...</div>';var html='';try{var r1=await fetch('/api/proxy/pending-signups?status=PENDING',{headers:{'X-Token':SECRET_TOKEN}});if(r1.ok){var d1=await r1.json();var sg=d1.pending||d1.signups||[];if(Array.isArray(sg)&&sg.length){sg.slice(0,3).forEach(function(s){html+='<a href="/approvals" style="text-decoration:none"><div class="mon-notif"><div class="mon-notif-dot" style="background:var(--amber)"></div><div class="mon-notif-body"><div class="mon-notif-title">'+(s.name||'New Signup')+'</div><div class="mon-notif-sub">Pending approval</div></div></div></a>'});}}}catch(e){}try{var r2=await fetch('/api/proxy/support/all-tickets',{headers:{'X-Token':SECRET_TOKEN}});if(r2.ok){var d2=await r2.json();var tks=(d2.tickets||[]).filter(function(t){return t.status==='open';});if(tks.length){tks.slice(0,5).forEach(function(t){var dc=t.category==='direct_message'?'var(--teal)':'var(--pink)';html+='<a href="/support-queue" style="text-decoration:none"><div class="mon-notif"><div class="mon-notif-dot" style="background:'+dc+'"></div><div class="mon-notif-body"><div class="mon-notif-title">'+(t.customer_name||'Customer')+'</div><div class="mon-notif-sub">'+(t.subject||'Support ticket')+'</div></div></div></a>'});}}}catch(e){}try{var r3=await fetch('/api/queue?status=pending',{headers:{'X-Token':SECRET_TOKEN}});if(r3.ok){var d3=await r3.json();var nc=(d3.queue||[]).filter(function(e){return e.event_type==='NEW_CUSTOMER';});if(nc.length){nc.slice(0,5).forEach(function(n){html+='<div class="mon-notif"><div class="mon-notif-dot" style="background:var(--teal)"></div><div class="mon-notif-body"><div class="mon-notif-title">'+(n.subject||'New customer')+'</div><div class="mon-notif-sub">'+(n.body||'Auto-approved').slice(0,60)+'</div></div></div>';});}}}catch(e){}el.innerHTML=html||'<div class="mon-empty">No notifications</div>';}
 function loadMonCommands(){var el=document.getElementById('mon-tab-content');function cb(a,l,s,f){return '<button data-action="'+a+'" onclick="runMonCmd(this)" style="padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--surface2);cursor:pointer;text-align:left;font-family:var(--sans);'+(f?'grid-column:1/-1;':'')+'" onmouseover="this.style.borderColor=&#39;rgba(255,255,255,0.15)&#39;" onmouseout="this.style.borderColor=&#39;var(--border)&#39;">'+'<div style="font-size:11px;font-weight:600;color:var(--text)">'+l+'</div><div style="font-size:9px;color:var(--muted)">'+s+'</div></button>';}el.innerHTML='<div style="margin-bottom:14px"><div style="font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Agents</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+cb('news_overnight','News','Overnight')+cb('news_market','News','Market')+cb('sentiment','Sentiment','The Pulse')+cb('screener','Screener','Sectors')+cb('trade','Trade Logic','All customers',true)+'</div></div><div><div style="font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Sessions</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+cb('prep_session','Prep','Full prep')+cb('open_session','Open','Market open')+cb('midday_session','Midday','Mid check')+cb('close_session','Close','End of day')+'</div></div>';}
 async function runMonCmd(btn){var action=btn.dataset.action;var orig=btn.querySelector('div').textContent;btn.querySelector('div').textContent='Starting...';btn.style.borderColor='rgba(123,97,255,0.3)';try{var r=await fetch('/api/command/run-agent',{method:'POST',headers:{'X-Token':SECRET_TOKEN,'Content-Type':'application/json'},body:JSON.stringify({action:action})});var d=await r.json();if(d.ok){toast(d.message,'ok');}else{toast(d.error||'Failed','err');}}catch(e){toast('Error','err');}setTimeout(function(){btn.querySelector('div').textContent=orig;btn.style.borderColor='var(--border)';},10000);}
 var _prevPendingSignups=-1;var _prevNewCustomers=-1;
-function _updateBellBadge(){(async function(){var total=0;var signupCount=0;try{var r1=await fetch('/api/proxy/pending-signups?status=PENDING',{headers:{'X-Token':SECRET_TOKEN}});if(r1.ok){var d1=await r1.json();var sg=d1.pending||d1.signups||[];signupCount=sg.length;total+=signupCount;if(signupCount>_prevPendingSignups&&_prevPendingSignups>=0&&_prevPendingSignups!==-1){var newCount=signupCount-_prevPendingSignups;var newest=sg[sg.length-1];var name=newest&&(newest.name||newest.display_name)||'New customer';toast(name+' just signed up — pending approval','ok');}}_prevPendingSignups=signupCount;}catch(e){}try{var r2=await fetch('/api/proxy/support/all-tickets',{headers:{'X-Token':SECRET_TOKEN}});if(r2.ok){var d2=await r2.json();total+=(d2.tickets||[]).filter(function(t){return t.status==='open';}).length;}}catch(e){}try{var r3=await fetch('/api/queue?status=pending',{headers:{'X-Token':SECRET_TOKEN}});if(r3.ok){var d3=await r3.json();var ncEvents=(d3.queue||[]).filter(function(e){return e.event_type==='NEW_CUSTOMER';});total+=ncEvents.length;if(ncEvents.length>_prevNewCustomers&&_prevNewCustomers>=0){var ne=ncEvents[ncEvents.length-1];toast((ne.subject||'New customer joined'),'ok');}_prevNewCustomers=ncEvents.length;}}catch(e){}var badge=document.getElementById('mon-bell-badge');if(total>0){badge.textContent=total;badge.classList.add('active');}else{badge.classList.remove('active');}})();}
+
+// 2026-04-28 — bell "Mark all as read" semantics. Operator note:
+// without this, every signup / open ticket / queued NEW_CUSTOMER
+// shows on the badge forever until you act on it. The bell's job
+// is "tell me about NEW things"; once seen, badge can dim. Local
+// dismiss only — doesn't acknowledge the underlying records on the
+// backend (a pending signup stays pending until approved/rejected
+// on /approvals). New items past the ack timestamp re-light the
+// badge naturally.
+function _bellAckIso(){return localStorage.getItem('mon_bell_ack_at') || '';}
+function _isAfterAck(ts){
+  // Returns true if the item's timestamp is strictly newer than the
+  // last ack. Items missing all timestamps default to TRUE (= count
+  // them) so we never silently hide something we can't time.
+  var ack = _bellAckIso();
+  if (!ack) return true;
+  if (!ts) return true;
+  return String(ts) > ack;
+}
+function markAllBellRead(){
+  localStorage.setItem('mon_bell_ack_at', new Date().toISOString());
+  _updateBellBadge();
+}
+function _updateMarkReadButton(unread){
+  var btn = document.getElementById('mon-mark-all-read');
+  if (!btn) return;
+  btn.style.display = (unread > 0 ? 'inline-block' : 'none');
+}
+
+function _updateBellBadge(){(async function(){
+  var total = 0;
+  var signupCount = 0;
+
+  try {
+    var r1 = await fetch('/api/proxy/pending-signups?status=PENDING',
+                         {headers:{'X-Token':SECRET_TOKEN}});
+    if (r1.ok) {
+      var d1 = await r1.json();
+      var sg = d1.pending || d1.signups || [];
+      // For toast (genuine new arrivals) we still use raw count delta —
+      // toast should fire on actual new customers, not on browser-tab
+      // re-acks. For badge we filter by ack timestamp.
+      signupCount = sg.length;
+      total += sg.filter(function(s){
+        return _isAfterAck(s.created_at || s.signup_date || s.timestamp);
+      }).length;
+      if (signupCount > _prevPendingSignups && _prevPendingSignups >= 0
+          && _prevPendingSignups !== -1) {
+        var newest = sg[sg.length - 1];
+        var name = (newest && (newest.name || newest.display_name)) || 'New customer';
+        toast(name + ' just signed up — pending approval', 'ok');
+      }
+      _prevPendingSignups = signupCount;
+    }
+  } catch(e) {}
+
+  try {
+    var r2 = await fetch('/api/proxy/support/all-tickets',
+                         {headers:{'X-Token':SECRET_TOKEN}});
+    if (r2.ok) {
+      var d2 = await r2.json();
+      total += (d2.tickets || [])
+        .filter(function(t){ return t.status === 'open'; })
+        .filter(function(t){
+          return _isAfterAck(t.created_at || t.updated_at || t.timestamp);
+        }).length;
+    }
+  } catch(e) {}
+
+  try {
+    var r3 = await fetch('/api/queue?status=pending',
+                         {headers:{'X-Token':SECRET_TOKEN}});
+    if (r3.ok) {
+      var d3 = await r3.json();
+      var ncEvents = (d3.queue || [])
+        .filter(function(e){ return e.event_type === 'NEW_CUSTOMER'; });
+      total += ncEvents.filter(function(e){
+        return _isAfterAck(e.queued_at || e.created_at || e.timestamp);
+      }).length;
+      if (ncEvents.length > _prevNewCustomers && _prevNewCustomers >= 0) {
+        var ne = ncEvents[ncEvents.length - 1];
+        toast((ne.subject || 'New customer joined'), 'ok');
+      }
+      _prevNewCustomers = ncEvents.length;
+    }
+  } catch(e) {}
+
+  var badge = document.getElementById('mon-bell-badge');
+  if (total > 0) {
+    badge.textContent = total;
+    badge.classList.add('active');
+  } else {
+    badge.classList.remove('active');
+  }
+  _updateMarkReadButton(total);
+})();}
 setInterval(_updateBellBadge,60000);
 setTimeout(_updateBellBadge,2000);
 

@@ -12,6 +12,34 @@
 > agents and the customer portal.
 >
 > **Recent landmark changes on this repo (synthos-company):**
+> - **Scoop notification pipeline rebuilt (2026-05-01)**: 11 silent
+>   days ended. Diagnosed three structural bugs (schema mismatch
+>   between strongbox writer + scoop drain; one-shot drain at startup;
+>   dead-end portal-dispatch auth — `/api/notifications/send` requires
+>   admin session not service token). Built new `agents/_shared_scoop.py`
+>   as single enqueue source of truth — strongbox + sentinel both route
+>   through it. Removed dead `vault._trigger_scoop`. Made scoop's drain
+>   re-pollable + dual-schema (accepts both `delivered:false` legacy
+>   strongbox writes AND `status:pending|retry`). Portal-dispatch
+>   short-circuits cleanly when `PORTAL_TOKEN` missing — logs disabled
+>   state once at startup. Triple-check passed: 3 emails delivered to
+>   operator end-to-end. Service-token auth on retail_portal endpoints
+>   queued separately for after-hours synthos repo work. Commit 5e8cb78.
+> - **Stale branch + server cleanup (2026-05-01)**: synthos-company
+>   branches 10 → 1 (just main); origin remote also swept.
+>   `documentation/archive/specs/TRADER_RESTRUCTURE_PLAN.md` preserved
+>   from abandoned patch/logic-review-2026-04-20 before deletion. pi4b
+>   server cleanup: removed dead `synthos-login.service` /
+>   `/home/pi/synthos_build/` / `/home/pi/synthos-process/`. Archived
+>   `login_server/` → `documentation/archive/login_server/` (auth-only
+>   Flask app superseded by synthos_monitor command portal).
+> - **System-architecture pipeline page deferred-data-sources panel
+>   (2026-05-01)**: added `deferred` gate flag (purple ⏸) for News
+>   G12/G14/G15 + Sentiment G5/G7/G8/G10/G16. New panel below pipeline
+>   grid summarizes paid-tier gaps + formally-deferred future phases.
+>   Bias-gate scaffold flags removed (re-reading code: all 6 are fully
+>   implemented; sample-size early-returns aren't stubs). Macro gate
+>   names corrected — page had wrong gate order vs actual code.
 > - **System-architecture pipeline page rewrite (2026-05-01)**: PIPELINE
 >   constant in `templates/system_map.html` updated to match code reality
 >   — gate counts corrected (Fault 4→8, Market State 5→4, Trader 14→13),
@@ -99,7 +127,7 @@
 >
 > **Single source of truth for live operational state lives in the
 > companion repo:** `synthos/synthos_build/data/system_architecture.json`
-> (v3.23 as of 2026-05-01).
+> (v3.24 as of 2026-05-01).
 >
 > **REPO IDENTITY:** `personalprometheus-blip/synthos-company` — local: `/home/pi/synthos-company/`
 > **This repo owns:** company_node (Pi 4B) — synthos_monitor (command portal), auditor, archivist, vault, librarian, sentinel, strongbox, scoop

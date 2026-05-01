@@ -278,7 +278,12 @@ def send_via_resend(to_email: str, subject: str, body_text: str,
     if body_html:
         payload_dict["html"] = body_html
 
+    # Idempotency-Key goes into an HTTP header which is latin-1 encoded.
+    # Subjects often contain em-dashes / unicode punctuation — those would
+    # raise UnicodeEncodeError. ASCII-fold defensively (replaces unencodable
+    # chars with '?', preserving idempotency uniqueness but staying in spec).
     idem_key = f"scoop-{subject[:30]}-{to_email}-{int(time.time() // 60)}"
+    idem_key = idem_key.encode('ascii', errors='replace').decode('ascii')
 
     try:
         r = _req.post(

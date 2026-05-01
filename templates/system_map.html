@@ -2189,13 +2189,13 @@ function renderPipeline() {
     <div class="pipe-grid" id="pipe-grid">
       <div class="pipe-col" data-col="ingest">
         <div class="pipe-col-label">INGEST · per-signal</div>
-        ${agentCard(PIPELINE.ingest[0])}
-        <div class="pipe-arrow"></div>
-        ${agentCard(PIPELINE.ingest[1])}
-        <div class="pipe-arrow"></div>
         <div class="pipe-screener-tag" id="pipe-screener-tag" title="Pre-computed once/day · 06:45 ET">PRE-COMPUTED · 06:45 ET · feeds Trade G5</div>
         ${agentCard(PIPELINE.screener, 'screener-card')}
         <div id="pipe-screener" class="pipe-screener-anchor"></div>
+        <div class="pipe-arrow"></div>
+        ${agentCard(PIPELINE.ingest[0])}
+        <div class="pipe-arrow"></div>
+        ${agentCard(PIPELINE.ingest[1])}
       </div>
       <div class="pipe-col" data-col="validation">
         <div class="pipe-col-label">VALIDATION · 4 parallel lanes</div>

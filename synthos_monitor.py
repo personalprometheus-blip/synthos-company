@@ -1869,6 +1869,7 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
       <div style="border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--surface)">
         <table style="width:100%;border-collapse:collapse;font-size:12px">
           <thead><tr style="border-bottom:1px solid var(--border)">
+            <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted)">Type</th>
             <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted)">Name</th>
             <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted)">Email</th>
             <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted)">Phone</th>
@@ -1877,7 +1878,7 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
             <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted)">Actions</th>
           </tr></thead>
           <tbody id="approvals-tbody">
-            <tr><td colspan="6" style="padding:20px;text-align:center;color:var(--muted)">Loading...</td></tr>
+            <tr><td colspan="7" style="padding:20px;text-align:center;color:var(--muted)">Loading...</td></tr>
           </tbody>
         </table>
       </div>
@@ -2058,13 +2059,25 @@ async function loadApprovals() {
     const d = await r.json();
     const tbody = document.getElementById('approvals-tbody');
     if (!d.signups || !d.signups.length) {
-      tbody.innerHTML = '<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--muted)">No signups found</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" style="padding:20px;text-align:center;color:var(--muted)">No signups found</td></tr>';
       return;
     }
+    const escapeHtml = (s) => String(s||'').replace(/[&<>"']/g, c =>
+      ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     tbody.innerHTML = d.signups.map(s => {
       const ts = s.created_at ? new Date(s.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '\u2014';
       const sc = s.status==='PENDING'?'var(--amber)':s.status==='APPROVED'?'var(--teal)':'var(--pink)';
       const sbg = s.status==='PENDING'?'rgba(245,166,35,0.08)':s.status==='APPROVED'?'rgba(0,245,212,0.08)':'rgba(255,75,110,0.08)';
+      // Two-tier signup model \u2014 show which path this row came in via.
+      // 'request_access' = uninvited user via /request-access form;
+      // 'subscribe'      = code-holder via /signup form (existing path).
+      const rt = (s.request_type || 'subscribe').toLowerCase();
+      const isReq = rt === 'request_access';
+      const typeColor = isReq ? 'var(--purple)' : 'var(--teal)';
+      const typeBg    = isReq ? 'rgba(123,97,255,0.08)' : 'rgba(0,245,212,0.05)';
+      const typeBorder = isReq ? 'rgba(123,97,255,0.25)' : 'rgba(0,245,212,0.2)';
+      const typeLabel = isReq ? 'Request' : 'Signup';
+      const typePill = '<span style="background:'+typeBg+';color:'+typeColor+';border:1px solid '+typeBorder+';padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700;letter-spacing:0.04em">'+typeLabel+'</span>';
       let actions = '';
       if (s.status==='PENDING') {
         actions = '<button onclick="approveSignup('+s.id+')" style="padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600;background:rgba(0,245,212,0.08);border:1px solid rgba(0,245,212,0.2);color:var(--teal);cursor:pointer;margin-right:4px">Approve</button>'
@@ -2072,13 +2085,28 @@ async function loadApprovals() {
       } else if (s.status==='APPROVED' && s.customer_id) {
         actions = '<span style="font-size:10px;color:var(--muted);font-family:monospace">'+s.customer_id.slice(0,8)+'...</span>';
       } else { actions = '<span style="font-size:10px;color:var(--dim)">\u2014</span>'; }
-      return '<tr style="border-bottom:1px solid var(--border)">'
-        +'<td style="padding:10px 14px;font-weight:600">'+(s.name||'\u2014')+'</td>'
-        +'<td style="padding:10px 14px;font-family:monospace;font-size:11px">'+(s.email||'\u2014')+'</td>'
-        +'<td style="padding:10px 14px;font-size:11px">'+(s.phone||'\u2014')+'</td>'
+      // Main row
+      let html = '<tr style="border-bottom:1px solid var(--border)">'
+        +'<td style="padding:10px 14px">'+typePill+'</td>'
+        +'<td style="padding:10px 14px;font-weight:600">'+escapeHtml(s.name)+'</td>'
+        +'<td style="padding:10px 14px;font-family:monospace;font-size:11px">'+escapeHtml(s.email)+'</td>'
+        +'<td style="padding:10px 14px;font-size:11px">'+escapeHtml(s.phone||'\u2014')+'</td>'
         +'<td style="padding:10px 14px;font-size:11px;color:var(--muted)">'+ts+'</td>'
         +'<td style="padding:10px 14px"><span style="background:'+sbg+';color:'+sc+';padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700">'+s.status+'</span></td>'
         +'<td style="padding:10px 14px">'+actions+'</td></tr>';
+      // For request_access submissions: render a second row below with the
+      // why_interested + how_heard context so admin can read before approving.
+      if (isReq && (s.why_interested || s.how_heard)) {
+        const why = s.why_interested ? escapeHtml(s.why_interested) : '<span style="color:var(--dim)">(not provided)</span>';
+        const how = s.how_heard ? escapeHtml(s.how_heard) : '<span style="color:var(--dim)">\u2014</span>';
+        html += '<tr style="border-bottom:1px solid var(--border);background:rgba(123,97,255,0.02)">'
+          +'<td style="padding:0"></td>'
+          +'<td colspan="6" style="padding:6px 14px 12px 14px;font-size:11px;color:var(--text2);line-height:1.5">'
+          +'<div style="font-family:var(--mono);font-size:9px;color:var(--purple);letter-spacing:0.06em;text-transform:uppercase;margin-bottom:4px">How heard: '+how+'</div>'
+          +'<div style="white-space:pre-wrap">'+why+'</div>'
+          +'</td></tr>';
+      }
+      return html;
     }).join('');
   } catch(e) { console.error('loadApprovals', e); }
 }
@@ -6892,23 +6920,52 @@ async function loadApprovals(){
       list.innerHTML='<div class="appr-empty">No '+(_filter?_filter.toLowerCase()+' ':'')+'signups found</div>';
       return;
     }
+    const escapeHtml = (s) => String(s||'').replace(/[&<>"']/g, c =>
+      ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     list.innerHTML=d.signups.map(s=>{
       const ts=s.created_at?new Date(s.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'}):'\u2014';
       const sc=s.status==='PENDING'?'#f5a623':s.status==='APPROVED'?'#00f5d4':'#ff4b6e';
       const sbg=s.status==='PENDING'?'rgba(245,166,35,0.08)':s.status==='APPROVED'?'rgba(0,245,212,0.08)':'rgba(255,75,110,0.08)';
+      // Two-tier signup model \u2014 show which path this row came in via.
+      const rt=(s.request_type||'subscribe').toLowerCase();
+      const isReq=rt==='request_access';
+      const typeColor=isReq?'#b496ff':'#00f5d4';
+      const typeBg=isReq?'rgba(123,97,255,0.1)':'rgba(0,245,212,0.06)';
+      const typeBorder=isReq?'rgba(123,97,255,0.25)':'rgba(0,245,212,0.18)';
+      const typeLabel=isReq?'Request':'Signup';
+      const typePill='<span style="background:'+typeBg+';color:'+typeColor+';border:1px solid '+typeBorder+';padding:2px 8px;border-radius:99px;font-size:9px;font-weight:700;letter-spacing:0.04em;margin-right:8px">'+typeLabel+'</span>';
       let actions='';
       if(s.status==='PENDING'){
         actions='<button class="appr-btn appr-approve" onclick="approve('+s.id+')">Approve</button>'
                +'<button class="appr-btn appr-reject" onclick="reject('+s.id+')">Reject</button>';
       }
       const custId=s.customer_id?'<span>ID: '+s.customer_id.slice(0,8)+'...</span>':'';
+      // request_access submissions don't have a verified email yet (verification
+      // happens on /setup-account after admin approves), so the verified pill
+      // would always be red and meaningless. Suppress it for that path.
+      const verifiedPill = isReq ? '' :
+        (s.email_verified
+          ? '<span style="margin-left:6px;font-size:9px;font-weight:700;color:#00f5d4;background:rgba(0,245,212,0.1);padding:1px 6px;border-radius:99px">&check; Verified</span>'
+          : '<span style="margin-left:6px;font-size:9px;font-weight:700;color:#ff4b6e;background:rgba(255,75,110,0.1);padding:1px 6px;border-radius:99px">&cross; Unverified</span>');
+      // For request_access: show why_interested + how_heard inline so admin
+      // has the context they need before clicking Approve.
+      let extra='';
+      if(isReq && (s.why_interested || s.how_heard)){
+        const why=s.why_interested?escapeHtml(s.why_interested):'<span style="opacity:0.4">(not provided)</span>';
+        const how=s.how_heard?escapeHtml(s.how_heard):'\u2014';
+        extra='<div style="margin-top:8px;padding:8px 12px;background:rgba(123,97,255,0.04);border:1px solid rgba(123,97,255,0.12);border-radius:8px;font-size:11px;line-height:1.5;color:rgba(255,255,255,0.7)">'
+             +'<div style="font-family:monospace;font-size:9px;color:#b496ff;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:4px">How heard: '+how+'</div>'
+             +'<div style="white-space:pre-wrap">'+why+'</div>'
+             +'</div>';
+      }
       return '<div class="appr-card">'
         +'<div class="appr-card-hdr">'
         +'<div class="appr-avatar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg></div>'
-        +'<div><div class="appr-name">'+s.name+'</div><div class="appr-email">'+s.email+(s.email_verified?'<span style="margin-left:6px;font-size:9px;font-weight:700;color:#00f5d4;background:rgba(0,245,212,0.1);padding:1px 6px;border-radius:99px">&check; Verified</span>':'<span style="margin-left:6px;font-size:9px;font-weight:700;color:#ff4b6e;background:rgba(255,75,110,0.1);padding:1px 6px;border-radius:99px">&cross; Unverified</span>')+'</div></div>'
+        +'<div><div class="appr-name">'+typePill+escapeHtml(s.name)+'</div><div class="appr-email">'+escapeHtml(s.email)+verifiedPill+'</div></div>'
         +'<span class="appr-status" style="background:'+sbg+';color:'+sc+'">'+s.status+'</span>'
         +'</div>'
-        +'<div class="appr-meta"><span>\u260E '+s.phone+'</span><span>\u23F0 '+ts+'</span>'+custId+'</div>'
+        +'<div class="appr-meta"><span>\u260E '+escapeHtml(s.phone||'\u2014')+'</span><span>\u23F0 '+ts+'</span>'+custId+'</div>'
+        +extra
         +(actions?'<div class="appr-actions">'+actions+'</div>':'')
         +'</div>';
     }).join('');

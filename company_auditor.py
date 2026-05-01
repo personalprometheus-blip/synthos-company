@@ -195,6 +195,16 @@ IGNORE_PATTERNS = [
                r'\b(?:price_poller|sentiment_agent)\b',         re.IGNORECASE),
     re.compile(r'\b(?:price_poller|sentiment_agent)\b.*WARNING.*'
                r'\b(?:retry|failed|unavailable)\b',             re.IGNORECASE),
+    # trade_logic_agent [PREFETCH] Failed — same noise category as
+    # price_poller fetch failures: transient Alpaca data fetch fails,
+    # the trader retries and proceeds with cached data. Two common
+    # variants: ConnectionResetError(104, 'Connection reset by peer')
+    # and HTTPSConnectionPool 'Max retries exceeded'. Diagnostic only;
+    # not actionable. Added 2026-05-01 after the first sync missed
+    # this (only price_poller filters were synced, not the trader's
+    # equivalent warning text).
+    re.compile(r'WARNING\s+trade_logic_agent:\s+\[PREFETCH\]\s+Failed',
+                                                                re.IGNORECASE),
 
     # ── Auth-gate accounting (synced from pi5 portal) ──
     # [ADMIN_OVERRIDE] / [KEYS] denial logs are the auth gate working

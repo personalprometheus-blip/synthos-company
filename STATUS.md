@@ -12,6 +12,22 @@
 > agents and the customer portal.
 >
 > **Recent landmark changes on this repo (synthos-company):**
+> - **Approvals UI gains Type pill + why/how detail (2026-05-01 late PM)**:
+>   companion to pi5's new `/request-access` public flow. Pending signups
+>   now distinguished by `request_type` ('subscribe' for code-holders via
+>   /signup, 'request_access' for uninvited users via /request-access).
+>   Purple "Request" pill + inline why_interested + how_heard detail
+>   card render for request_access rows so admin has context before
+>   clicking Approve. Verified-email pill suppressed for request_access
+>   since verification happens after approve. Both copies of
+>   loadApprovals() updated (dashboard inline + standalone /approvals
+>   page). XSS hardening: user-controlled fields now escapeHtml'd.
+> - **Scoop Idempotency-Key ASCII-fold (2026-05-01 late PM)**: defensive
+>   fix — em-dashes / unicode punctuation in subjects could fail Resend
+>   dispatch with UnicodeEncodeError when the idem_key was built into
+>   an HTTP header (latin-1). Now ASCII-replaces unencodable chars while
+>   preserving uniqueness. Caught during /request-access smoke when
+>   `[Synthos] New access request — Smoke Test ...` failed first send.
 > - **Scoop notification pipeline rebuilt (2026-05-01)**: 11 silent
 >   days ended. Diagnosed three structural bugs (schema mismatch
 >   between strongbox writer + scoop drain; one-shot drain at startup;
@@ -127,7 +143,7 @@
 >
 > **Single source of truth for live operational state lives in the
 > companion repo:** `synthos/synthos_build/data/system_architecture.json`
-> (v3.24 as of 2026-05-01).
+> (v3.25 as of 2026-05-01).
 >
 > **REPO IDENTITY:** `personalprometheus-blip/synthos-company` — local: `/home/pi/synthos-company/`
 > **This repo owns:** company_node (Pi 4B) — synthos_monitor (command portal), auditor, archivist, vault, librarian, sentinel, strongbox, scoop

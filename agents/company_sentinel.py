@@ -362,24 +362,67 @@ def _alert_silence(pi_id: str, age_hours: float, severity: str,
 
 def _trigger_scoop(event_type: str, payload: dict) -> None:
     """
-    Write an event to scoop_trigger.json for Scoop to pick up.
-    Scoop polls this file and sends emails for each pending event.
+    Queue an event for Scoop to deliver.
+
+    Routes through agents._shared_scoop.enqueue_scoop_event which writes
+    directly to scoop_queue. The legacy scoop_trigger.json path is now a
+    fallback inside the helper for transient DB failures only.
     """
+    pi_id = payload.get("pi_id") or (
+        ",".join(payload.get("pi_ids", [])) if payload.get("pi_ids") else None
+    )
+    # Pre-format subject/body using the same shape sentinel was producing
+    # via scoop's _format_legacy_event(). Means scoop doesn't need to know
+    # about sentinel-specific event types.
+    if event_type == "silence_alert":
+        severity = payload.get("severity", "WARN")
+        age_hours = payload.get("age_hours", 0)
+        market_note = (
+            "Market hours -- trades may be missed."
+            if payload.get("market_hours")
+            else "Outside market hours."
+        )
+        subject = f"[Synthos {severity}] {pi_id} -- silent {age_hours:.1f}h"
+        body = (
+            f"Synthos Alert\n\nPi ID: {pi_id}\n"
+            f"Status: SILENT -- {age_hours:.1f} hours since last heartbeat\n"
+            f"Severity: {severity}\n\n{market_note}\n\n"
+            f"Check Pi power, network, and agent logs."
+        )
+    elif event_type == "agent_error_in_heartbeat":
+        err = payload.get("error", "Unknown error")
+        subject = f"[Synthos WARN] Agent error on {pi_id}"
+        body = (
+            f"Synthos Alert -- Agent Error\n\nPi ID: {pi_id}\nError: {err}\n\n"
+            f"Agent statuses:\n{json.dumps(payload.get('agents', {}), indent=2)}"
+        )
+    elif event_type == "customer_inactive":
+        ids = payload.get("pi_ids", [])
+        subject = f"[Synthos] {len(ids)} customer(s) marked INACTIVE"
+        body = (
+            f"Sentinel transitioned {len(ids)} customer(s) to INACTIVE.\n\n"
+            f"Reason: {payload.get('reason', 'No heartbeat')}\n\n"
+            f"Pi IDs:\n  " + "\n  ".join(ids)
+        )
+    else:
+        subject = f"[Synthos] {event_type.replace('_', ' ').title()}"
+        body    = json.dumps(payload, indent=2)
+
     try:
-        if SCOOP_TRIGGER.exists():
-            events = json.loads(SCOOP_TRIGGER.read_text())
-        else:
-            events = []
+        from _shared_scoop import enqueue_scoop_event
+    except ImportError:
+        from agents._shared_scoop import enqueue_scoop_event  # type: ignore
 
-        events.append({
-            "id":         str(uuid.uuid4()),
-            "type":       event_type,
-            "payload":    payload,
-            "created_at": now_iso(),
-            "status":     "pending",
-        })
-
-        SCOOP_TRIGGER.write_text(json.dumps(events, indent=2))
+    try:
+        enqueue_scoop_event(
+            event_type=event_type,
+            subject=subject,
+            body=body,
+            audience="internal",
+            pi_id=pi_id,
+            source_agent="sentinel",
+            payload=payload,
+        )
     except Exception as e:
         log.warning(f"Could not trigger Scoop: {e}")
 

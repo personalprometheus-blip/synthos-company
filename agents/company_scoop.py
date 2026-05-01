@@ -168,7 +168,9 @@ def db_get_next_event():
             now_ts = now_utc().timestamp()
             row = None
             for r in rows:
-                if r["status"] == "RETRY" and r["last_attempt"]:
+                # Case-insensitive status check — db_helpers writes lowercase
+                # 'retry'; _shared_scoop and scoop's own writes are uppercase.
+                if (r["status"] or "").upper() == "RETRY" and r["last_attempt"]:
                     try:
                         last = datetime.fromisoformat(
                             r["last_attempt"].replace("Z", "+00:00")
@@ -394,8 +396,16 @@ def _portal_headers() -> dict:
     return headers
 
 def dispatch_portal_notification(event: dict) -> bool:
-    """Send in-app notification to a specific customer via portal API."""
-    if not PORTAL_URL:
+    """Send in-app notification to a specific customer via portal API.
+
+    Short-circuits when PORTAL_TOKEN is not set. The retail portal's
+    /api/notifications/send endpoint requires admin-session auth or a
+    service-token auth path that has not yet been wired up — without
+    PORTAL_TOKEN we know in advance the call would 401, so we skip
+    silently rather than burning HTTP requests on guaranteed failures.
+    Startup logs the disabled state once via run_loop().
+    """
+    if not PORTAL_URL or not PORTAL_TOKEN:
         return False
 
     try:
@@ -441,9 +451,13 @@ def dispatch_portal_notification(event: dict) -> bool:
 
 
 def dispatch_broadcast(event: dict) -> bool:
-    """Send system-wide notification to ALL active customers via portal broadcast."""
-    if not PORTAL_URL:
-        log.warning("[PORTAL] PORTAL_URL not configured -- cannot broadcast")
+    """Send system-wide notification to ALL active customers via portal broadcast.
+
+    Same short-circuit as dispatch_portal_notification — without
+    PORTAL_TOKEN the broadcast endpoint will 401, so we skip rather than
+    fail noisily for every event.
+    """
+    if not PORTAL_URL or not PORTAL_TOKEN:
         return False
 
     subject  = event.get("subject") or event.get("event_type", "System Alert")
@@ -599,55 +613,142 @@ def _format_legacy_event(event_type: str, payload: dict):
 
 
 # -- LEGACY TRIGGER DRAIN -----------------------------------------------------
+#
+# 2026-05-01 rebuild — drain is now re-pollable (every cycle), accepts
+# both the historical strongbox `delivered:false` schema AND the
+# `status:pending|retry` schema, and archives processed entries to
+# data/scoop_trigger_processed/ instead of leaving them stuck in the
+# active file.
+#
+# Producers should write directly to scoop_queue via _shared_scoop now;
+# the trigger file remains as:
+#   1. A defensive fallback inside _shared_scoop when DB writes fail
+#   2. Backward-compat for any pre-rebuild straggler events still on disk
+#
+# A `_DEFERRED_PERMANENT` set tracks entries the drain saw and explicitly
+# skipped (e.g. matching neither schema, malformed) so we don't re-log
+# them every 30s.
 
-_legacy_drained = False
+PROCESSED_DIR = BASE_DIR / "data" / "scoop_trigger_processed"
+_drain_skip_log_sent: set = set()
+
+
+def _entry_is_pending(e: dict) -> bool:
+    """An entry is drainable if EITHER schema marker is set."""
+    if not isinstance(e, dict):
+        return False
+    status = (e.get("status") or "").lower()
+    if status in ("pending", "retry"):
+        return True
+    # Old strongbox schema: {"delivered": false} with no status field
+    if "delivered" in e and not e.get("delivered"):
+        return True
+    return False
+
 
 def drain_legacy_trigger_file() -> int:
     """
-    One-time drain of scoop_trigger.json into DB queue at startup.
-    After draining, the file is ignored permanently.
+    Drain scoop_trigger.json into the scoop_queue DB table.
+
+    Called every cycle from run_loop. If the file has any drainable
+    entries (pending/retry status, OR delivered:false from the old
+    strongbox schema), each is migrated to scoop_queue with status
+    'PENDING'. After successful migration, the file is moved to
+    data/scoop_trigger_processed/<UTC timestamp>.json so the audit trail
+    is preserved and the active file resets to empty.
     """
-    global _legacy_drained
-    if _legacy_drained or not LEGACY_TRIGGER.exists():
-        _legacy_drained = True
+    if not LEGACY_TRIGGER.exists():
         return 0
 
     try:
-        events = json.loads(LEGACY_TRIGGER.read_text())
-    except Exception:
-        _legacy_drained = True
+        raw = LEGACY_TRIGGER.read_text() or "[]"
+        events = json.loads(raw)
+        if not isinstance(events, list):
+            log.warning("scoop_trigger.json is not a list — leaving alone")
+            return 0
+    except json.JSONDecodeError as e:
+        log.warning(f"scoop_trigger.json malformed JSON ({e}) — leaving alone")
+        return 0
+    except Exception as e:
+        log.warning(f"Could not read scoop_trigger.json: {e}")
         return 0
 
-    pending = [e for e in events if e.get("status") in ("pending", "retry")]
-    if not pending:
-        _legacy_drained = True
+    if not events:
+        return 0
+
+    drainable = [e for e in events if _entry_is_pending(e)]
+    if not drainable:
+        # File has entries but nothing drainable (e.g., already-delivered,
+        # or unknown schema). Log once per file-content-hash to avoid spam.
+        sig = hash(json.dumps(events, sort_keys=True))
+        if sig not in _drain_skip_log_sent:
+            log.info(
+                f"scoop_trigger.json has {len(events)} entries, none drainable "
+                f"(no status:pending|retry and no delivered:false markers) — "
+                f"leaving in place"
+            )
+            _drain_skip_log_sent.add(sig)
         return 0
 
     migrated = 0
-    for e in pending:
+    for e in drainable:
         try:
-            event_type = e.get("type", "legacy_event")
-            payload    = e.get("payload", {})
-            pi_id      = e.get("pi_id") or (
-                payload.get("pi_id") if isinstance(payload, dict) else None
-            )
+            # Both schemas use 'type' (not 'event_type'). Sentinel/vault wrote
+            # event_type-style names like 'silence_alert'; strongbox wrote
+            # 'backup_failed' style. Both fit.
+            event_type = e.get("type") or e.get("event_type") or "legacy_event"
+            payload    = e.get("payload", {}) if isinstance(e.get("payload"), dict) else {}
+            pi_id      = e.get("pi_id") or payload.get("pi_id")
+            audience   = e.get("audience", "internal")
+            subject    = e.get("subject", "")
+            body       = e.get("body", "")
+            source     = e.get("source") or e.get("source_agent") or "legacy_trigger"
+            priority   = e.get("priority")
+            if priority is None or not isinstance(priority, int) or priority not in (0, 1, 2, 3):
+                priority = 2
+            # Strongbox-old-schema entries had a top-level 'message' field
+            # but no subject/body. Fold that into the body so dispatch
+            # produces something readable.
+            if not subject and not body and "message" in e:
+                subject = f"[Synthos] {source} {event_type} — {pi_id or '?'}"
+                body    = f"{source} alert\n\nType: {event_type}\nPi ID: {pi_id}\nMessage: {e['message']}\n"
+
             eid = str(uuid.uuid4())
             with get_db() as conn:
                 conn.execute("""
                     INSERT OR IGNORE INTO scoop_queue
                     (id, event_type, priority, audience, pi_id, payload,
-                     source_agent, status)
-                    VALUES (?, ?, 2, ?, ?, ?, 'legacy_trigger', 'PENDING')
-                """, (eid, event_type, e.get("audience", "internal"),
-                      pi_id, json.dumps(payload)))
+                     subject, body, source_agent, status, queued_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)
+                """, (eid, event_type, priority, audience, pi_id,
+                      json.dumps(payload), subject, body, source,
+                      now_iso()))
             migrated += 1
         except Exception as ex:
-            log.warning(f"Could not migrate legacy event: {ex}")
+            log.warning(f"Could not migrate legacy event {e.get('id', '?')[:8]}: {ex}")
 
     if migrated:
-        log.info(f"Drained {migrated} legacy event(s) from scoop_trigger.json -> DB")
+        # Archive the file we just processed and reset the active one.
+        try:
+            PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+            archive_name = f"scoop_trigger_{now_utc().strftime('%Y%m%dT%H%M%SZ')}.json"
+            (PROCESSED_DIR / archive_name).write_text(json.dumps(events, indent=2))
+            LEGACY_TRIGGER.write_text("[]")
+            log.info(
+                f"Drained {migrated} legacy event(s) from scoop_trigger.json -> "
+                f"scoop_queue; archived original to data/scoop_trigger_processed/"
+                f"{archive_name}"
+            )
+        except Exception as ex:
+            # Migration succeeded but archive failed — the entries are in
+            # the DB now, so we still want to reset the file to avoid
+            # double-processing on next cycle.
+            log.warning(f"Archive write failed ({ex}); resetting trigger file anyway")
+            try:
+                LEGACY_TRIGGER.write_text("[]")
+            except Exception:
+                pass
 
-    _legacy_drained = True
     return migrated
 
 
@@ -724,13 +825,21 @@ def run_loop() -> None:
 
     if PORTAL_URL:
         mode = "PRIMARY" if PREFER_PORTAL else "SECONDARY"
-        log.info(f"Portal: {PORTAL_URL}  mode={mode}")
-        if not PORTAL_TOKEN:
-            log.warning("PORTAL_TOKEN not set -- portal auth may fail")
+        if PORTAL_TOKEN:
+            log.info(f"Portal: {PORTAL_URL}  mode={mode}  auth=service-token")
+        else:
+            log.warning(
+                f"Portal dispatch DISABLED — PORTAL_URL={PORTAL_URL} "
+                f"is configured but PORTAL_TOKEN is not. Retail portal's "
+                f"/api/notifications/* endpoints require service-token auth "
+                f"that has not been wired up yet (tracked separately). "
+                f"Running in EMAIL-ONLY mode for now."
+            )
     else:
         log.info("Email-only mode (no PORTAL_URL configured)")
 
-    # One-time legacy drain
+    # First-cycle drain of any stragglers in scoop_trigger.json. The drain
+    # runs again every cycle below — no longer one-shot.
     drain_legacy_trigger_file()
 
     # Ensure composite index for efficient polling
@@ -745,6 +854,10 @@ def run_loop() -> None:
 
     while True:
         try:
+            # Re-pollable trigger drain — picks up any stragglers from the
+            # _shared_scoop fallback path or pre-rebuild legacy writes.
+            drain_legacy_trigger_file()
+
             # Dispatch next highest-priority event
             event = db_get_next_event()
             if event:

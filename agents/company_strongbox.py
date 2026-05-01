@@ -169,29 +169,41 @@ def _save_status(status: dict) -> None:
 
 def _alert_scoop(alert_type: str, pi_id: str, message: str) -> None:
     """
-    Write an alert entry to scoop_trigger.json.
-    Scoop reads this file and delivers the notification — Strongbox never
-    sends email directly.
-    """
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    existing = []
-    if SCOOP_TRIGGER_FILE.exists():
-        try:
-            existing = json.loads(SCOOP_TRIGGER_FILE.read_text())
-            if not isinstance(existing, list):
-                existing = []
-        except (json.JSONDecodeError, OSError):
-            existing = []
+    Queue an alert for Scoop to deliver.
 
-    existing.append({
-        "type":      alert_type,
-        "source":    "strongbox",
-        "pi_id":     pi_id,
-        "message":   message,
-        "queued_at": _now_utc().isoformat(),
-        "delivered": False,
-    })
-    SCOOP_TRIGGER_FILE.write_text(json.dumps(existing, indent=2))
+    Routes through agents._shared_scoop.enqueue_scoop_event which writes
+    directly to scoop_queue. The legacy scoop_trigger.json path is now a
+    fallback inside the helper for transient DB failures only.
+    """
+    # Severity labels by alert_type — 'CRITICAL' for things that block
+    # backups outright, 'WARN' for stale/missing where the system is still
+    # functional. Matches the prior priority intent of these alerts (P1).
+    _CRIT = {"backup_failed", "backup_upload_failed", "backup_config_error",
+             "backup_verify_failed", "retention_failed"}
+    severity = "CRITICAL" if alert_type in _CRIT else "WARN"
+
+    subject = f"[Synthos {severity}] strongbox {alert_type} — {pi_id}"
+    body = (
+        f"Strongbox alert\n\n"
+        f"Type:    {alert_type}\n"
+        f"Pi ID:   {pi_id}\n"
+        f"Message: {message}\n"
+    )
+    try:
+        from _shared_scoop import enqueue_scoop_event
+    except ImportError:
+        # Module is loaded as agents.company_strongbox in some entry points;
+        # fall back to package-relative import.
+        from agents._shared_scoop import enqueue_scoop_event  # type: ignore
+    enqueue_scoop_event(
+        event_type=alert_type,
+        subject=subject,
+        body=body,
+        audience="internal",
+        pi_id=pi_id,
+        source_agent="strongbox",
+        payload={"message": message, "severity": severity},
+    )
     log.warning("Scoop alert queued: [%s] %s — %s", alert_type, pi_id, message)
 
 

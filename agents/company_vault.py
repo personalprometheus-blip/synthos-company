@@ -796,23 +796,9 @@ def _alert_project_lead(level: str, title: str, message: str) -> None:
         log.error(f"Failed to post suggestion: {e}")
 
 
-def _trigger_scoop(event_type: str, payload: dict) -> None:
-    """Write event to scoop_trigger.json."""
-    try:
-        if SCOOP_TRIGGER.exists():
-            events = json.loads(SCOOP_TRIGGER.read_text())
-        else:
-            events = []
-        events.append({
-            "id":         str(uuid.uuid4()),
-            "type":       event_type,
-            "payload":    payload,
-            "created_at": now_iso(),
-            "status":     "pending",
-        })
-        SCOOP_TRIGGER.write_text(json.dumps(events, indent=2))
-    except Exception as e:
-        log.warning(f"Could not trigger Scoop: {e}")
+# NOTE: vault's _trigger_scoop helper was removed 2026-05-01. It had no
+# call sites and used the legacy scoop_trigger.json schema. If vault later
+# needs to queue an event, import enqueue_scoop_event from _shared_scoop.
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────

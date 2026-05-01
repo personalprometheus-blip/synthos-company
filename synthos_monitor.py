@@ -7758,7 +7758,12 @@ _KEY_FILTER = {
     'pi4b': {'ANTHROPIC_API_KEY','RESEND_API_KEY','GITHUB_TOKEN','SECRET_TOKEN','SSO_SECRET','PORTAL_TOKEN'},
     'pi5':  {'ANTHROPIC_API_KEY','ALPACA_API_KEY','ALPACA_SECRET_KEY','RESEND_API_KEY','GITHUB_TOKEN',
              'STRIPE_SECRET_KEY','STRIPE_WEBHOOK_SECRET','STRIPE_PRICE_ID','STRIPE_EARLY_ADOPTER_PRICE_ID',
-             'PORTAL_SECRET_KEY','ENCRYPTION_KEY'},
+             'PORTAL_SECRET_KEY','ENCRYPTION_KEY',
+             # 2026-05-01 — FMP API key slot. Consumed by retail_sector_screener
+             # for ETF holdings refresh once the user signs up. Free tier doesn't
+             # include holdings; Ultimate ($149/mo) does. Slot is here so the
+             # row shows up as NOT SET on the maintenance page until filled.
+             'FMP_API_KEY'},
     'pi2w': {'SECRET_TOKEN'},
 }
 

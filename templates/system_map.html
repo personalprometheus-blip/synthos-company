@@ -257,6 +257,18 @@
   .pipe-gate.patch .pipe-gate-num{ color:var(--purple); }
   .pipe-gate.verdict{ background:rgba(123,97,255,0.08); border-color:var(--purple3); color:var(--purple); font-weight:700; }
   .pipe-gate.more{ color:var(--muted); font-style:italic; }
+  /* Scaffolding marker — gate logic is stubbed and treated as pass */
+  .pipe-gate.scaffold{ border-color:rgba(255,179,71,0.35); background:rgba(255,179,71,0.05); }
+  .pipe-gate.scaffold .pipe-gate-num::after{ content:' ⚠'; color:var(--amber); }
+  .pipe-gate.scaffold .pipe-gate-name{ color:var(--amber); opacity:0.85; }
+  /* Source-pill chip on gates that pull foreign data */
+  .pipe-gate-src{ font-family:var(--mono); font-size:8.5px; color:var(--muted); margin-top:2px; letter-spacing:0.04em; opacity:0.85; }
+  .pipe-gate-src .src{ display:inline-block; padding:1px 4px; border:1px solid var(--border); border-radius:3px; margin-right:3px; }
+  /* Sector Screener as ingest agent card */
+  .pipe-agent.screener-card{ border-color:var(--amber3); }
+  .pipe-agent.screener-card .pipe-agent-num{ color:var(--amber); }
+  .pipe-screener-tag{ font-family:var(--mono); font-size:9px; color:var(--amber); background:var(--amber2); border:1px solid var(--amber3); border-radius:99px; padding:3px 10px; letter-spacing:0.1em; text-transform:uppercase; font-weight:700; align-self:center; margin-bottom:4px; }
+  .pipe-screener-anchor{ height:0; }
 
   .pipe-parallel-lanes{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; margin:10px 0 12px; }
   .pipe-lane{ padding:5px 8px; background:var(--surface2); border:1px solid var(--border); border-radius:6px; text-align:center; font-family:var(--mono); font-size:9.5px; color:var(--muted); font-weight:700; letter-spacing:0.08em; text-transform:uppercase; }
@@ -1956,95 +1968,98 @@ async function runPipeline(mode) {
 const PIPELINE = {
   screener: {
     id:'screener', num:'AGENT 5', name:'Sector Screener',
-    sub:'Pre-computed once/day pre-market · feeds Trade Gate 5',
+    sub:'5 gates · pre-computed once/day 06:45 ET · feeds Trade Gate 5',
     gates:[
-      {n:'G1',name:'Holdings lookup',desc:'Hand-curated top-10 per SPDR sector (XLE, XLF, XLK, ...). TODO: FMP /etf-holdings on paid tier.'},
-      {n:'G2',name:'Liquidity floor',desc:'Drops tickers below $5M avg daily volume.'},
-      {n:'G3',name:'Momentum calc',desc:'20-day and 50-day return vs SPY.'},
+      {n:'G1',name:'Holdings lookup',desc:'Hand-curated top-10 per SPDR sector (XLE, XLF, XLK, ...). TODO: FMP /etf-holdings on paid tier.', scaffold:true},
+      {n:'G2',name:'Liquidity floor',desc:'Drops tickers below $5M avg daily volume.', sources:['Alpaca']},
+      {n:'G3',name:'Momentum calc',desc:'20-day and 50-day return vs SPY.', sources:['Alpaca']},
       {n:'G4',name:'Rank by score',desc:'Composite of momentum + volatility bucket.'},
-      {n:'G5',name:'Publish top-N',desc:'Top 3 per sector → sector_scores in signals.db.'},
+      {n:'G5',name:'Publish top-N',desc:'Top 3 per sector → sector_scores in signals.db.', sources:['signals.db']},
     ],
   },
   ingest: [
     { id:'news', num:'AGENT 2', name:'News Agent', sub:'22 gates · ~200ms/article · deterministic',
       gates:[
-        {n:'G1',name:'System health',desc:'Reads fault_detection output.'},
+        {n:'G1',name:'System health',desc:'Reads fault_detection output. Skip cycle if NO_GO.'},
         {n:'G2',name:'Benchmark filter',desc:'Drops articles only about SPY/VTI.'},
-        {n:'G3',name:'Source relevance',desc:'Source must be whitelisted (Bloomberg, Reuters, WSJ, FT, ...).'},
-        {n:'G4',name:'Ticker extraction',desc:'Finds primary ticker in headline/body.'},
+        {n:'G3',name:'Source relevance',desc:'Source must be whitelisted (Bloomberg, Reuters, WSJ, FT, MarketWatch, ...).', sources:['News APIs']},
+        {n:'G4',name:'Ticker extraction',desc:'Finds primary ticker in headline/body via deterministic regex.'},
         {n:'G6',name:'Event detection',desc:'Classifies: earnings, merger, guidance, analyst, regulatory, litigation, mgmt, macro, sector. Fails for routine PR.'},
         {n:'G7',name:'Sentiment score',desc:'Deterministic lexicon + syntax rules, −1.0 to +1.0.'},
-        {n:'G8',name:'Novelty check',desc:'Not a duplicate or repost.'},
+        {n:'G8',name:'Novelty check',desc:'Not a duplicate or repost (URL + headline shingles).'},
         {n:'G12',name:'Confirmation',desc:'Multiple sources corroborate.'},
-        {n:'G13',name:'Timing window',desc:'Tradeable window for signal tier.'},
-        {n:'G15',name:'Contradiction',desc:'No opposing signal within last 4h.'},
-        {n:'G18',name:'Risk discounts',desc:'Multiplicative discounts on impact_score.'},
-        {n:'G22',name:'Composite → VALIDATED',desc:'Final composite crosses threshold → signal VALIDATED in signals.db.'},
+        {n:'G13',name:'Timing window',desc:'Tradeable window for signal tier (30d/7d/2d/1d).'},
+        {n:'G15',name:'Contradiction',desc:'No opposing signal within last 4h.', sources:['signals.db']},
+        {n:'G18',name:'Risk discounts',desc:'Multiplicative discounts on impact_score from VIX regime + macro regime.', sources:['FRED','signals.db']},
+        {n:'G22',name:'Composite → VALIDATED',desc:'Final composite crosses threshold → signal VALIDATED, written to signals.db.', sources:['signals.db']},
       ],
     },
     { id:'sentiment', num:'AGENT 3', name:'Market Sentiment', sub:'27 gates in 4 stages · ~22s/cycle',
       stages:[
         { id:'universe', name:'UNIVERSE', gates:[
-          {n:'G1',name:'System',desc:'Fault detection read.'},
-          {n:'G2',name:'Input universe',desc:'Which positions/benchmarks to evaluate.'},
-          {n:'G3',name:'Benchmark',desc:'SPY/VTI baseline.'},
+          {n:'G1',name:'System',desc:'Fault detection read; skip if NO_GO.'},
+          {n:'G2',name:'Input universe',desc:'Which positions/benchmarks to evaluate (per-customer holdings + SPY/VTI).'},
+          {n:'G3',name:'Benchmark',desc:'SPY/VTI baseline pricing and volatility.', sources:['Alpaca']},
         ]},
         { id:'scoring', name:'SCORING (G4-17)', gates:[
-          {n:'G4',name:'Price action',desc:'Recent price moves vs benchmark.'},
-          {n:'G5',name:'Breadth',desc:'Advance/decline, new highs/lows.'},
-          {n:'G7',name:'Volatility',desc:'ATR, VIX proxy.'},
-          {n:'G9',name:'Safe-haven',desc:'Bonds, gold, defensive sectors.'},
-          {n:'G11',name:'Sector rotation',desc:'Which sectors lead/lag.'},
-          {n:'G15',name:'Breadth-price divergence',desc:'Flags breadth vs price divergence.'},
+          {n:'G4',name:'Price action',desc:'Recent price moves vs benchmark.', sources:['Alpaca']},
+          {n:'G5',name:'Breadth',desc:'Advance/decline, new highs/lows.', sources:['Alpaca']},
+          {n:'G7',name:'Volatility',desc:'ATR + VIX (FRED VIXCLS, falls back to ATR proxy if stale).', sources:['FRED','Alpaca']},
+          {n:'G9',name:'Safe-haven',desc:'Bonds, gold, defensive sectors trending.', sources:['Yahoo Finance','Alpaca']},
+          {n:'G11',name:'Sector rotation',desc:'Which sectors lead/lag — fed by Screener sector_scores.', sources:['signals.db']},
+          {n:'G15',name:'Breadth-price divergence',desc:'Flags breadth vs price divergence.', scaffold:true},
         ]},
         { id:'adjust', name:'ADJUSTMENTS (G18-23)', gates:[
-          {n:'G18',name:'Composite sentiment',desc:'Weighted aggregate.'},
-          {n:'G19',name:'Confidence',desc:'Based on input agreement.'},
-          {n:'G20',name:'Regime',desc:'Risk-on / risk-off / neutral.'},
+          {n:'G18',name:'Composite sentiment',desc:'Weighted aggregate of all 14 scoring inputs.'},
+          {n:'G19',name:'Confidence',desc:'Based on input agreement and data_completeness multiplier.'},
+          {n:'G20',name:'Regime',desc:'Risk-on / risk-off / neutral.', sources:['signals.db']},
           {n:'G22',name:'Action',desc:'Derived action given composite + regime.'},
         ]},
         { id:'output', name:'OUTPUT (G24-27)', gates:[
-          {n:'G24',name:'Temporal persistence',desc:'Must persist 2 cycles.'},
-          {n:'G27',name:'Final signal write',desc:'sentiment_score → signals.db.'},
+          {n:'G24',name:'Temporal persistence',desc:'Must persist 2 cycles before commit (added Round 9).'},
+          {n:'G27',name:'Final signal write',desc:'sentiment_score → signals.db.', sources:['signals.db']},
         ]},
       ],
     },
   ],
   validators: [
-    { id:'fault', num:'AGENT 6', name:'Fault Detection',
+    { id:'fault', num:'AGENT 6', name:'Fault Detection', sub:'8 gates · system-wide + per-customer',
       gates:[
-        {n:'G1',name:'DB connectivity',desc:'Can we reach all DBs?'},
-        {n:'G2',name:'Alpaca API health',desc:'Live ping /v2/account.'},
-        {n:'G3',name:'Agent heartbeats',desc:'All agents reported in last N min.'},
-        {n:'G4',name:'Disk / tables',desc:'PRAGMA integrity_check.'},
+        {n:'G1',name:'Agent liveness',desc:'All agents reported a heartbeat within their staleness window.'},
+        {n:'G2',name:'Data freshness',desc:'signals.db sentiment/news/macro rows fresh enough to trade on.', sources:['signals.db']},
+        {n:'G3',name:'API connectivity',desc:'Owner-key Alpaca + FRED live ping. Per-customer key health checked separately at G5.', sources:['Alpaca','FRED']},
+        {n:'G4',name:'System resources',desc:'Disk free / inode pressure / load avg within bounds.'},
+        {n:'G5',name:'Account health (per-customer)',desc:'Each customer\'s own Alpaca keys authenticate. 401 on customer A no longer leaks to customer B (post-Round-9 fix).', sources:['Alpaca']},
+        {n:'G6',name:'Database integrity',desc:'PRAGMA integrity_check on auth + every customer DB + signals.db.'},
+        {n:'G7',name:'Schedule compliance',desc:'Cron entries actually firing on expected cadence (last-run timestamp checks).'},
+        {n:'G8',name:'Trade activity baseline',desc:'DEGRADED detector: trader committed orders within rolling baseline window (silent-failure trip).'},
       ],
     },
-    { id:'bias', num:'AGENT 7', name:'Bias Detection', sub:'6 gates · per-customer',
+    { id:'bias', num:'AGENT 7', name:'Bias Detection', sub:'6 gates · per-customer · partial scaffolding',
       gates:[
-        {n:'G1',name:'Sector concentration',desc:'No single sector > 40%.'},
-        {n:'G2',name:'Recency bias',desc:'Not over-weighting recent winners.'},
-        {n:'G3',name:'Loss aversion',desc:'Not holding losers too long.'},
-        {n:'G4',name:'Overtrading',desc:'Churn rate bounds.'},
-        {n:'G5',name:'Disposition effect',desc:'Selling winners too early.'},
-        {n:'G6',name:'Confidence clustering',desc:'Not biased toward confident sources.'},
+        {n:'G1',name:'Sector concentration',desc:'No single sector > 40% of equity.'},
+        {n:'G2',name:'Recency bias',desc:'Not over-weighting recent winners.', scaffold:true},
+        {n:'G3',name:'Loss aversion',desc:'Not holding losers too long (HOLD_TOO_LONG warning).', scaffold:true},
+        {n:'G4',name:'Overtrading',desc:'Churn rate bounds — round-trips per week vs equity tier.'},
+        {n:'G5',name:'Disposition effect',desc:'Selling winners too early.', scaffold:true},
+        {n:'G6',name:'Confidence clustering',desc:'Not biased toward over-confident signal sources.', scaffold:true},
       ],
     },
-    { id:'marketstate', num:'AGENT 9', name:'Market State',
+    { id:'marketstate', num:'AGENT 9', name:'Market State', sub:'4 gates · ingestion + synthesis',
       gates:[
-        {n:'G1',name:'VIX regime',desc:'Calm / elevated / stress.'},
-        {n:'G2',name:'Breadth state',desc:'Advance/decline health.'},
-        {n:'G3',name:'Volume state',desc:'Relative volume distribution.'},
-        {n:'G4',name:'Trend state',desc:'SPY vs moving averages.'},
-        {n:'G5',name:'Aggregated state',desc:'Bullish / neutral / bearish.'},
+        {n:'G1',name:'Sentiment ingestion',desc:'Pulls latest sentiment_score from signals.db.', sources:['signals.db']},
+        {n:'G2',name:'News ingestion',desc:'Pulls latest validated news rows from signals.db.', sources:['signals.db']},
+        {n:'G3',name:'Macro regime ingestion',desc:'Pulls latest macro regime detail JSON. Stale-window guard added Round 9.', sources:['signals.db','FRED']},
+        {n:'G4',name:'State synthesis',desc:'Aggregates the three streams → bullish / neutral / bearish market_state.'},
       ],
     },
-    { id:'macro', num:'AGENT 8', name:'Macro Regime',
+    { id:'macro', num:'AGENT 8', name:'Macro Regime', sub:'5 gates · FRED-driven',
       gates:[
-        {n:'G1',name:'Yield curve',desc:'10y-2y spread.'},
-        {n:'G2',name:'Dollar strength',desc:'DXY regime.'},
-        {n:'G3',name:'Commodities',desc:'Oil, gold, copper trend.'},
-        {n:'G4',name:'Credit spreads',desc:'HY OAS, IG OAS. Widening = risk_off.'},
-        {n:'G5',name:'Regime class',desc:'Risk-on / risk-off / neutral.'},
+        {n:'G1',name:'Yield curve',desc:'DGS10 − DGS3MO spread. Inversion ≥ 2 sustained cycles → risk_off contribution.', sources:['FRED']},
+        {n:'G2',name:'VIX regime',desc:'VIXCLS level → calm / elevated / stress. Replaces the old Yahoo VIX path (Round 9).', sources:['FRED']},
+        {n:'G3',name:'Commodities',desc:'Oil, gold, copper trend (Yahoo-sourced, scheduled to migrate).', sources:['Yahoo Finance']},
+        {n:'G4',name:'Credit spreads',desc:'HY OAS / IG OAS. Widening = risk_off.', sources:['FRED'], scaffold:true},
+        {n:'G5',name:'Regime class',desc:'Weighted blend → risk-on / risk-off / neutral. Persisted to signals.db.macro_regime_detail.', sources:['signals.db']},
       ],
     },
   ],
@@ -2052,30 +2067,29 @@ const PIPELINE = {
     id:'validator', num:'AGENT 10', name:'Validator Stack',
     sub:'Aggregates all 4 above · GO / CAUTION / NO_GO',
     gates:[
-      {n:'G1',name:'System health ← Fault',desc:'Any critical fault → NO_GO.'},
-      {n:'G2',name:'Bias guard ← Bias',desc:'Any critical bias → CAUTION.'},
+      {n:'G1',name:'System health ← Fault',desc:'Any critical fault → NO_GO. Per-customer scoping (Round 9) — no cross-customer leakage.'},
+      {n:'G2',name:'Bias guard ← Bias',desc:'Any critical bias → CAUTION. Informational codes filtered by prefix match.'},
       {n:'G3',name:'Market state ← Market State',desc:'Bearish state → CAUTION.'},
       {n:'G4',name:'Macro regime ← Macro',desc:'Risk-off sustained 2+ cycles → NO_GO.'},
-      {n:'G5',name:'FINAL VERDICT',desc:'Weighted aggregate → GO / CAUTION / NO_GO.',verdict:true},
+      {n:'G5',name:'FINAL VERDICT',desc:'Weighted aggregate → GO / CAUTION / NO_GO. Persisted as VALIDATOR_NO_GO_<short_id> for per-customer dedup.',verdict:true},
     ],
   },
   trader: {
-    id:'trade', num:'AGENT 1', name:'Trade Logic', sub:'14 gates · parallelism=3 customers',
+    id:'trade', num:'AGENT 1', name:'Trade Logic', sub:'13 gates · parallelism=3 customers',
     gates:[
-      {n:'G0',name:'Account health',desc:'Alpaca status OK.'},
-      {n:'G1',name:'Halt check',patch:true,desc:'4-layer check: admin halt → legacy kill_switch → customer halt → last_good. sys.exit(0) on any halt.'},
-      {n:'G2',name:'Dedup signal',desc:'Same signal already executed today?'},
-      {n:'G3',name:'Freshness',desc:'Signal age within tier (30d/7d/2d/1d).'},
-      {n:'G4',name:'Eligibility',desc:'Liquidity + spread within bounds. Also 12-cap check here for some customers.'},
-      {n:'G5',name:'Signal score',desc:'Composite + sector_scores boost from Screener.'},
-      {n:'G6',name:'Entry decision',desc:'Compare against portfolio exposure.'},
-      {n:'G7',name:'Sizing',patch:true,desc:'Model B (equity share) + Model C cash floor. Fails with INSUFFICIENT_CASH_AFTER_MANUAL if cash < floor.'},
-      {n:'G8',name:'Risk setup',desc:'Trailing stop % by volatility.'},
-      {n:'G9',name:'Order placement',desc:'POST to Alpaca.'},
-      {n:'G10',name:'Confirmation',desc:'Poll Alpaca for fill.'},
-      {n:'G11',name:'Portfolio controls',desc:'12-cap auto, sector concentration final check.'},
-      {n:'G12',name:'Sticky USER check',patch:true,desc:'position_preferences[ticker].sticky=user → skip.'},
-      {n:'G13',name:'Log decision',desc:'Write audit to trade_decisions.'},
+      {n:'G0',name:'Account health',desc:'Alpaca status OK; equity reconciliation; orphan / ghost adoption pre-loop.', sources:['Alpaca']},
+      {n:'G1',name:'System gate',patch:true,desc:'4-layer halt check: admin halt → legacy kill_switch → customer halt → last_good. sys.exit(0) on any halt. Validator CAUTION proceeds with restrictions; NO_GO blocks.'},
+      {n:'G2',name:'Benchmark gate',desc:'SPY/VTI baseline freshness — if benchmark stale, signals can\'t be ranked relative to market.', sources:['Alpaca']},
+      {n:'G3',name:'Regime detection',desc:'Reads macro_regime_detail; risk_off sustained → block new buys.', sources:['signals.db']},
+      {n:'G4',name:'Trade eligibility',desc:'Signal freshness within tier (30d/7d/2d/1d), liquidity, spread bounds, dedup vs today\'s decisions.'},
+      {n:'G5',name:'Signal evaluation',desc:'Composite score + sector_scores boost from Screener (Agent 5 pre-computed).', sources:['signals.db']},
+      {n:'G5.5',name:'News veto',desc:'Last-mile veto: any high-impact contradicting news within 4h drops the signal.', sources:['signals.db']},
+      {n:'G6',name:'Entry decision',desc:'Compare composite vs portfolio exposure; per-customer 12-cap pre-flight.'},
+      {n:'G7',name:'Position sizing',patch:true,desc:'Model B (equity share) + Model C cash floor. Fails with INSUFFICIENT_CASH_AFTER_MANUAL if cash < floor.'},
+      {n:'G8',name:'Risk setup',desc:'Trailing stop % by volatility; server-side stop submitted.'},
+      {n:'G11',name:'Portfolio controls',desc:'12-cap auto-exit, sector concentration final check.', sources:['Alpaca']},
+      {n:'G13',name:'Stress overrides',desc:'VIX-driven sizing overrides; macro risk_off cash floor lift.', sources:['signals.db','FRED']},
+      {n:'G14',name:'Evaluation loop',desc:'Per-customer subprocess (parallelism=3); writes audit to trade_decisions and emits admin_alert.'},
     ],
   },
 };
@@ -2098,10 +2112,17 @@ const SAMPLE_SIGNAL = { ticker:'AAPL', event:'earnings beat · Q1 guide raised',
 function gateHtml(g, extraAttrs='') {
   const patch = g.patch ? ' patch' : '';
   const verdict = g.verdict ? ' verdict' : '';
-  const desc = g.desc ? `<div class="pipe-gate-tooltip"><div class="ttl">${g.n}</div>${g.desc}</div>` : '';
-  return `<div class="pipe-gate${patch}${verdict}" data-gate="${g.n}" ${extraAttrs}>
+  const scaffold = g.scaffold ? ' scaffold' : '';
+  const tipParts = [];
+  if (g.desc) tipParts.push(g.desc);
+  if (g.sources) tipParts.push(`<div style="margin-top:4px;color:#9ab">sources: ${g.sources.join(', ')}</div>`);
+  if (g.scaffold) tipParts.push(`<div style="margin-top:4px;color:#ffb347">⚠ scaffolding — logic deferred</div>`);
+  const desc = tipParts.length ? `<div class="pipe-gate-tooltip"><div class="ttl">${g.n}</div>${tipParts.join('')}</div>` : '';
+  const srcPills = g.sources ? `<div class="pipe-gate-src">${g.sources.map(s=>`<span class="src">${s}</span>`).join('')}</div>` : '';
+  return `<div class="pipe-gate${patch}${verdict}${scaffold}" data-gate="${g.n}" ${extraAttrs}>
     <span class="pipe-gate-num">${g.n}</span>
     <span class="pipe-gate-name">${g.name}</span>
+    ${srcPills}
     ${desc}
   </div>`;
 }
@@ -2153,6 +2174,9 @@ function renderPipeline() {
   w.innerHTML = `
     <div class="pipe-header">
       <h2>VALIDATION PIPELINE <span>v2 · traveling signal · per-customer lanes · rejection detail</span></h2>
+      <div style="font-family:var(--mono);font-size:10px;color:var(--muted);letter-spacing:0.04em;margin-top:4px">
+        click any gate or agent header for detail · foreign data pills: <span class="src" style="border:1px solid var(--border);padding:1px 4px;border-radius:3px;margin:0 2px">FRED</span><span class="src" style="border:1px solid var(--border);padding:1px 4px;border-radius:3px;margin:0 2px">Alpaca</span><span class="src" style="border:1px solid var(--border);padding:1px 4px;border-radius:3px;margin:0 2px">Yahoo</span><span class="src" style="border:1px solid var(--border);padding:1px 4px;border-radius:3px;margin:0 2px">News APIs</span> · ⚠ amber gates = scaffolding (logic deferred)
+      </div>
       <div class="pipe-controls">
         <button class="pipe-btn" data-pipe="single">▶ Single signal</button>
         <button class="pipe-btn parallel" data-pipe="parallel">▶ 3 parallel customers</button>
@@ -2162,20 +2186,16 @@ function renderPipeline() {
         </div>
       </div>
     </div>
-    <div class="pipe-screener-banner" id="pipe-screener">
-      <span class="tag">Pre-computed</span>
-      <div>
-        <div class="banner-title">${scr.num} · ${scr.name}</div>
-        <div style="font-size:10px; color:var(--muted); font-family:var(--mono); margin-top:2px">${scr.gates.length} gates · runs once/day 06:45 ET · feeds Trade Gate 5 via sector_scores</div>
-      </div>
-      <div class="banner-sub">last run 06:45 · 3 sectors: XLK(+0.82) XLE(-0.34) XLV(+0.18)</div>
-    </div>
     <div class="pipe-grid" id="pipe-grid">
       <div class="pipe-col" data-col="ingest">
         <div class="pipe-col-label">INGEST · per-signal</div>
         ${agentCard(PIPELINE.ingest[0])}
         <div class="pipe-arrow"></div>
         ${agentCard(PIPELINE.ingest[1])}
+        <div class="pipe-arrow"></div>
+        <div class="pipe-screener-tag" id="pipe-screener-tag" title="Pre-computed once/day · 06:45 ET">PRE-COMPUTED · 06:45 ET · feeds Trade G5</div>
+        ${agentCard(PIPELINE.screener, 'screener-card')}
+        <div id="pipe-screener" class="pipe-screener-anchor"></div>
       </div>
       <div class="pipe-col" data-col="validation">
         <div class="pipe-col-label">VALIDATION · 4 parallel lanes</div>
@@ -2234,7 +2254,110 @@ function renderPipeline() {
   w.querySelectorAll('.pipe-stage-header').forEach(h => {
     h.addEventListener('click', () => h.parentElement.classList.toggle('expanded'));
   });
+  // Wire click handlers on agent headers + gates → detail panel (fixes parity with topology page)
+  w.querySelectorAll('.pipe-agent').forEach(card => {
+    const header = card.querySelector('.pipe-agent-header');
+    if (header) {
+      header.style.cursor = 'pointer';
+      header.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const aid = card.id.replace(/^pipe-/, '');
+        const a = pipeFindAgent(aid);
+        if (a) showPipeAgentDetail(a);
+      });
+    }
+  });
+  w.querySelectorAll('.pipe-gate').forEach(gateEl => {
+    gateEl.style.cursor = 'pointer';
+    gateEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const aid = gateEl.dataset.agent;
+      const gn  = gateEl.dataset.gate;
+      const a = pipeFindAgent(aid);
+      if (!a) return;
+      const g = pipeFindGate(a, gn);
+      if (g) showPipeGateDetail(a, g);
+    });
+  });
+  // Screener banner click → detail
+  const scrBanner = document.getElementById('pipe-screener');
+  if (scrBanner) {
+    scrBanner.style.cursor = 'pointer';
+    scrBanner.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showPipeAgentDetail(PIPELINE.screener);
+    });
+  }
   w.dataset.rendered = '1';
+}
+
+// ── Pipeline detail-panel helpers (mirror topology's showDetail UX) ──────
+function pipeFindAgent(aid) {
+  if (!aid) return null;
+  if (PIPELINE.screener && PIPELINE.screener.id === aid) return PIPELINE.screener;
+  if (PIPELINE.trader   && PIPELINE.trader.id   === aid) return PIPELINE.trader;
+  if (PIPELINE.validator_final && PIPELINE.validator_final.id === aid) return PIPELINE.validator_final;
+  for (const a of (PIPELINE.ingest||[]))     if (a.id === aid) return a;
+  for (const a of (PIPELINE.validators||[])) if (a.id === aid) return a;
+  return null;
+}
+function pipeFindGate(agent, gnum) {
+  if (!agent || !gnum) return null;
+  if (agent.gates) {
+    const hit = agent.gates.find(g => g.n === gnum);
+    if (hit) return hit;
+  }
+  if (agent.stages) {
+    for (const s of agent.stages) {
+      const hit = (s.gates||[]).find(g => g.n === gnum);
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
+function _pipeAgentMatchSeqId(aid) {
+  // Try to match the pipeline-page agent id to a topology seq agent id so we can
+  // re-use the same flow lookup the topology detail panel uses.
+  const map = { news:'news', sentiment:'sentiment', screener:'screener',
+                fault:'fault_detection', bias:'bias_detection', macro:'macro_regime',
+                marketstate:'market_state', validator:'validator_stack',
+                trade:'trade_logic' };
+  return map[aid] || aid;
+}
+function showPipeAgentDetail(a) {
+  const topoId = _pipeAgentMatchSeqId(a.id);
+  const topoAgent = (M.agents||[]).find(x => x.id === topoId);
+  // Prefer topology's richer entry if present; else synthesize.
+  if (topoAgent) {
+    showDetail('agent', topoAgent);
+    return;
+  }
+  detailEl.innerHTML = `
+    <button class="collapse-btn" id="collapse-right" title="Collapse / expand">▸</button>
+    <h3>${a.num} · ${a.name}</h3>
+    <div class="sub">PIPELINE AGENT</div>
+    ${a.sub ? `<div class="section"><div class="section-label">Summary</div><div style="font-size:11.5px;line-height:1.5">${a.sub}</div></div>` : ''}
+    <div class="section"><div class="section-label">Gates (${(a.gates||[]).length || (a.stages||[]).reduce((n,s)=>n+s.gates.length,0)})</div>
+      <ul style="font-size:11px;line-height:1.6">
+        ${(a.gates||[]).map(g=>`<li><b>${g.n}</b> ${g.name}${g.scaffold?' <span style="color:#ffb347">⚠ scaffolding</span>':''}</li>`).join('')}
+        ${(a.stages||[]).map(s => `<li><b>${s.name}</b><ul>${s.gates.map(g=>`<li>${g.n} ${g.name}${g.scaffold?' <span style="color:#ffb347">⚠</span>':''}</li>`).join('')}</ul></li>`).join('')}
+      </ul></div>
+  `;
+  document.getElementById('collapse-right').addEventListener('click', toggleRight);
+}
+function showPipeGateDetail(a, g) {
+  const scaffoldTag = g.scaffold ? '<span class="tag warn">⚠ SCAFFOLDING</span>' : '';
+  const patchTag    = g.patch    ? '<span class="tag new">PATCH</span>' : '';
+  const verdictTag  = g.verdict  ? '<span class="tag">VERDICT</span>' : '';
+  detailEl.innerHTML = `
+    <button class="collapse-btn" id="collapse-right" title="Collapse / expand">▸</button>
+    <h3>${g.n} · ${g.name}</h3>
+    <div class="sub">${a.num} ${a.name} · GATE ${patchTag} ${verdictTag} ${scaffoldTag}</div>
+    <div class="section"><div class="section-label">Description</div><div style="font-size:11.5px;line-height:1.5">${g.desc||''}</div></div>
+    ${g.sources ? `<div class="section"><div class="section-label">Foreign data sources</div><ul>${g.sources.map(s=>`<li>${s}</li>`).join('')}</ul></div>` : ''}
+    ${g.scaffold ? `<div class="section"><div class="section-label">Status</div><div style="color:#ffb347;font-size:11.5px">This gate is currently scaffolding — logic deferred. The pipeline runs through the stub and treats it as a pass while the implementation is built.</div></div>` : ''}
+  `;
+  document.getElementById('collapse-right').addEventListener('click', toggleRight);
 }
 
 const pipeState = { running:false };

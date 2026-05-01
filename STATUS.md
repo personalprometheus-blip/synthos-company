@@ -4,7 +4,7 @@
 > 2026-04-05).** It captures the pre-Pi-5-deployment era. Everything
 > below is preserved for audit trail; none of it is the live state.
 >
-> **Current state (2026-04-27):** pi4b is the live company node
+> **Current state (2026-05-01):** pi4b is the live company node
 > running synthos_monitor.py (the command portal) at
 > `command.synth-cloud.com`, plus auditor / archivist / vault /
 > librarian / sentinel / strongbox / fidget / heartbeat / monitor.
@@ -12,6 +12,16 @@
 > agents and the customer portal.
 >
 > **Recent landmark changes on this repo (synthos-company):**
+> - **System-architecture pipeline page rewrite (2026-05-01)**: PIPELINE
+>   constant in `templates/system_map.html` updated to match code reality
+>   — gate counts corrected (Fault 4→8, Market State 5→4, Trader 14→13),
+>   each gate annotated with foreign data sources (FRED / Alpaca / Yahoo /
+>   News APIs), scaffolding gates flagged in amber, click-to-detail wired
+>   on every gate + agent header (fixing the long-standing parity gap with
+>   the topology page), Sector Screener restyled into the ingest column
+>   alongside the other ingest agents. New `showPipeAgentDetail` /
+>   `showPipeGateDetail` JS helpers prefer topology's richer agent entry
+>   when available, otherwise synthesize from PIPELINE.
 > - **Auditor auto-resolve sweep (2026-04-28)**: company_auditor now
 >   auto-clears resolved conditions instead of leaving them flagged
 >   forever. Two policies: customer_db::* conditions cleared on
@@ -89,7 +99,7 @@
 >
 > **Single source of truth for live operational state lives in the
 > companion repo:** `synthos/synthos_build/data/system_architecture.json`
-> (v3.15 as of 2026-04-27).
+> (v3.23 as of 2026-05-01).
 >
 > **REPO IDENTITY:** `personalprometheus-blip/synthos-company` — local: `/home/pi/synthos-company/`
 > **This repo owns:** company_node (Pi 4B) — synthos_monitor (command portal), auditor, archivist, vault, librarian, sentinel, strongbox, scoop

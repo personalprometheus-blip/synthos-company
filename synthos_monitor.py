@@ -7765,7 +7765,12 @@ _KEY_FILTER = {
              # for ETF holdings refresh once the user signs up. Free tier doesn't
              # include holdings; Ultimate ($149/mo) does. Slot is here so the
              # row shows up as NOT SET on the maintenance page until filled.
-             'FMP_API_KEY'},
+             'FMP_API_KEY',
+             # 2026-05-01 — FRED API key slot. Consumed by retail_macro_regime_agent
+             # for VIX (VIXCLS) and treasury yields (DGS10, DGS3MO) when Yahoo
+             # Finance is unreachable. Free tier, no rate limit on individual
+             # keys. Register: https://fred.stlouisfed.org/docs/api/api_key.html
+             'FRED_API_KEY'},
     'pi2w': {'SECRET_TOKEN'},
 }
 

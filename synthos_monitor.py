@@ -7203,7 +7203,9 @@ def api_audit_for_pi(pi_id):
         r = _req.get(
             f"http://{pi_ip}:5001/api/logs-audit",
             headers={"Authorization": f"Bearer {SECRET_TOKEN}"},
-            timeout=10,
+            timeout=30,  # 2026-05-01 — bumped 10→30 alongside pi5
+                          # tail-only audit fix; safety margin for
+                          # cold scans + first-time large-file reads.
         )
         if r.status_code == 200:
             return jsonify(r.json())

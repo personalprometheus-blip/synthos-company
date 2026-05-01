@@ -136,14 +136,74 @@ ERROR_PATTERNS = [
 
 # Lines matching these patterns are ALWAYS ignored, even if they match above.
 # Add entries here for known-good log output that contains error-like words.
+#
+# 2026-05-01 — synced the Alpaca / price-poller / heartbeat / trader-timeout
+# noise filters with the equivalents in pi5's retail_portal.api_logs_audit.
+# Before the sync, pi5's portal correctly suppressed these as known-noise
+# (circuit breakers handle the failures, watchdog auto-restarts, etc.) but
+# this auditor — which also scans pi5's logs via SSH — was missing the
+# filters. Result: the same lines kept being intaken into auditor.db every
+# screener/poller cycle that wrote a new "fetch failed" warning, and the
+# 24h auto-resolve rule never caught up because the conditions kept
+# re-firing. Findings reappeared "no matter how many times we addressed
+# them" — there was nothing to address; the filter was just absent here.
 IGNORE_PATTERNS = [
-    re.compile(r'heartbeat.*non-fatal', re.IGNORECASE),
-    re.compile(r'Monitor unreachable.*skipped', re.IGNORECASE),
-    re.compile(r'DB read skipped in heartbeat', re.IGNORECASE),
-    re.compile(r'graceful\s+shutdown', re.IGNORECASE),
-    re.compile(r'Signal \d+ received', re.IGNORECASE),
-    re.compile(r'error_handler|error_recovery|ErrorBoundary', re.IGNORECASE),
-    re.compile(r'auditor:', re.IGNORECASE),  # don't audit our own log lines
+    re.compile(r'heartbeat.*non-fatal',                         re.IGNORECASE),
+    re.compile(r'Monitor unreachable.*skipped',                 re.IGNORECASE),
+    re.compile(r'DB read skipped in heartbeat',                 re.IGNORECASE),
+    re.compile(r'graceful\s+shutdown',                          re.IGNORECASE),
+    re.compile(r'Signal \d+ received',                          re.IGNORECASE),
+    re.compile(r'error_handler|error_recovery|ErrorBoundary',   re.IGNORECASE),
+    re.compile(r'auditor:',                                     re.IGNORECASE),  # don't audit our own log lines
+
+    # ── Alpaca / price-poller / data-source noise (synced from pi5 portal) ──
+    # Yahoo-finance / Alpaca circuit-breaker retry warnings — circuit
+    # breaker pattern catches these; the warning is diagnostic only.
+    re.compile(r'\b(?:yfinance|yahoo|circuit\s*breaker)\b',     re.IGNORECASE),
+    # price_poller after-hours fallback noise — Market-data fallback
+    # returns 400 minute-by-minute when SIP/IEX are restricted off-hours.
+    re.compile(r'WARNING\s+price_poller:\s+Market-data fallback returned',
+                                                                re.IGNORECASE),
+    # price_poller Alpaca paper-API SSL/timeout flakiness — per-customer
+    # SSL EOF, retries exhausted, connection reset by peer. Diagnostic;
+    # the poller retries on its next 60s tick.
+    re.compile(r'WARNING\s+price_poller:\s+Alpaca\s+\S+\s+fetch failed',
+                                                                re.IGNORECASE),
+    re.compile(r'WARNING\s+price_poller:\s+Market-data fallback fetch failed',
+                                                                re.IGNORECASE),
+
+    # ── Watchdog / heartbeat / [HB] noise (synced from pi5 portal) ──
+    # Watchdog auto-restart of the interrogation listener is what the
+    # watchdog is supposed to do (recovery), but it logs a WARNING.
+    re.compile(r'WARNING\s+watchdog:\s+Interrogation not running',
+                                                                re.IGNORECASE),
+    # Heartbeat POST failed to company server — transient network blips.
+    # The heartbeat retries on its next tick.
+    re.compile(r'WARNING\s+heartbeat:\s+\[HB\]\s+POST failed',  re.IGNORECASE),
+    re.compile(r'\[HB\]\s+POST failed:.*Max retries exceeded',  re.IGNORECASE),
+
+    # ── Trader-timeout follow-ups (synced from pi5 portal) ──
+    # When a trader subprocess is killed at 240s the daemon emits THREE
+    # lines (ERROR + WARNING + INFO). Only the ERROR carries new info;
+    # suppress the WARNING / INFO follow-ups so one timeout = one finding.
+    re.compile(r'\[TRADE\]\s+\S+\s+timeout:\s+killed after \d+s',
+                                                                re.IGNORECASE),
+    re.compile(r'\[TRADE\]\s+Complete:.*\btimeout in',          re.IGNORECASE),
+
+    # ── Generic price_poller / sentiment_agent retry noise ──
+    re.compile(r'WARNING.*\b(?:retry|failed|unavailable)\b.*'
+               r'\b(?:price_poller|sentiment_agent)\b',         re.IGNORECASE),
+    re.compile(r'\b(?:price_poller|sentiment_agent)\b.*WARNING.*'
+               r'\b(?:retry|failed|unavailable)\b',             re.IGNORECASE),
+
+    # ── Auth-gate accounting (synced from pi5 portal) ──
+    # [ADMIN_OVERRIDE] / [KEYS] denial logs are the auth gate working
+    # correctly. Customer session tried to flip TRADING_MODE or write to
+    # the global .env; the gate blocked it. Pre-launch security audit
+    # verified. Not actionable, just security accounting.
+    re.compile(r'\[ADMIN_OVERRIDE\]\s+POST denied',             re.IGNORECASE),
+    re.compile(r'\[KEYS\]\s+Customer\s+\S+\s+attempted to write',
+                                                                re.IGNORECASE),
 ]
 
 

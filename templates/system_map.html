@@ -261,6 +261,10 @@
   .pipe-gate.scaffold{ border-color:rgba(255,179,71,0.35); background:rgba(255,179,71,0.05); }
   .pipe-gate.scaffold .pipe-gate-num::after{ content:' ⚠'; color:var(--amber); }
   .pipe-gate.scaffold .pipe-gate-name{ color:var(--amber); opacity:0.85; }
+  /* Deferred marker — gate exists as a weak proxy; full implementation blocked on paid feed / future phase */
+  .pipe-gate.deferred{ border-color:var(--purple3); background:rgba(123,97,255,0.05); }
+  .pipe-gate.deferred .pipe-gate-num::after{ content:' ⏸'; color:var(--purple); }
+  .pipe-gate.deferred .pipe-gate-name{ color:var(--purple); opacity:0.9; }
   /* Source-pill chip on gates that pull foreign data */
   .pipe-gate-src{ font-family:var(--mono); font-size:8.5px; color:var(--muted); margin-top:2px; letter-spacing:0.04em; opacity:0.85; }
   .pipe-gate-src .src{ display:inline-block; padding:1px 4px; border:1px solid var(--border); border-radius:3px; margin-right:3px; }
@@ -269,6 +273,19 @@
   .pipe-agent.screener-card .pipe-agent-num{ color:var(--amber); }
   .pipe-screener-tag{ font-family:var(--mono); font-size:9px; color:var(--amber); background:var(--amber2); border:1px solid var(--amber3); border-radius:99px; padding:3px 10px; letter-spacing:0.1em; text-transform:uppercase; font-weight:700; align-self:center; margin-bottom:4px; }
   .pipe-screener-anchor{ height:0; }
+  /* Deferred Data Sources panel */
+  .pipe-deferred-panel{ margin-top:18px; background:rgba(123,97,255,0.04); border:1px solid var(--purple3); border-radius:10px; padding:14px 16px; }
+  .pipe-deferred-header{ display:flex; align-items:center; gap:12px; margin-bottom:10px; }
+  .pipe-deferred-header .badge{ font-family:var(--mono); font-size:9.5px; background:rgba(123,97,255,0.12); color:var(--purple); border:1px solid var(--purple3); padding:3px 8px; border-radius:99px; font-weight:700; letter-spacing:0.1em; }
+  .pipe-deferred-header > span:nth-child(2){ font-size:12.5px; font-weight:600; color:var(--text); }
+  .pipe-deferred-header .hint{ margin-left:auto; font-family:var(--mono); font-size:9.5px; color:var(--muted); }
+  .pipe-deferred-grid{ display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:14px; }
+  .pipe-deferred-group{ background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:10px 12px; }
+  .pipe-deferred-group .group-title{ font-family:var(--mono); font-size:10px; color:var(--purple); letter-spacing:0.06em; text-transform:uppercase; font-weight:700; margin-bottom:8px; padding-bottom:5px; border-bottom:1px dashed var(--border); }
+  .pipe-deferred-group ul{ margin:0; padding-left:16px; }
+  .pipe-deferred-group li{ font-size:10.5px; line-height:1.6; color:var(--text2); margin-bottom:5px; }
+  .pipe-deferred-group li b{ color:var(--text); }
+  .pipe-deferred-group li code{ font-family:var(--mono); font-size:9.5px; background:rgba(123,97,255,0.08); color:var(--purple); padding:1px 4px; border-radius:3px; }
 
   .pipe-parallel-lanes{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; margin:10px 0 12px; }
   .pipe-lane{ padding:5px 8px; background:var(--surface2); border:1px solid var(--border); border-radius:6px; text-align:center; font-family:var(--mono); font-size:9.5px; color:var(--muted); font-weight:700; letter-spacing:0.08em; text-transform:uppercase; }
@@ -1987,9 +2004,10 @@ const PIPELINE = {
         {n:'G6',name:'Event detection',desc:'Classifies: earnings, merger, guidance, analyst, regulatory, litigation, mgmt, macro, sector. Fails for routine PR.'},
         {n:'G7',name:'Sentiment score',desc:'Deterministic lexicon + syntax rules, −1.0 to +1.0.'},
         {n:'G8',name:'Novelty check',desc:'Not a duplicate or repost (URL + headline shingles).'},
-        {n:'G12',name:'Confirmation',desc:'Multiple sources corroborate.'},
+        {n:'G12',name:'Confirmation',desc:'Stated purpose: cross-source claim validation (multiple INDEPENDENT outlets corroborating). Current proxy: same-ticker count across Synthos\'s own signal pool in last 8h — only sees our pipeline, not the broader news universe.', deferred:'multi-source aggregation feed (Refinitiv / Reuters TR / Bloomberg) not licensed. Marked SKIP 2026-04-24; structure retained so downstream confirmation_state + confirmation_score stay wired.', unblock:'License a multi-source aggregator. Re-implement gate12 to compare independent outlet counts vs. baseline; remove SKIP marker.'},
         {n:'G13',name:'Timing window',desc:'Tradeable window for signal tier (30d/7d/2d/1d).'},
-        {n:'G15',name:'Contradiction',desc:'No opposing signal within last 4h.', sources:['signals.db']},
+        {n:'G14',name:'Crowding/saturation',desc:'Stated purpose: social attention saturation (X / Reddit / StockTwits mention counts vs baseline). Current proxy: headline-token similarity across our own recent signals — weak signal that never sees broader retail attention.', deferred:'social-firehose API not licensed. StockTwits + Twitter/X + Reddit WSB scraper all behind paid tiers. Marked SKIP 2026-04-24.', unblock:'License a social-attention firehose (StockTwits or X enterprise). Wire mention counts into crowding_discount.'},
+        {n:'G15',name:'Contradiction',desc:'Stated purpose: analyst view dispersion (sell-side price targets / ratings divergence). Current proxy: only catches INTERNAL article conflict (headline says "up", body says "down") + uncertainty-word density.', deferred:'aggregated expert-consensus feed not licensed (FactSet StreetAccount, Refinitiv I/B/E/S). Marked SKIP 2026-04-24.', unblock:'License an analyst-consensus feed. Wire dispersion into ambiguity_score.'},
         {n:'G18',name:'Risk discounts',desc:'Multiplicative discounts on impact_score from VIX regime + macro regime.', sources:['FRED','signals.db']},
         {n:'G22',name:'Composite → VALIDATED',desc:'Final composite crosses threshold → signal VALIDATED, written to signals.db.', sources:['signals.db']},
       ],
@@ -2003,11 +2021,14 @@ const PIPELINE = {
         ]},
         { id:'scoring', name:'SCORING (G4-17)', gates:[
           {n:'G4',name:'Price action',desc:'Recent price moves vs benchmark.', sources:['Alpaca']},
-          {n:'G5',name:'Breadth',desc:'Advance/decline, new highs/lows.', sources:['Alpaca']},
-          {n:'G7',name:'Volatility',desc:'ATR + VIX (FRED VIXCLS, falls back to ATR proxy if stale).', sources:['FRED','Alpaca']},
+          {n:'G5',name:'Breadth',desc:'Advance/decline proxy via SPY price + volume. Full A/D line uses NYSE/NASDAQ TIQ which we do not have.', sources:['Alpaca'], deferred:'true exchange breadth feed (NYSE TIQ / NASDAQ TotalView) not licensed. Current breadth scoring is a SPY-proxy approximation.', unblock:'License an exchange A/D feed. Replace _spy_proxy_breadth() with the real advance/decline counts.'},
+          {n:'G7',name:'Volatility',desc:'ATR + VIX (FRED VIXCLS, falls back to ATR proxy if stale). VVIX (vol-of-vol) and VIX3M/VIX term-structure ratio not included.', sources:['FRED','Alpaca'], deferred:'options data feed (CBOE Live, Bloomberg) not licensed — VVIX, vol term structure, dealer gamma, skew, implied correlation all blocked.', unblock:'License an options feed. Wire VVIX into vol_instability_state, term-structure ratio into vol_structure_state.'},
+          {n:'G8',name:'Options sentiment',desc:'CBOE put/call ratio (cached, None-safe formatting). Dealer gamma, skew, implied correlation are TODO:DATA_DEPENDENCY.', sources:['CBOE'], deferred:'paid options chain (CBOE Live, Bloomberg) needed for dealer gamma, skew index, implied correlation index. Current implementation only uses the free P/C ratio.', unblock:'License options chain data. Add gamma/skew/correlation scoring.'},
           {n:'G9',name:'Safe-haven',desc:'Bonds, gold, defensive sectors trending.', sources:['Yahoo Finance','Alpaca']},
+          {n:'G10',name:'Credit',desc:'ETF-return proxy (HYG/LQD vs SPY). Real CDS/CDX index + funding spreads not licensed.', sources:['Yahoo Finance'], deferred:'credit data feed (ICE BofA OAS, Bloomberg CDX) needed for proper credit_state. LIBOR-OIS / SOFR funding spreads also blocked.', unblock:'License a credit data feed. Replace ETF-proxy with real spread scoring.'},
           {n:'G11',name:'Sector rotation',desc:'Which sectors lead/lag — fed by Screener sector_scores.', sources:['signals.db']},
           {n:'G15',name:'Breadth-price divergence',desc:'5-pattern divergence detector: fragile_rally (price up + breadth weak), hidden_stabilization (price down + broad breadth), narrow_index_strength, false_calm_risk (low vol + credit deteriorating), conflicted_risk_signal.'},
+          {n:'G16',name:'Social sentiment',desc:'Placeholder — emits SKIP:DATA_DEPENDENCY. Full implementation aggregates StockTwits message volume, Twitter/X cashtag mentions, and Reddit WallStreetBets sentiment.', deferred:'paid social feeds not licensed (StockTwits API, Twitter/X enterprise, Reddit Pushshift retired). Currently always returns neutral.', unblock:'License at least one social firehose (StockTwits is cheapest entry point at ~$249/mo). Wire mention-volume + sentiment into social_data {} dict that is currently empty.'},
         ]},
         { id:'adjust', name:'ADJUSTMENTS (G18-23)', gates:[
           {n:'G18',name:'Composite sentiment',desc:'Weighted aggregate of all 14 scoring inputs.'},
@@ -2113,13 +2134,15 @@ function gateHtml(g, extraAttrs='') {
   const patch = g.patch ? ' patch' : '';
   const verdict = g.verdict ? ' verdict' : '';
   const scaffold = g.scaffold ? ' scaffold' : '';
+  const deferred = g.deferred ? ' deferred' : '';
   const tipParts = [];
   if (g.desc) tipParts.push(g.desc);
   if (g.sources) tipParts.push(`<div style="margin-top:4px;color:#9ab">sources: ${g.sources.join(', ')}</div>`);
   if (g.scaffold) tipParts.push(`<div style="margin-top:4px;color:#ffb347">⚠ scaffolding — logic deferred</div>`);
+  if (g.deferred) tipParts.push(`<div style="margin-top:4px;color:#b496ff">⏸ deferred — ${g.deferred}</div>`);
   const desc = tipParts.length ? `<div class="pipe-gate-tooltip"><div class="ttl">${g.n}</div>${tipParts.join('')}</div>` : '';
   const srcPills = g.sources ? `<div class="pipe-gate-src">${g.sources.map(s=>`<span class="src">${s}</span>`).join('')}</div>` : '';
-  return `<div class="pipe-gate${patch}${verdict}${scaffold}" data-gate="${g.n}" ${extraAttrs}>
+  return `<div class="pipe-gate${patch}${verdict}${scaffold}${deferred}" data-gate="${g.n}" ${extraAttrs}>
     <span class="pipe-gate-num">${g.n}</span>
     <span class="pipe-gate-name">${g.name}</span>
     ${srcPills}
@@ -2175,7 +2198,7 @@ function renderPipeline() {
     <div class="pipe-header">
       <h2>VALIDATION PIPELINE <span>v2 · traveling signal · per-customer lanes · rejection detail</span></h2>
       <div style="font-family:var(--mono);font-size:10px;color:var(--muted);letter-spacing:0.04em;margin-top:4px">
-        click any gate or agent header for detail · foreign data pills: <span class="src" style="border:1px solid var(--border);padding:1px 4px;border-radius:3px;margin:0 2px">FRED</span><span class="src" style="border:1px solid var(--border);padding:1px 4px;border-radius:3px;margin:0 2px">Alpaca</span><span class="src" style="border:1px solid var(--border);padding:1px 4px;border-radius:3px;margin:0 2px">Yahoo</span><span class="src" style="border:1px solid var(--border);padding:1px 4px;border-radius:3px;margin:0 2px">News APIs</span>
+        click any gate or agent header for detail · foreign data pills: <span class="src" style="border:1px solid var(--border);padding:1px 4px;border-radius:3px;margin:0 2px">FRED</span><span class="src" style="border:1px solid var(--border);padding:1px 4px;border-radius:3px;margin:0 2px">Alpaca</span><span class="src" style="border:1px solid var(--border);padding:1px 4px;border-radius:3px;margin:0 2px">Yahoo</span><span class="src" style="border:1px solid var(--border);padding:1px 4px;border-radius:3px;margin:0 2px">News APIs</span> · purple ⏸ gates = deferred (proxy in place, full implementation blocked on paid feed) — full roster below the pipeline
       </div>
       <div class="pipe-controls">
         <button class="pipe-btn" data-pipe="single">▶ Single signal</button>
@@ -2232,6 +2255,49 @@ function renderPipeline() {
     </div>
     <div class="pipe-log" id="pipe-log">
       <div class="entry info"><span class="ts">  —</span>Click an action above. Watch the signal card travel, per-customer lanes run independently, and rejections short-circuit with full detail.</div>
+    </div>
+    <div class="pipe-deferred-panel" id="pipe-deferred">
+      <div class="pipe-deferred-header">
+        <span class="badge">⏸ DEFERRED</span>
+        <span>Data sources blocked on paid tiers / future phases</span>
+        <span class="hint">click any row for the unblock condition</span>
+      </div>
+      <div class="pipe-deferred-grid">
+        <div class="pipe-deferred-group">
+          <div class="group-title">News Agent (Agent 2) — 3 SKIP gates</div>
+          <ul>
+            <li data-defer="news-g12"><b>G12 Confirmation</b> — multi-source aggregation feed (Refinitiv / Reuters TR / Bloomberg). Currently a same-ticker count proxy.</li>
+            <li data-defer="news-g14"><b>G14 Crowding</b> — social-firehose (X / Reddit / StockTwits). Currently headline-token similarity within our own pool.</li>
+            <li data-defer="news-g15"><b>G15 Contradiction</b> — analyst consensus / ratings dispersion (FactSet StreetAccount, Refinitiv I/B/E/S). Currently only catches internal article conflict.</li>
+          </ul>
+        </div>
+        <div class="pipe-deferred-group">
+          <div class="group-title">Sentiment Agent (Agent 3) — paid feed gaps</div>
+          <ul>
+            <li><b>G5 Breadth</b> — exchange A/D feed (NYSE TIQ / NASDAQ TotalView). Currently SPY-proxy approximation.</li>
+            <li><b>G7 Volatility</b> — options feed for VVIX + vol term-structure (CBOE Live, Bloomberg).</li>
+            <li><b>G8 Options sentiment</b> — full chain for dealer gamma, skew, implied correlation. Currently just CBOE P/C ratio.</li>
+            <li><b>G10 Credit</b> — CDS/CDX index, ICE BofA OAS, funding spreads (LIBOR-OIS / SOFR). Currently HYG/LQD ETF proxy.</li>
+            <li><b>G16 Social sentiment</b> — StockTwits / Twitter X / Reddit WSB. Currently always neutral.</li>
+            <li><b>Macro context</b> — economic surprise indices (Citi ESI), Fed funds futures (Bloomberg).</li>
+          </ul>
+        </div>
+        <div class="pipe-deferred-group">
+          <div class="group-title">Sector Screener (Agent 5)</div>
+          <ul>
+            <li><b>G1 Holdings lookup</b> — FMP /etf-holdings on Ultimate tier (~$399/mo). Currently hand-curated top-10 per SPDR sector — works fine, paid feed would just remove maintenance.</li>
+          </ul>
+        </div>
+        <div class="pipe-deferred-group">
+          <div class="group-title">Future phases (formally deferred)</div>
+          <ul>
+            <li><b>Retail license validator</b> — DEFERRED_FROM_CURRENT_BASELINE (SYS-B01/B02). No boot-time entitlement gate. Tracked in <code>synthos-company/documentation/milestones.md</code>.</li>
+            <li><b>Patch D-full</b> — DB schema split into customer + shared tables. Mechanical; entry conditions documented in TODO.md.</li>
+            <li><b>Phase 7e bucket</b> — continuous trade-arc chart, user memos surviving close, ATR-anchored Suggested Levels, feedback button (~3-5h when scheduled).</li>
+            <li><b>Congressional signal → combined_score</b> — design decision still open. Flag is displayed but not weighted.</li>
+          </ul>
+        </div>
+      </div>
     </div>
   `;
   w.querySelectorAll('.pipe-btn[data-pipe]').forEach(btn => {
@@ -2347,15 +2413,18 @@ function showPipeAgentDetail(a) {
 }
 function showPipeGateDetail(a, g) {
   const scaffoldTag = g.scaffold ? '<span class="tag warn">⚠ SCAFFOLDING</span>' : '';
+  const deferredTag = g.deferred ? '<span class="tag" style="background:rgba(123,97,255,0.1);color:#b496ff;border:1px solid #6a4a90">⏸ DEFERRED</span>' : '';
   const patchTag    = g.patch    ? '<span class="tag new">PATCH</span>' : '';
   const verdictTag  = g.verdict  ? '<span class="tag">VERDICT</span>' : '';
   detailEl.innerHTML = `
     <button class="collapse-btn" id="collapse-right" title="Collapse / expand">▸</button>
     <h3>${g.n} · ${g.name}</h3>
-    <div class="sub">${a.num} ${a.name} · GATE ${patchTag} ${verdictTag} ${scaffoldTag}</div>
+    <div class="sub">${a.num} ${a.name} · GATE ${patchTag} ${verdictTag} ${scaffoldTag} ${deferredTag}</div>
     <div class="section"><div class="section-label">Description</div><div style="font-size:11.5px;line-height:1.5">${g.desc||''}</div></div>
     ${g.sources ? `<div class="section"><div class="section-label">Foreign data sources</div><ul>${g.sources.map(s=>`<li>${s}</li>`).join('')}</ul></div>` : ''}
     ${g.scaffold ? `<div class="section"><div class="section-label">Status</div><div style="color:#ffb347;font-size:11.5px">This gate is currently scaffolding — logic deferred. The pipeline runs through the stub and treats it as a pass while the implementation is built.</div></div>` : ''}
+    ${g.deferred ? `<div class="section"><div class="section-label">Deferred — what's blocked</div><div style="color:#b496ff;font-size:11.5px;line-height:1.5">${g.deferred}</div></div>` : ''}
+    ${g.unblock ? `<div class="section"><div class="section-label">Unblock condition</div><div style="font-size:11.5px;line-height:1.5">${g.unblock}</div></div>` : ''}
   `;
   document.getElementById('collapse-right').addEventListener('click', toggleRight);
 }

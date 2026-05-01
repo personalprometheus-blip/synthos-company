@@ -1970,7 +1970,7 @@ const PIPELINE = {
     id:'screener', num:'AGENT 5', name:'Sector Screener',
     sub:'5 gates · pre-computed once/day 06:45 ET · feeds Trade Gate 5',
     gates:[
-      {n:'G1',name:'Holdings lookup',desc:'Hand-curated top-10 per SPDR sector (XLE, XLF, XLK, ...). TODO: FMP /etf-holdings on paid tier.', scaffold:true},
+      {n:'G1',name:'Holdings lookup',desc:'Hand-curated top-10 per SPDR sector (XLE, XLF, XLK, ...). Future: FMP /etf-holdings on paid tier — current static map works fine.'},
       {n:'G2',name:'Liquidity floor',desc:'Drops tickers below $5M avg daily volume.', sources:['Alpaca']},
       {n:'G3',name:'Momentum calc',desc:'20-day and 50-day return vs SPY.', sources:['Alpaca']},
       {n:'G4',name:'Rank by score',desc:'Composite of momentum + volatility bucket.'},
@@ -2007,7 +2007,7 @@ const PIPELINE = {
           {n:'G7',name:'Volatility',desc:'ATR + VIX (FRED VIXCLS, falls back to ATR proxy if stale).', sources:['FRED','Alpaca']},
           {n:'G9',name:'Safe-haven',desc:'Bonds, gold, defensive sectors trending.', sources:['Yahoo Finance','Alpaca']},
           {n:'G11',name:'Sector rotation',desc:'Which sectors lead/lag — fed by Screener sector_scores.', sources:['signals.db']},
-          {n:'G15',name:'Breadth-price divergence',desc:'Flags breadth vs price divergence.', scaffold:true},
+          {n:'G15',name:'Breadth-price divergence',desc:'5-pattern divergence detector: fragile_rally (price up + breadth weak), hidden_stabilization (price down + broad breadth), narrow_index_strength, false_calm_risk (low vol + credit deteriorating), conflicted_risk_signal.'},
         ]},
         { id:'adjust', name:'ADJUSTMENTS (G18-23)', gates:[
           {n:'G18',name:'Composite sentiment',desc:'Weighted aggregate of all 14 scoring inputs.'},
@@ -2035,14 +2035,14 @@ const PIPELINE = {
         {n:'G8',name:'Trade activity baseline',desc:'DEGRADED detector: trader committed orders within rolling baseline window (silent-failure trip).'},
       ],
     },
-    { id:'bias', num:'AGENT 7', name:'Bias Detection', sub:'6 gates · per-customer · partial scaffolding',
+    { id:'bias', num:'AGENT 7', name:'Bias Detection', sub:'6 gates · per-customer · all implemented',
       gates:[
         {n:'G1',name:'Sector concentration',desc:'No single sector > 40% of equity.'},
-        {n:'G2',name:'Recency bias',desc:'Not over-weighting recent winners.', scaffold:true},
-        {n:'G3',name:'Loss aversion',desc:'Not holding losers too long (HOLD_TOO_LONG warning).', scaffold:true},
+        {n:'G2',name:'Recency bias',desc:'Counts unique tickers in the last N bot trades over the lookback window. Below the unique-tickers threshold → RECENCY_BIAS warning. Needs ≥3 trades in window or reports TOO_FEW_TRADES (OK).'},
+        {n:'G3',name:'Loss aversion',desc:'Computes avg loser hold-days vs avg winner hold-days on bot-managed closed positions. Ratio ≥ LOSS_AVERSION_RATIO → LOSS_AVERSION warning. Needs ≥10 closed trades or reports TOO_FEW_CLOSED (OK).'},
         {n:'G4',name:'Overtrading',desc:'Churn rate bounds — round-trips per week vs equity tier.'},
-        {n:'G5',name:'Disposition effect',desc:'Selling winners too early.', scaffold:true},
-        {n:'G6',name:'Confidence clustering',desc:'Not biased toward over-confident signal sources.', scaffold:true},
+        {n:'G5',name:'Disposition effect',desc:'Compares avg winner gain% vs avg loser loss% on bot-managed closes. Small winners + bigger losers + W>L count → DISPOSITION_EFFECT warning. Needs ≥10 closed trades or reports TOO_FEW_CLOSED (OK).'},
+        {n:'G6',name:'Confidence clustering',desc:'Groups ACTED_ON signals by confidence over last 30d. HIGH share above CONFIDENCE_HIGH_ONLY_PCT → CONFIDENCE_CLUSTERING info-level finding (system may be ignoring viable MEDIUM signals).'},
       ],
     },
     { id:'marketstate', num:'AGENT 9', name:'Market State', sub:'4 gates · ingestion + synthesis',
@@ -2053,13 +2053,13 @@ const PIPELINE = {
         {n:'G4',name:'State synthesis',desc:'Aggregates the three streams → bullish / neutral / bearish market_state.'},
       ],
     },
-    { id:'macro', num:'AGENT 8', name:'Macro Regime', sub:'5 gates · FRED-driven',
+    { id:'macro', num:'AGENT 8', name:'Macro Regime', sub:'5 gates · FRED + Yahoo',
       gates:[
-        {n:'G1',name:'Yield curve',desc:'DGS10 − DGS3MO spread. Inversion ≥ 2 sustained cycles → risk_off contribution.', sources:['FRED']},
-        {n:'G2',name:'VIX regime',desc:'VIXCLS level → calm / elevated / stress. Replaces the old Yahoo VIX path (Round 9).', sources:['FRED']},
-        {n:'G3',name:'Commodities',desc:'Oil, gold, copper trend (Yahoo-sourced, scheduled to migrate).', sources:['Yahoo Finance']},
-        {n:'G4',name:'Credit spreads',desc:'HY OAS / IG OAS. Widening = risk_off.', sources:['FRED'], scaffold:true},
-        {n:'G5',name:'Regime class',desc:'Weighted blend → risk-on / risk-off / neutral. Persisted to signals.db.macro_regime_detail.', sources:['signals.db']},
+        {n:'G1',name:'VIX regime',desc:'VIXCLS level → calm / elevated / stress. Migrated from Yahoo to FRED in Round 9 (commit 32a7d19).', sources:['FRED']},
+        {n:'G2',name:'Yield curve',desc:'10Y − 3M spread + 5d trend. Inversion → risk_off contribution; flattening trend tracked separately.', sources:['Yahoo Finance']},
+        {n:'G3',name:'Market breadth',desc:'Advance/decline + new-highs/new-lows + percent above 50d/200d MA across the broad market.', sources:['Yahoo Finance']},
+        {n:'G4',name:'Sector rotation',desc:'Cyclical-vs-defensive ETF spread (XLY/XLK/XLF/XLI vs XLP/XLU/XLV). Positive = cyclicals leading = risk_on contribution.', sources:['Yahoo Finance']},
+        {n:'G5',name:'Regime class',desc:'Weighted blend of VIX + curve + breadth + rotation → risk-on / risk-off / neutral. Persisted to signals.db.macro_regime_detail.', sources:['signals.db']},
       ],
     },
   ],
@@ -2175,7 +2175,7 @@ function renderPipeline() {
     <div class="pipe-header">
       <h2>VALIDATION PIPELINE <span>v2 · traveling signal · per-customer lanes · rejection detail</span></h2>
       <div style="font-family:var(--mono);font-size:10px;color:var(--muted);letter-spacing:0.04em;margin-top:4px">
-        click any gate or agent header for detail · foreign data pills: <span class="src" style="border:1px solid var(--border);padding:1px 4px;border-radius:3px;margin:0 2px">FRED</span><span class="src" style="border:1px solid var(--border);padding:1px 4px;border-radius:3px;margin:0 2px">Alpaca</span><span class="src" style="border:1px solid var(--border);padding:1px 4px;border-radius:3px;margin:0 2px">Yahoo</span><span class="src" style="border:1px solid var(--border);padding:1px 4px;border-radius:3px;margin:0 2px">News APIs</span> · ⚠ amber gates = scaffolding (logic deferred)
+        click any gate or agent header for detail · foreign data pills: <span class="src" style="border:1px solid var(--border);padding:1px 4px;border-radius:3px;margin:0 2px">FRED</span><span class="src" style="border:1px solid var(--border);padding:1px 4px;border-radius:3px;margin:0 2px">Alpaca</span><span class="src" style="border:1px solid var(--border);padding:1px 4px;border-radius:3px;margin:0 2px">Yahoo</span><span class="src" style="border:1px solid var(--border);padding:1px 4px;border-radius:3px;margin:0 2px">News APIs</span>
       </div>
       <div class="pipe-controls">
         <button class="pipe-btn" data-pipe="single">▶ Single signal</button>

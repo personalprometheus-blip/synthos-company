@@ -9959,15 +9959,19 @@ async function loadNode(node, opts) {
 }
 
 function render(d){
-  const sev    = d.by_severity || {};
-  const issues = d.issues || [];
-  const total  = d.total_unresolved != null ? d.total_unresolved : issues.length;
+  const sev      = d.by_severity || {};
+  const issues   = d.issues || [];
+  const total    = d.total_unresolved != null ? d.total_unresolved : issues.length;
+  const shown    = d.displayed != null ? d.displayed : issues.length;
+  const capped   = d.display_capped === true || (d.displayed != null && shown < total);
+  const cacheTag = d.cached ? ' · cached ' + (d.cache_age_s||0) + 's ago' : '';
 
   document.getElementById('page-sub').textContent =
     (d.error && !issues.length) ? 'Error: ' + d.error :
     total + ' unresolved issue' + (total!==1?'s':'') +
+    (capped ? ' (showing first ' + shown + ')' : '') +
     (d.scan_state && d.scan_state.length ? ' · ' + d.scan_state.length + ' log files monitored' : '') +
-    ' · refreshes every 5 min';
+    ' · refreshes every 5 min' + cacheTag;
 
   document.getElementById('stat-crit').textContent  = sev.critical || 0;
   document.getElementById('stat-high').textContent  = sev.high     || 0;

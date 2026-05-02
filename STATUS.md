@@ -12,6 +12,23 @@
 > agents and the customer portal.
 >
 > **Recent landmark changes on this repo (synthos-company):**
+> - **company_auditor — SSH retry + cascade fix (2026-05-02)**:
+>   `check_remote_health` was emitting one SERVICE_DOWN finding per
+>   configured service when SSH itself failed — one unreachable scan
+>   produced N findings. Now does a pre-flight `ssh host true` ping
+>   at the top; if the ping fails (with the new 2-retry policy in
+>   `_ssh_run`), early-returns empty issues[] so NODE_UNREACHABLE
+>   from `scan_remote_logs` stays the single source of truth for
+>   connectivity. _ssh_run gained 2 retries × 3s delay so the
+>   auditor's 5-min cron no longer trips on the pi5-boot-window race
+>   (auditor at 04:00:30 vs pi5 boot completion at 04:01:33).
+> - **Audit page polish (2026-05-01)**: 5-min poll + silent refresh
+>   so the synthos-pi-retail tab no longer blanks every cycle; honest
+>   total/displayed math (was reporting len(issues) AFTER the [:200]
+>   cap, which made the math look broken when underlying counts were
+>   in the thousands); cache-age tag in subtitle when serving from
+>   pi5's 60s in-memory scan cache. TODO widget poll bumped 30s →
+>   5min same session.
 > - **Approvals UI gains Type pill + why/how detail (2026-05-01 late PM)**:
 >   companion to pi5's new `/request-access` public flow. Pending signups
 >   now distinguished by `request_type` ('subscribe' for code-holders via
@@ -143,7 +160,7 @@
 >
 > **Single source of truth for live operational state lives in the
 > companion repo:** `synthos/synthos_build/data/system_architecture.json`
-> (v3.25 as of 2026-05-01).
+> (v3.26 as of 2026-05-02).
 >
 > **REPO IDENTITY:** `personalprometheus-blip/synthos-company` — local: `/home/pi/synthos-company/`
 > **This repo owns:** company_node (Pi 4B) — synthos_monitor (command portal), auditor, archivist, vault, librarian, sentinel, strongbox, scoop

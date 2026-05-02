@@ -446,19 +446,35 @@ def _dedup_and_store(issues: list[dict]) -> dict:
 
 # ── REMOTE NODE SCANNING ─────────────────────────────────────────────────
 
-def _ssh_run(host: str, cmd: str, timeout: int = 15) -> tuple[bool, str]:
-    """Run a command on a remote node via SSH. Returns (success, output)."""
-    import subprocess
-    try:
-        result = subprocess.run(
-            ['ssh', '-o', 'ConnectTimeout=5', '-o', 'BatchMode=yes', host, cmd],
-            capture_output=True, text=True, timeout=timeout,
-        )
-        return result.returncode == 0, result.stdout
-    except subprocess.TimeoutExpired:
-        return False, f'SSH timeout after {timeout}s'
-    except Exception as e:
-        return False, str(e)
+def _ssh_run(host: str, cmd: str, timeout: int = 15,
+             retries: int = 2, retry_delay: float = 3.0) -> tuple[bool, str]:
+    """Run a command on a remote node via SSH. Returns (success, output).
+
+    2026-05-02: added 2-retry policy with 3s delay between attempts.
+    Auditor scans run on a 5-min cron and previously hit pi5 mid-boot
+    (auditor scan at 04:00:30 ET, pi5 boot completed at 04:01:33 — SSH
+    daemon not yet responsive). Single-attempt SSH timeouts produced
+    spurious NODE_UNREACHABLE + cascading SERVICE_DOWN findings every
+    boot. Two retries × 3s = 6s extra wall time only on failure paths.
+    """
+    import subprocess, time as _time
+    last_output = ''
+    for attempt in range(retries + 1):
+        try:
+            result = subprocess.run(
+                ['ssh', '-o', 'ConnectTimeout=5', '-o', 'BatchMode=yes', host, cmd],
+                capture_output=True, text=True, timeout=timeout,
+            )
+            if result.returncode == 0:
+                return True, result.stdout
+            last_output = result.stderr.strip() or result.stdout
+        except subprocess.TimeoutExpired:
+            last_output = f'SSH timeout after {timeout}s'
+        except Exception as e:
+            last_output = str(e)
+        if attempt < retries:
+            _time.sleep(retry_delay)
+    return False, last_output
 
 
 def scan_remote_logs(node_id: str, node_cfg: dict) -> list[dict]:
@@ -570,9 +586,29 @@ def scan_remote_logs(node_id: str, node_cfg: dict) -> list[dict]:
 
 
 def check_remote_health(node_id: str, node_cfg: dict) -> list[dict]:
-    """Check process health on a remote node via SSH."""
+    """Check process health on a remote node via SSH.
+
+    2026-05-02: pre-flight connectivity ping before per-process / per-service
+    checks. Previously a single SSH outage (e.g. node mid-boot, network blip)
+    fanned out into N SERVICE_DOWN + M PROCESS_DOWN findings — one per
+    configured item — when the actual issue was just unreachable. The
+    NODE_UNREACHABLE finding from scan_remote_logs already covers that
+    case, so we now early-return an empty issues[] when ping fails (avoids
+    duplicating with scan_remote_logs's unreachable finding).
+    """
     host = node_cfg['ssh_host']
     issues = []
+
+    # Pre-flight: verify the node is actually reachable. If not, return
+    # empty — scan_remote_logs's NODE_UNREACHABLE finding is the single
+    # source of truth for connectivity issues. Don't generate fake
+    # PROCESS_DOWN/SERVICE_DOWN findings for an unreachable node.
+    ping_ok, _ = _ssh_run(host, 'true', timeout=10, retries=2)
+    if not ping_ok:
+        log.info(f"check_remote_health: {node_id} ({host}) unreachable — "
+                 f"skipping process/service checks (NODE_UNREACHABLE will "
+                 f"be reported by scan_remote_logs)")
+        return issues
 
     # Check required processes
     for proc in node_cfg.get('processes', []):

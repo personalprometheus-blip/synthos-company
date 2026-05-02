@@ -3907,7 +3907,7 @@ fetchMktActivity();
 fetchAdminOverrides();
 fetchBehaviorBaseline();
 setInterval(tickCountdown, 1000);
-setInterval(fetchTodos, 30000);
+setInterval(fetchTodos, 300000);   // 5 min — auditor data shifts slowly; 30s was too jumpy for reading
 setInterval(fetchMktActivity, 60000);
 setInterval(fetchBehaviorBaseline, 60000);
 function toggleMenu(){const m=document.getElementById('hmenu');m.classList.toggle('open')}

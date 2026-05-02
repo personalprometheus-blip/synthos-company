@@ -9930,8 +9930,12 @@ function selectNode(node, el) {
   else loadNode(node);
 }
 
-async function loadNode(node) {
-  if (node === currentNode)
+async function loadNode(node, opts) {
+  // Show the loading bar only on initial load / explicit user click, NOT on
+  // the periodic poll. Otherwise the display blanks every refresh interval
+  // and the user sees data disappear-then-reappear (jarring + can't read).
+  const silent = opts && opts.silent;
+  if (node === currentNode && !silent)
     document.getElementById('issues-list').innerHTML = '<div class="loading-bar">Fetching ' + escHtml(node) + ' findings…</div>';
   try {
     const url = node === 'company' ? '/api/auditor' : '/api/audit/' + encodeURIComponent(node);
@@ -9963,7 +9967,7 @@ function render(d){
     (d.error && !issues.length) ? 'Error: ' + d.error :
     total + ' unresolved issue' + (total!==1?'s':'') +
     (d.scan_state && d.scan_state.length ? ' · ' + d.scan_state.length + ' log files monitored' : '') +
-    ' · refreshes every 60s';
+    ' · refreshes every 5 min';
 
   document.getElementById('stat-crit').textContent  = sev.critical || 0;
   document.getElementById('stat-high').textContent  = sev.high     || 0;
@@ -10102,7 +10106,10 @@ async function resolveAuditorIssue(issueId, ev) {
 
 buildNodeTabs();
 loadNode('company');
-setInterval(() => loadNode(currentNode), 15000);
+// Pass silent=true so the periodic poll updates the data in place without
+// blanking the display. The loading bar still shows on initial load and
+// on user tab-click via loadNode(node) without opts.
+setInterval(() => loadNode(currentNode, {silent:true}), 300000);   // 5 min
 </script>
 </body>
 </html>

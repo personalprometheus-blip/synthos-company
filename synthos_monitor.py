@@ -28,6 +28,7 @@ Heartbeat POST body (JSON):
 
 import json
 import os
+import shutil
 import sqlite3
 import threading
 import time
@@ -36,7 +37,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 
-from flask import Flask, request, jsonify, render_template, render_template_string, redirect, session, url_for, make_response
+from flask import Flask, request, jsonify, render_template, render_template_string, redirect, session, url_for, make_response, send_file, after_this_request
 from dotenv import load_dotenv
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
@@ -4473,12 +4474,23 @@ _BUILD_DIR    = os.path.dirname(_HERE)   # synthos_build/ (parent of src/)
 _STAGING_ROOT = os.path.join(_BUILD_DIR, ".backup_staging")
 
 
+_VALID_BACKUP_STREAMS = ("customer", "retail")
+
+
 @app.route("/receive_backup", methods=["POST"])
 def receive_backup():
     """
-    Accept a .tar.gz backup archive from a retail Pi and stage it for Strongbox.
-    Auth: X-Token header or token cookie (same as /console).
-    Form fields: pi_id (str), archive (file)
+    Accept a backup archive from a retail/process Pi and stage it for Strongbox.
+
+    Auth: X-Token header (same as /console).
+
+    v2 (preferred): pi_id + stream ∈ {customer, retail} + .enc archive (Fernet-encrypted by source Pi)
+        Staged at ~/.backup_staging/<stream>/<pi_id>/<filename>
+        Filename MUST end in .enc
+
+    v1 (legacy, accepted during transition): pi_id + .tar.gz archive (plaintext)
+        Staged at ~/.backup_staging/<pi_id>/<filename>
+        Strongbox encrypts before R2 upload.
     """
     if not _authorized():
         return jsonify({"error": "unauthorized"}), 401
@@ -4491,17 +4503,178 @@ def receive_backup():
     if not f:
         return jsonify({"error": "archive file required"}), 400
 
-    staging_dir = os.path.join(_STAGING_ROOT, pi_id)
-    os.makedirs(staging_dir, exist_ok=True)
+    upload_name = (f.filename or "").strip().replace("/", "_").replace("..", "_")
+    if not upload_name:
+        return jsonify({"error": "archive filename required"}), 400
 
-    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    fname = f"synthos_backup_{pi_id}_{date_str}.tar.gz"
+    stream = (request.form.get("stream") or "").strip().lower()
+
+    if stream:
+        # v2 path
+        if stream not in _VALID_BACKUP_STREAMS:
+            return jsonify({"error": f"stream must be one of {_VALID_BACKUP_STREAMS}"}), 400
+        if not upload_name.endswith(".enc"):
+            return jsonify({"error": "v2 stream archive must end in .enc"}), 400
+        staging_dir = os.path.join(_STAGING_ROOT, stream, pi_id)
+        fname = upload_name
+    else:
+        # v1 legacy path
+        staging_dir = os.path.join(_STAGING_ROOT, pi_id)
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        fname = f"synthos_backup_{pi_id}_{date_str}.tar.gz"
+
+    os.makedirs(staging_dir, exist_ok=True)
     fpath = os.path.join(staging_dir, fname)
     f.save(fpath)
 
     size_kb = os.path.getsize(fpath) / 1024
-    print(f"[Company] Staged backup: {fname} ({size_kb:.1f} KB) from pi_id={pi_id}")
-    return jsonify({"ok": True, "staged": fname, "size_kb": round(size_kb, 1)}), 200
+    label = f"{stream}:{pi_id}" if stream else f"legacy:{pi_id}"
+    print(f"[Company] Staged backup: {fname} ({size_kb:.1f} KB) from {label}")
+    return jsonify({
+        "ok": True,
+        "staged": fname,
+        "stream": stream or None,
+        "size_kb": round(size_kb, 1),
+    }), 200
+
+
+@app.route("/restore_backup", methods=["POST"])
+def restore_backup():
+    """
+    Provide an encrypted backup archive from R2 to the installer.
+    Used by the v2 installer to bootstrap a fresh node from R2.
+
+    Auth: X-Token header.
+
+    Form/JSON fields:
+        stream: company | customer | retail   (required)
+        pi_id:  source pi_id of the desired backup  (required)
+        date:   YYYY-MM-DD or "latest"  (optional; default "latest")
+
+    Response 200:
+        body = encrypted .tar.gz.enc (Content-Type application/octet-stream)
+        headers:
+            X-Backup-Date, X-Manifest-Version, X-Stream, X-Pi-Id, X-R2-Key
+    """
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+
+    payload = request.get_json(silent=True) or {}
+    stream = (request.form.get("stream") or payload.get("stream") or "").strip().lower()
+    pi_id  = (request.form.get("pi_id")  or payload.get("pi_id")  or "").strip()
+    date   = (request.form.get("date")   or payload.get("date")   or "latest").strip()
+
+    valid_restore_streams = ("company", "customer", "retail")
+    if stream not in valid_restore_streams:
+        return jsonify({"error": f"stream must be one of {valid_restore_streams}"}), 400
+    if not pi_id or "/" in pi_id or ".." in pi_id:
+        return jsonify({"error": "valid pi_id required"}), 400
+
+    try:
+        import boto3 as _boto3
+        from botocore.exceptions import ClientError as _ClientError
+        from botocore.exceptions import NoCredentialsError as _NoCreds
+    except ImportError:
+        return jsonify({"error": "boto3 not installed on company server"}), 500
+
+    bucket    = os.environ.get("R2_BUCKET_NAME", "synthos-backups")
+    account   = os.environ.get("R2_ACCOUNT_ID", "")
+    access    = os.environ.get("R2_ACCESS_KEY_ID", "")
+    secret    = os.environ.get("R2_SECRET_ACCESS_KEY", "")
+    if not all([account, access, secret]):
+        return jsonify({"error": "R2 credentials not configured"}), 500
+
+    client = _boto3.client(
+        "s3",
+        endpoint_url=f"https://{account}.r2.cloudflarestorage.com",
+        aws_access_key_id=access,
+        aws_secret_access_key=secret,
+        region_name="auto",
+    )
+
+    # Resolve target object key
+    if date == "latest":
+        prefix = f"{stream}/{pi_id}/"
+        try:
+            paginator = client.get_paginator("list_objects_v2")
+            keys = []
+            for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+                for obj in page.get("Contents", []):
+                    keys.append((obj["Key"], obj["LastModified"]))
+            if not keys:
+                return jsonify({"error": f"no backups found at prefix {prefix}"}), 404
+            keys.sort(key=lambda kv: kv[1])
+            object_key = keys[-1][0]
+        except (_ClientError, _NoCreds) as e:
+            return jsonify({"error": f"R2 list error: {e}"}), 500
+    else:
+        # explicit date
+        if len(date) != 10 or date[4] != "-" or date[7] != "-":
+            return jsonify({"error": "date must be YYYY-MM-DD or 'latest'"}), 400
+        object_key = f"{stream}/{pi_id}/{date}/synthos_backup_{stream}_{pi_id}_{date}.tar.gz.enc"
+
+    # Download to a temp file and stream back
+    import tempfile as _tempfile
+    import tarfile as _tarfile
+    import json as _json
+    from cryptography.fernet import Fernet as _Fernet, InvalidToken as _Inv
+
+    tmpdir = _tempfile.mkdtemp(prefix="synthos_restore_")
+    enc_local = os.path.join(tmpdir, "backup.tar.gz.enc")
+    try:
+        client.download_file(bucket, object_key, enc_local)
+    except (_ClientError, _NoCreds) as e:
+        try: shutil.rmtree(tmpdir)
+        except Exception: pass
+        return jsonify({"error": f"R2 download error: {e}", "key": object_key}), 404
+
+    # Peek manifest to populate response headers (best effort; not blocking)
+    backup_date = ""
+    manifest_version = ""
+    try:
+        key = os.environ.get("BACKUP_ENCRYPTION_KEY", "")
+        if key:
+            with open(enc_local, "rb") as fh:
+                plain = _Fernet(key.encode()).decrypt(fh.read())
+            tar_path = os.path.join(tmpdir, "peek.tar.gz")
+            with open(tar_path, "wb") as f2:
+                f2.write(plain)
+            with _tarfile.open(tar_path, "r:gz") as tar:
+                if "manifest.json" in tar.getnames():
+                    mb = tar.extractfile(tar.getmember("manifest.json")).read()
+                    m = _json.loads(mb)
+                    backup_date = m.get("date") or m.get("created_at", "")[:10]
+                    manifest_version = m.get("manifest_version", "")
+            try: os.unlink(tar_path)
+            except Exception: pass
+    except _Inv:
+        pass
+    except Exception:
+        pass
+
+    @after_this_request
+    def _cleanup(resp):
+        try:
+            shutil.rmtree(tmpdir)
+        except Exception:
+            pass
+        return resp
+
+    fname = os.path.basename(object_key)
+    resp = send_file(
+        enc_local,
+        mimetype="application/octet-stream",
+        as_attachment=True,
+        download_name=fname,
+    )
+    resp.headers["X-Stream"] = stream
+    resp.headers["X-Pi-Id"] = pi_id
+    resp.headers["X-R2-Key"] = object_key
+    if backup_date:
+        resp.headers["X-Backup-Date"] = backup_date
+    if manifest_version:
+        resp.headers["X-Manifest-Version"] = manifest_version
+    return resp
 
 
 
@@ -9872,6 +10045,17 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
     <div class="stat-mini"><div class="sm-label">Total</div><div class="sm-val" id="stat-total" style="color:var(--text)">&#x2014;</div><div class="sm-sub">Unresolved</div></div>
   </div>
 
+  <!-- Backup health widget (v2 backup pipeline) -->
+  <div class="panel" id="backup-health-panel" style="margin-bottom:16px">
+    <div class="panel-header">
+      <span class="panel-title">Backup Health (Strongbox)</span>
+      <span class="panel-badge pb-teal" id="bh-badge">Loading</span>
+    </div>
+    <div id="bh-body" style="padding:12px 16px;font-family:var(--mono);font-size:11px;color:var(--muted)">
+      Fetching backup status…
+    </div>
+  </div>
+
   <div class="two-col">
     <div>
       <div class="panel">
@@ -9920,6 +10104,54 @@ function ageSince(isoStr){
   if(secs<86400) return Math.floor(secs/3600)+'h ago';
   return Math.floor(secs/86400)+'d ago';
 }
+
+async function refreshBackupHealth(){
+  const body = document.getElementById('bh-body');
+  const badge = document.getElementById('bh-badge');
+  try {
+    const resp = await fetch('/api/backup_health', {headers:{'X-Token':TOKEN}});
+    if(!resp.ok){ throw new Error('HTTP '+resp.status); }
+    const data = await resp.json();
+    const entries = data.entries || [];
+    if(entries.length===0){
+      body.innerHTML = '<div style="color:var(--muted)">No backup_status.json yet — first run pending.</div>';
+      badge.textContent = 'No data';
+      badge.className = 'panel-badge pb-amber';
+      return;
+    }
+    let any_stale=false, any_failed=false;
+    let html = '<div style="display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr 1fr;gap:8px;font-weight:700;color:var(--muted);font-size:10px;letter-spacing:0.06em;text-transform:uppercase;padding-bottom:6px;border-bottom:1px solid var(--border)">'+
+               '<div>Stream / Pi</div><div>Last Backup</div><div>Age</div><div>Size</div><div>Outcome</div></div>';
+    for(const e of entries){
+      const stale = e.age_hours != null && e.age_hours > 26;
+      const failed = e.outcome && e.outcome !== 'success' && e.outcome !== 'dry_run';
+      if(stale) any_stale=true;
+      if(failed) any_failed=true;
+      const color = failed ? 'var(--pink)' : (stale ? 'var(--amber)' : 'var(--teal)');
+      const sizeKb = e.size_bytes ? (e.size_bytes/1024).toFixed(1)+' KB' : '—';
+      const ageTxt = e.age_hours != null ? e.age_hours.toFixed(1)+'h' : '—';
+      html += '<div style="display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr 1fr;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);align-items:center">'+
+              '<div style="color:var(--text)">'+escHtml(e.key)+'</div>'+
+              '<div>'+escHtml((e.last_backup||'').slice(0,19))+'</div>'+
+              '<div style="color:'+color+'">'+ageTxt+'</div>'+
+              '<div>'+sizeKb+'</div>'+
+              '<div style="color:'+color+'">'+escHtml(e.outcome||'—')+'</div>'+
+              '</div>';
+    }
+    body.innerHTML = html;
+    if(any_failed){ badge.textContent='Failures'; badge.className='panel-badge pb-pink'; }
+    else if(any_stale){ badge.textContent='Stale (>26h)'; badge.className='panel-badge pb-amber'; }
+    else { badge.textContent='Healthy'; badge.className='panel-badge pb-teal'; }
+  } catch(e){
+    body.innerHTML = '<div style="color:var(--pink)">Error: '+escHtml(String(e))+'</div>';
+    badge.textContent = 'Error';
+    badge.className = 'panel-badge pb-pink';
+  }
+}
+
+// Refresh backup health on load and every 5 minutes
+document.addEventListener('DOMContentLoaded', refreshBackupHealth);
+setInterval(refreshBackupHealth, 5*60*1000);
 
 function selectNode(node, el) {
   currentNode = node;
@@ -10118,6 +10350,60 @@ setInterval(() => loadNode(currentNode, {silent:true}), 300000);   // 5 min
 </body>
 </html>
 """
+
+
+@app.route("/api/backup_health")
+def api_backup_health():
+    """
+    Return backup_status.json contents enriched with age_hours per entry.
+    Used by the auditor page backup-health widget.
+    """
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+
+    status_file = os.path.join(
+        os.environ.get("SYNTHOS_HOME", os.path.dirname(os.path.abspath(__file__))),
+        "data", "backup_status.json",
+    )
+    if not os.path.exists(status_file):
+        # Fallback: standard pi4b layout
+        alt = os.path.expanduser("~/synthos-company/data/backup_status.json")
+        if os.path.exists(alt):
+            status_file = alt
+
+    if not os.path.exists(status_file):
+        return jsonify({"entries": [], "source": status_file, "error": "not found"}), 200
+
+    try:
+        with open(status_file, "r") as fh:
+            data = json.load(fh)
+    except Exception as e:
+        return jsonify({"entries": [], "error": f"read failed: {e}"}), 200
+
+    now = datetime.now(timezone.utc)
+    entries = []
+    for key, rec in data.items():
+        last = rec.get("last_backup")
+        age_hours = None
+        if last:
+            try:
+                last_dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
+                age_hours = round((now - last_dt).total_seconds() / 3600, 2)
+            except (ValueError, TypeError):
+                pass
+        entries.append({
+            "key": key,
+            "stream": rec.get("stream"),
+            "pi_id":  rec.get("pi_id"),
+            "last_backup": last,
+            "age_hours":   age_hours,
+            "size_bytes":  rec.get("size_bytes"),
+            "outcome":     rec.get("outcome"),
+            "r2_key":      rec.get("r2_key"),
+            "error":       rec.get("error"),
+        })
+    entries.sort(key=lambda e: (e.get("stream") or "_zzz", e.get("pi_id") or ""))
+    return jsonify({"entries": entries, "source": status_file, "fetched_at": now.isoformat()}), 200
 
 
 @app.route("/audit")

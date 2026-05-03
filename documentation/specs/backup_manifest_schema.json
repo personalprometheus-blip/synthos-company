@@ -1,0 +1,125 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://synthos.local/schemas/backup_manifest_v1.json",
+  "title": "Synthos Backup Manifest v1.0",
+  "description": "Schema for manifest.json embedded at the root of every Synthos v2 encrypted backup tarball. See BACKUP_MANIFEST_CONTRACT.md and BACKUP_SYSTEM.md for full context.",
+  "type": "object",
+  "required": [
+    "manifest_version",
+    "synthos_version",
+    "node_type",
+    "pi_id",
+    "created_at",
+    "checksum_sha256",
+    "size_bytes_decrypted",
+    "encryption",
+    "contents"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "manifest_version": {
+      "type": "string",
+      "pattern": "^1\\.[0-9]+$",
+      "description": "Schema version. Currently 1.0. Installer rejects unknown major versions."
+    },
+    "synthos_version": {
+      "type": "string",
+      "description": "Synthos version that produced the backup (e.g. '3.0')."
+    },
+    "node_type": {
+      "type": "string",
+      "enum": ["company", "process", "retail"],
+      "description": "Logical role of the source node. Installer rejects mismatch with target node."
+    },
+    "stream": {
+      "type": "string",
+      "enum": ["company", "customer", "retail"],
+      "description": "v2 extension: which stream this archive represents. Used for R2 path layout (<stream>/<pi_id>/<date>/...)."
+    },
+    "pi_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9._-]+$",
+      "description": "Unique identifier of the source node. May be a legacy name (e.g. 'synthos-pi-retail') even when node_type is the v2 vocabulary."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 UTC timestamp of backup creation, e.g. '2026-05-03T05:30:00Z'."
+    },
+    "date": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "description": "Optional convenience field — UTC date portion of created_at (YYYY-MM-DD)."
+    },
+    "checksum_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "SHA-256 over the decrypted tar's content members (excluding manifest.json), iterated in arcname-sorted order."
+    },
+    "size_bytes_decrypted": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total size in bytes of the content files (sum of sizes), used by installer for disk pre-check."
+    },
+    "encryption": {
+      "type": "object",
+      "required": ["algorithm", "key_id"],
+      "additionalProperties": false,
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "enum": ["fernet"],
+          "description": "Currently only 'fernet'. Future: aes-256-gcm, etc."
+        },
+        "key_id": {
+          "type": "string",
+          "description": "Logical key identifier. Currently always 'primary'. Allows future key rotation."
+        }
+      }
+    },
+    "contents": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["src", "dest", "type", "required", "merge_strategy"],
+        "additionalProperties": true,
+        "properties": {
+          "src": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Path inside the tar (POSIX, relative to tar root). For directories MUST end with /."
+          },
+          "dest": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Path inside the node's SYNTHOS_HOME to restore to."
+          },
+          "type": {
+            "type": "string",
+            "enum": ["file", "directory"]
+          },
+          "permissions": {
+            "type": "string",
+            "pattern": "^0[0-7]{3}$",
+            "description": "Octal mode string (e.g. '0600'). Defaults: 0644 for files, 0755 for directories."
+          },
+          "required": {
+            "type": "boolean",
+            "description": "If true, restore aborts when this entry is absent."
+          },
+          "merge_strategy": {
+            "type": "string",
+            "enum": ["replace", "merge"],
+            "description": "replace = overwrite/delete-then-copy; merge = overlay onto dest preserving dest-only files."
+          },
+          "comment": {
+            "type": "string",
+            "description": "Optional human-readable note. Installer ignores."
+          }
+        }
+      }
+    }
+  }
+}

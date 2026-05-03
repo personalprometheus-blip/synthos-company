@@ -209,10 +209,27 @@ def _alert_scoop(alert_type: str, pi_id: str, message: str) -> None:
 
 # ── CORE OPERATIONS ──────────────────────────────────────────────────────────
 
+_NOISE_DIRS = {"__pycache__", ".ruff_cache", ".git", ".pytest_cache", ".mypy_cache"}
+
+
+def _exclude_backup_noise(tarinfo):
+    """Skip recreatable artifacts (pycache, ruff/git/pytest caches, swap files)."""
+    parts = tarinfo.name.split("/")
+    if any(p in _NOISE_DIRS for p in parts):
+        return None
+    if tarinfo.name.endswith((".pyc", ".pyo", ".swp", ".swo", "~")):
+        return None
+    return tarinfo
+
+
 def _create_company_archive(tmp_dir: Path) -> Path:
     """
-    Create a compressed tar archive of company.db and return its path.
-    The archive is NOT encrypted here — encryption happens in _encrypt_archive.
+    Create a compressed tar archive of company state. NOT encrypted here —
+    encryption happens in _encrypt_archive.
+
+    Includes: company.db + supporting DBs (auditor, monitor, support),
+    company.env (CRITICAL — holds BACKUP_ENCRYPTION_KEY and R2 creds),
+    config/, agents/ source snapshot, data/archives/.
     """
     if not COMPANY_DB.exists():
         raise FileNotFoundError(f"company.db not found at {COMPANY_DB}")
@@ -220,22 +237,48 @@ def _create_company_archive(tmp_dir: Path) -> Path:
     date_str = _now_utc().strftime("%Y-%m-%d")
     archive_path = tmp_dir / f"synthos_backup_{COMPANY_PI_ID}_{date_str}.tar.gz"
 
+    included = []
     with tarfile.open(archive_path, "w:gz") as tar:
-        tar.add(COMPANY_DB, arcname="data/company.db")
-        # user/ — contains .env (API keys, COMPANY_MODE flag) and settings.json.
-        # Required by restore.sh step c: "Restores .env from encrypted backup."
+        # Primary + supporting DBs
+        for db_name in ("company.db", "auditor.db", "monitor.db", "support.db"):
+            db_path = DATA_DIR / db_name
+            if db_path.exists():
+                tar.add(db_path, arcname=f"data/{db_name}")
+                included.append(f"data/{db_name}")
+
+        # data/archives/ — historical archives if present
+        archives_dir = DATA_DIR / "archives"
+        if archives_dir.exists():
+            tar.add(archives_dir, arcname="data/archives", filter=_exclude_backup_noise)
+            included.append("data/archives/")
+
+        # company.env — CRITICAL. Without this, R2 backups become un-decryptable on
+        # disaster recovery (it holds BACKUP_ENCRYPTION_KEY itself, plus R2 creds).
+        env_file = SYNTHOS_HOME / "company.env"
+        if env_file.exists():
+            tar.add(env_file, arcname="company.env")
+            included.append("company.env")
+        else:
+            log.warning("company.env NOT FOUND at %s — backup is missing the "
+                        "encryption key needed to decrypt itself!", env_file)
+
+        # Legacy user/ — older installs may have this; preserve if present
         if USER_DIR.exists():
-            tar.add(USER_DIR, arcname="user")
-        # agents/ — source code snapshot; makes restore self-contained
+            tar.add(USER_DIR, arcname="user", filter=_exclude_backup_noise)
+            included.append("user/")
+
         if AGENT_DIR.exists():
-            tar.add(AGENT_DIR, arcname="agents")
-        # config/ — agent policies, market calendar, priorities
+            tar.add(AGENT_DIR, arcname="agents", filter=_exclude_backup_noise)
+            included.append("agents/")
+
         config_dir = SYNTHOS_HOME / "config"
         if config_dir.exists():
-            tar.add(config_dir, arcname="config")
+            tar.add(config_dir, arcname="config", filter=_exclude_backup_noise)
+            included.append("config/")
 
-    log.info("Company archive created: %s (%.1f KB)",
-             archive_path.name, archive_path.stat().st_size / 1024)
+    log.info("Company archive created: %s (%.1f KB) — %s",
+             archive_path.name, archive_path.stat().st_size / 1024,
+             ", ".join(included))
     return archive_path
 
 
@@ -447,7 +490,7 @@ def verify_backups(status: dict) -> None:
                     members = tar.getnames()
 
                 expected_files = (
-                    ["data/company.db", "user/.env"] if pi_id == COMPANY_PI_ID
+                    ["data/company.db", "company.env"] if pi_id == COMPANY_PI_ID
                     else ["signals.db"]
                 )
                 missing = [f for f in expected_files if not any(

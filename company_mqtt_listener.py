@@ -43,15 +43,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event, Lock
 
-# ── PATH SETUP ────────────────────────────────────────────────────────────
-# Make sure synthos_build/src is on sys.path so we can import mqtt_client.
-# In production both repos live side-by-side under /home/<user>/.
-_HERE = Path(__file__).resolve().parent
-for candidate in (_HERE.parent / "synthos" / "synthos_build" / "src",
-                  _HERE / "agents",
-                  _HERE):
-    if candidate.exists() and str(candidate) not in sys.path:
-        sys.path.insert(0, str(candidate))
+# 2026-05-04 — listener uses paho-mqtt directly (no cross-repo dependency
+# on synthos/src/mqtt_client.py). The company node does not need the
+# trader codebase — it only needs to read telemetry from the broker.
 
 # ── LOGGING ───────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -204,33 +198,60 @@ def main() -> int:
     _install_signal_handlers()
 
     try:
-        from mqtt_client import MqttClient
-    except ImportError as e:
-        log.error(f"cannot import mqtt_client (synthos repo not on path): {e}")
+        import paho.mqtt.client as paho_mqtt
+    except ImportError:
+        log.error("paho-mqtt not installed — sudo apt install python3-paho-mqtt")
         return 2
 
-    mqtt = MqttClient(
-        host=MQTT_HOST, port=MQTT_PORT,
-        username=MQTT_USER, password=MQTT_PASS,
-        client_id=f"company_mqtt_listener-{os.getpid()}",
-        last_will_topic="process/heartbeat/company/mqtt_listener",
-        last_will_payload="offline",
-    )
-    if not mqtt.connect():
-        log.error("MQTT connect failed — exiting (systemd will restart us)")
-        return 1
-
-    # Subscribe to wildcard topics. Order: heartbeats first (most useful),
-    # regime (small / retained), prices (volume).
-    for topic in (
-        "process/heartbeat/+/+",
-        "process/regime",
-        "process/prices/+",
-    ):
-        if mqtt.subscribe(topic, _on_message, qos=0):
-            log.info(f"subscribed: {topic}")
+    # paho callbacks: connect / disconnect / message
+    def on_connect(client, userdata, flags, rc):
+        if rc == 0:
+            log.info(f"connected to broker {MQTT_HOST}:{MQTT_PORT}")
+            # Subscribe (re-subscribe on reconnect — paho does NOT remember
+            # subscriptions across reconnects when clean_session=True).
+            for topic in ("process/heartbeat/+/+", "process/regime", "process/prices/+"):
+                result, _mid = client.subscribe(topic, qos=0)
+                if result == 0:
+                    log.info(f"subscribed: {topic}")
+                else:
+                    log.warning(f"subscribe failed for {topic}: rc={result}")
         else:
-            log.warning(f"subscribe failed: {topic}")
+            log.error(f"connect refused: rc={rc}")
+
+    def on_disconnect(client, userdata, rc):
+        if rc != 0:
+            log.warning(f"unexpected disconnect rc={rc}; paho will auto-retry")
+        else:
+            log.info("disconnected cleanly")
+
+    def on_message(client, userdata, msg):
+        # paho callback — keep fast, swallow errors so we never block.
+        try:
+            _on_message(msg.topic, msg.payload)
+        except Exception as e:
+            log.warning(f"message handler raised on {msg.topic}: {e}")
+
+    client = paho_mqtt.Client(
+        client_id=f"company_mqtt_listener-{os.getpid()}",
+        clean_session=True,
+    )
+    if MQTT_USER:
+        client.username_pw_set(MQTT_USER, MQTT_PASS)
+    # LWT: broker auto-publishes "offline" if we die without disconnecting.
+    client.will_set(
+        "process/heartbeat/company/mqtt_listener",
+        "offline", qos=0, retain=True,
+    )
+    client.on_connect    = on_connect
+    client.on_disconnect = on_disconnect
+    client.on_message    = on_message
+
+    try:
+        client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
+    except Exception as e:
+        log.error(f"connect call failed: {e}")
+        return 1
+    client.loop_start()
 
     # Start summary thread
     import threading
@@ -239,23 +260,31 @@ def main() -> int:
     )
     summary_thread.start()
 
+    # Publish our own "online" heartbeat (so subscribers see we came up).
+    client.publish(
+        "process/heartbeat/company/mqtt_listener",
+        json.dumps({
+            "agent": "mqtt_listener",
+            "node": "company",
+            "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "pid": os.getpid(),
+        }),
+        qos=0, retain=True,
+    )
+
     # Park until shutdown signal
     log.info("listener active — Ctrl-C or SIGTERM to stop")
     while not _stop_event.wait(1.0):
         pass
 
     log.info("disconnecting MQTT")
-    mqtt.disconnect()
+    client.loop_stop()
+    client.disconnect()
     return 0
 
 
 if __name__ == "__main__":
-    # 2026-05-04 — MQTT heartbeat (Tier 4 of distributed-trader migration).
-    # Publishes to process/heartbeat/<node>/<agent>. No-op if broker is
-    # unreachable; cleanup auto-registered via atexit.
-    try:
-        from heartbeat import register_telemetry as _register_telemetry
-        _register_telemetry("mqtt_listener", long_running=True)
-    except Exception as _hb_e:
-        pass
+    # Heartbeat is self-published inside main() (right after connect)
+    # rather than via heartbeat.register_telemetry — that helper lives in
+    # the synthos repo, which company node doesn't clone.
     sys.exit(main())

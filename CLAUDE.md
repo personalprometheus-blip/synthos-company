@@ -16,9 +16,10 @@ The only requirement is persistent storage for company.db and network access fro
 Phase 5 — Deployment Pipeline
 
 ## Node Architecture
-- **company_node** (Pi 4B, this machine): ops agents, licensing, backups, monitoring — this repo
-- **process_node** (Pi 3): news/signal ingestion pipeline, article enrichment, Redis-based distribution — repo TBD; hardware in hand, SD card arriving ~2026-03-31. Part of company system; isolated to avoid resource contention.
-- **retail_node** (Pi 2W): trading agents, portal, signals.db — synthos repo
+- **company_node** (Pi 4B, this machine): ops agents, licensing, backups, monitoring (synthos_monitor.py on :5050, company_mqtt_listener subscribes to pi5 broker) — this repo
+- **retail_node** (Pi 5, deployed 2026-04-18, NVMe boot): trading agents, retail_portal, customer DBs, ingestion pipeline (news/sentiment/screener), MQTT broker, distributed-trader server — synthos repo
+- **pi2w_monitor** (Pi Zero 2W): external fallback heartbeat receiver, currently disabled — planned for MQTT subscriber upgrade
+- ~~**process_node** (Pi 3)~~: cancelled 2026-04-05 — news/signal ingestion absorbed into retail_node
 
 ## Companion Repo
 Retail node code → https://github.com/personalprometheus-blip/synthos

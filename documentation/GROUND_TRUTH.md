@@ -712,7 +712,7 @@ Items deferred:
 These items were identified as required before Phase 4 but are carried forward as open documentation tasks:
 - Mark `SUGGESTIONS_JSON_SPEC.md` as SUPERSEDED (suggestions.json retired; DB is authoritative)
 - Mark `POST_DEPLOY_WATCH_SPEC.md` as SUPERSEDED (post_deploy_watch.json retired; DB is authoritative)
-- Update `SYSTEM_MANIFEST.md` v1.2 env var additions
+- ~~Update `SYSTEM_MANIFEST.md` v1.2 env var additions~~ — obviated 2026-05-04: SYSTEM_MANIFEST.md retired to documentation/archive/. Live system inventory now lives in `synthos_build/data/system_architecture.json` (v3.29).
 - CL-009: Company agents not classified in `TOOL_DEPENDENCY_ARCHITECTURE.md`
 
 ---
@@ -732,7 +732,7 @@ It supersedes:
 
 1. **Update this document first** — describe what is changing and why
 2. **Update implementation** — code, config, or installer changes
-3. **Update canonical references** — `DATABASE_SCHEMA_CANONICAL.md` if schema changes; `SYSTEM_MANIFEST.md` if file registry changes; relevant spec docs if architecture changes
+3. **Update canonical references** — `DATABASE_SCHEMA_CANONICAL.md` if schema changes; `synthos_build/data/system_architecture.json` if file registry changes (SYSTEM_MANIFEST.md retired 2026-05-04 — see archive); relevant spec docs if architecture changes
 4. **Revalidate** — confirm the change does not introduce new contradictions
 5. **Commit** — commit all document updates and implementation changes together
 
@@ -742,4 +742,4 @@ It supersedes:
 
 ---
 
-*Synthesized from: `docs/specs/DATABASE_SCHEMA_CANONICAL.md`, `docs/specs/SYSTEM_MANIFEST.md` (v4.0), `docs/specs/SYNTHOS_TECHNICAL_ARCHITECTURE.md` (v3.1), `docs/governance/SYNTHOS_OPERATIONS_SPEC.md` (v3.0), `docs/governance/SYNTHOS_OPERATIONS_SPEC_ADDENDUM_1.md` (v1.0), `docs/governance/COMPANY_INTEGRITY_GATE_SPEC.md` (v1.1), `docs/specs/BACKUP_STRATEGY_INITIAL.md` (v1.0), `STATUS.md`, `PROJECT_STATUS.md`, `docs/validation/BLOCKER_REFRESH_REPORT.md`, `docs/validation/POST_DEFERRAL_VALIDATION_REPORT.md`, `docs/validation/DB_SCHEMA_NORMALIZATION_NOTE.md`*
+*Synthesized from: `docs/specs/DATABASE_SCHEMA_CANONICAL.md`, `docs/specs/SYSTEM_MANIFEST.md` (v4.0, retired 2026-05-04 — see archive), `docs/specs/SYNTHOS_TECHNICAL_ARCHITECTURE.md` (v3.1, retired 2026-05-04 — see archive), `docs/governance/SYNTHOS_OPERATIONS_SPEC.md` (v3.0), `docs/governance/SYNTHOS_OPERATIONS_SPEC_ADDENDUM_1.md` (v1.0), `docs/governance/COMPANY_INTEGRITY_GATE_SPEC.md` (v1.1), `docs/specs/BACKUP_STRATEGY_INITIAL.md` (v1.0), `STATUS.md`, `PROJECT_STATUS.md`, `docs/validation/BLOCKER_REFRESH_REPORT.md`, `docs/validation/POST_DEFERRAL_VALIDATION_REPORT.md`, `docs/validation/DB_SCHEMA_NORMALIZATION_NOTE.md`*

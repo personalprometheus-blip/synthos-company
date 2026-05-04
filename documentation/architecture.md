@@ -30,8 +30,8 @@
 > Treat everything below as historical context only.
 
 **Last Updated:** 2026-03-30 (stale; see banner above)
-**Full spec:** docs/specs/SYNTHOS_TECHNICAL_ARCHITECTURE.md (also OUTDATED)
-**System manifest:** docs/specs/SYSTEM_MANIFEST.md (also OUTDATED)
+**Full spec (archived 2026-05-04):** documentation/archive/specs/SYNTHOS_TECHNICAL_ARCHITECTURE.md.retired_2026-05-04
+**System manifest (archived 2026-05-04):** documentation/archive/specs/SYSTEM_MANIFEST.md.retired_2026-05-04
 
 ---
 

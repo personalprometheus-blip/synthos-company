@@ -2,7 +2,7 @@
 
 **Last Updated:** 2026-03-29
 **Full design brief:** docs/specs/synthos_design_brief.md
-**System manifest:** docs/specs/SYSTEM_MANIFEST.md
+**System manifest (archived 2026-05-04):** documentation/archive/specs/SYSTEM_MANIFEST.md.retired_2026-05-04
 
 ---
 

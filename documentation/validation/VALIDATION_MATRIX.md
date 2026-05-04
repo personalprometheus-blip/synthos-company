@@ -3,6 +3,13 @@
 **Generated:** 2026-03-29
 **Format:** Each item: ID | Category | Condition | How to Verify | Evidence | Blocker | Auto-verifiable?
 
+> **Note (2026-05-04):** This matrix references `SYNTHOS_TECHNICAL_ARCHITECTURE.md`
+> and `SYSTEM_MANIFEST.md` extensively. Both specs were retired 2026-05-04 to
+> `documentation/archive/specs/*.retired_2026-05-04` — the matrix below remains
+> as historical record of the pre-Ground-Truth validation pass that was
+> performed against those specs. Live system inventory is now in
+> `synthos_build/data/system_architecture.json` (v3.29).
+
 ---
 
 ## CATEGORY A — Documentation Integrity

@@ -25,10 +25,25 @@
 >   pre-tightening-disable, pre-Pi5-NVMe-migration.
 >
 > **Current truth lives in:**
-> - `synthos_build/data/system_architecture.json` (v3.10, live) — nodes,
->   agents, services, resolved_items
+> - `synthos_build/data/system_architecture.json` (v3.29, live) — nodes,
+>   agents, services, resolved_items, plus 5 new top-level sections
+>   added 2026-05-04: trader_gates, operating_modes, market_hours,
+>   distributed_trader_tiers, telemetry_agents
+> - `synthos_build/docs/CUTOVER_RUNBOOK.md` — operational migration
+>   playbook for the distributed-trader cutover
+> - `synthos_build/docs/TRADER_GATE_IO_AUDIT.md` — per-gate DB read/write
+>   inventory
 > - `synthos_build/PROJECT_STATUS.md` — phase state, cross-repo blockers
 > - `synthos_build/STATUS.md` — retail node operational status
+>
+> **FURTHER DRIFT (2026-05-04):** The distributed-trader migration
+> shipped Tiers 1-7 (33 architectural tasks). This manifest mentions
+> none of: Mosquitto broker, MQTT telemetry plane, the 24 register_telemetry
+> publishers, company_mqtt_listener (pi4b), synthos_dispatcher,
+> synthos_trader_server, src/gate14_evaluator.py, src/dispatch_mode.py,
+> agents/synthos_migration.py, src/work_packet.py, src/mqtt_client.py,
+> src/heartbeat.py, src/async_alpaca_client.py. All live; see
+> system_architecture.json v3.29 distributed_trader_tiers section.
 >
 > **Still-valuable sections that would survive a rewrite:**
 > - §2 SYSTEM_PATHS (mostly stable; SYNTHOS_HOME layout unchanged)

@@ -1,8 +1,37 @@
 # ARCHITECTURE
 
-**Last Updated:** 2026-03-30
-**Full spec:** docs/specs/SYNTHOS_TECHNICAL_ARCHITECTURE.md
-**System manifest:** docs/specs/SYSTEM_MANIFEST.md
+> ## 🚨 STALE — DO NOT TRUST FOR CURRENT SYSTEM
+>
+> **Stamped 2026-05-04.** This summary doc was last meaningfully edited
+> 2026-03-30 and points at two specs that are themselves OUTDATED
+> (`SYNTHOS_TECHNICAL_ARCHITECTURE.md` and `SYSTEM_MANIFEST.md`).
+>
+> The node topology shown below is wrong:
+> - Retail runs on **Pi 5 16GB** (not Pi 2W) — migrated 2026-04-05
+> - **process_node was cancelled** — its role merged into retail_node
+> - **Redis is not used** anywhere in the system (current comms: SQLite + HTTP heartbeats + UDP interrogation + MQTT telemetry)
+> - Agent filenames `agent1_trader.py`/`agent2_research.py`/`agent3_sentiment.py`
+>   were renamed to 14 `retail_*_agent.py` files
+> - 2026-05-04: distributed-trader migration shipped (Tiers 1-7) adding
+>   Mosquitto MQTT broker, dispatcher, trader_server, mqtt_listener,
+>   per-customer dispatch_mode, migration CLI, gate14 extraction, and
+>   ~6 new helper modules — none documented here
+>
+> **Current truth lives in:**
+> - `synthos_build/data/system_architecture.json` (v3.29) — live nodes,
+>   agents, services, gates, operating modes, distributed tiers,
+>   telemetry agents
+> - `synthos_build/docs/CUTOVER_RUNBOOK.md` — operational migration
+>   playbook for distributed-trader cutover
+> - `synthos_build/docs/TRADER_GATE_IO_AUDIT.md` — per-gate DB I/O
+> - `/system-architecture` page on command portal (pi4b) — interactive
+>   render of the JSON; click around, hover gates, play 24h timeline
+>
+> Treat everything below as historical context only.
+
+**Last Updated:** 2026-03-30 (stale; see banner above)
+**Full spec:** docs/specs/SYNTHOS_TECHNICAL_ARCHITECTURE.md (also OUTDATED)
+**System manifest:** docs/specs/SYSTEM_MANIFEST.md (also OUTDATED)
 
 ---
 

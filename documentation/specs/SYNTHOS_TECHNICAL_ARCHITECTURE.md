@@ -21,10 +21,38 @@
 > - **Bolt / Scout / Pulse** codenames (2 each) — retired.
 >
 > **Current truth lives in:**
-> - `synthos_build/data/system_architecture.json` v3.10 — live nodes,
->   agents, data flow, pipeline variants, daily timeline
+> - `synthos_build/data/system_architecture.json` v3.29 — live nodes,
+>   agents, data flow, pipeline variants, daily timeline, gate
+>   definitions, operating modes, distributed-trader tier status,
+>   telemetry agents (5 new top-level sections added 2026-05-04)
+> - `synthos_build/docs/CUTOVER_RUNBOOK.md` — operational migration
+>   playbook for the distributed-trader cutover
+> - `synthos_build/docs/TRADER_GATE_IO_AUDIT.md` — per-gate DB read/write
+>   inventory (was the design precursor to gate14 extraction)
 > - `synthos_build/PROJECT_STATUS.md` — phase state, cross-repo blockers
-> - Agent code itself — `synthos_build/agents/retail_*_agent.py`
+> - Agent code itself — `synthos_build/agents/retail_*_agent.py` and the
+>   new `synthos_build/agents/synthos_*.py` (dispatcher + trader_server
+>   + migration CLI from Tier 5/7)
+>
+> **FURTHER DRIFT (2026-05-04, distributed-trader migration shipped):**
+> This doc doesn't mention any of these now-live components:
+> - **Mosquitto MQTT broker** on Pi5:1883 (telemetry plane, Tier 4)
+> - **24 agents publishing heartbeats** via `register_telemetry()` to
+>   `process/heartbeat/<node>/<agent>` (Tier 4)
+> - **`company_mqtt_listener.py` on pi4b** subscribing wildcard + persisting
+>   to `auditor.db.mqtt_observations` (Tier 4)
+> - **`agents/synthos_dispatcher.py`** process-node orchestrator (Tier 5)
+> - **`agents/synthos_trader_server.py`** FastAPI :8443 with async
+>   `to_thread` for cross-customer parallelism (Tier 5/6, 4.9x verified)
+> - **`src/gate14_evaluator.py`** — gate 14 extracted to pure-compute
+>   helper for dispatcher reuse
+> - **`src/dispatch_mode.py` + `agents/synthos_migration.py`** — per-
+>   customer DISPATCH_MODE migration tooling (Tier 7)
+> - **`src/work_packet.py`** — schema for HTTP work packets between
+>   dispatcher and trader_server
+> - **`src/mqtt_client.py` + `src/heartbeat.py`** — telemetry helpers
+> - **`src/async_alpaca_client.py`** — httpx-based async Alpaca client
+>   ready for full-async trader path
 >
 > **Rewrite-or-retire decision tracked alongside SYSTEM_MANIFEST in
 > `synthos/TODO.md`.** Until resolved, treat everything below as

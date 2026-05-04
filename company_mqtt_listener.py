@@ -47,6 +47,8 @@ from threading import Event, Lock
 # on synthos/src/mqtt_client.py). The company node does not need the
 # trader codebase — it only needs to read telemetry from the broker.
 
+_HERE = Path(__file__).resolve().parent
+
 # ── LOGGING ───────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),

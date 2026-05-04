@@ -302,6 +302,96 @@ See companion docs:
 
 ---
 
+## 14. Distributed-Trader Migration Impact (added 2026-05-04, Phase D)
+
+The Tier 1-7 distributed-trader migration changed what's running on
+which node + added ~15 new files. Here's how that affects backup:
+
+### 14.1 New source files are NOT backed up (intentional)
+
+The backup streams (customer + retail + company) are **data-only**.
+These new files (Tier 4-7 source code) are recovered from git on
+restore, not from the backup tarballs:
+
+```
+src/work_packet.py
+src/work_packet_db.py        ← NEW Phase A 2026-05-04
+src/mqtt_client.py
+src/heartbeat.py
+src/dispatch_mode.py
+src/gate14_evaluator.py
+src/async_alpaca_client.py
+agents/synthos_dispatcher.py
+agents/synthos_trader_server.py
+agents/synthos_migration.py
+config/mosquitto/synthos.conf
+```
+
+Rationale: source code is in the synthos repo on GitHub. Backups
+recover *state*; git recovers *behavior*. After a node restore the
+operator runs `git pull && pip install -r requirements.txt` to bring
+the new agents back to life — see BACKUP_SOP_RESTORE.md step A7.
+
+### 14.2 Mosquitto broker config NOT in backup (regenerate from repo)
+
+`/etc/mosquitto/conf.d/synthos.conf` lives outside the backup tree.
+The canonical version is in `synthos_build/config/mosquitto/synthos.conf`
+in the repo. Restore: `git pull` → `sudo cp ...synthos.conf
+/etc/mosquitto/conf.d/` → restart mosquitto. The MQTT password file
+at `/etc/mosquitto/passwd` is NOT backed up either; regenerate from
+`MQTT_PASS` in user/.env via `mosquitto_passwd -b -c`.
+
+### 14.3 auditor.db schema change
+
+Phase 4 added a new `mqtt_observations` table to auditor.db on the
+company node:
+
+```sql
+CREATE TABLE IF NOT EXISTS mqtt_observations (
+    topic         TEXT PRIMARY KEY,
+    last_seen_ts  REAL NOT NULL,
+    last_payload  TEXT,
+    msg_count     INTEGER NOT NULL DEFAULT 0
+);
+```
+
+`company_mqtt_listener.py` creates this table on startup via
+`CREATE TABLE IF NOT EXISTS`, so restoring an OLD auditor.db
+(pre-2026-05-04) onto a new system: the table is auto-created on
+first listener run — no manual migration.
+
+### 14.4 Profile-aware backup scope (future)
+
+When retail-N hardware exists (separate from process node), backup
+scope per node should be:
+
+| Profile | What to back up | What to skip |
+|---|---|---|
+| process (today's Pi5) | All current streams (customer + retail per 3-stream split) | — |
+| retail-N (future hardware) | NOTHING — stateless workers; no persistent state | — |
+| company (pi4b) | company.db, auditor.db, login.db, support.db, monitor.db | — |
+
+When retail-N is installed via `install_retail_node.py`,
+`retail_backup.py` is NOT in `REQUIRED_FILES` so it isn't deployed
+there. No additional gating needed.
+
+### 14.5 New env vars to capture for restore
+
+user/.env on each node now contains additional secrets:
+
+| Var | Where set | Restore source |
+|---|---|---|
+| `MQTT_USER` / `MQTT_PASS` | All nodes | Operator USB or operator memory |
+| `DISPATCH_AUTH_TOKEN` | process + retail-N | Must match across both nodes |
+| `RETAIL_URL` | process node | Set after retail-N IP is known |
+| `TRADER_DB_MODE` | retail-N | `packet` on dedicated retail; `local` on loopback |
+| `NODE_TYPE` / `NODE_ID` | All nodes | Set per profile |
+
+Capture on operator USB alongside the existing backup encryption key.
+See BACKUP_SOP_USB_KEY.md §1.5 (added).
+
+---
+
 ## Appendix: File Locations
 
 | File | Repo | Path |

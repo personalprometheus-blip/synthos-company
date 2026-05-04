@@ -22,6 +22,67 @@ license expires) or when adding new permitted node names.
 
 ---
 
+## What goes on the USB (added 2026-05-04, Phase D)
+
+The USB now carries TWO classes of secret material:
+
+1. **License key + Ed25519 keypair** — covered by §1.1–§1.5 below
+2. **MQTT + dispatcher credentials** — needed for retail-N installs
+   (`install_retail_node.py`) and for re-pairing a restored node
+
+The MQTT credentials must match the values configured on the process
+node's Mosquitto broker. If you change the password on the broker,
+regenerate the USB.
+
+### Layout for credentials directory
+
+```
+/Volumes/<LABEL>/
+├── synthos_license.json              # signed license (existing)
+├── license_public.ed25519            # public key (existing)
+└── credentials/                      # NEW 2026-05-04
+    ├── mqtt_credentials.json         # MQTT_HOST/PORT/USER/PASS for retail nodes
+    ├── dispatch_credentials.json     # DISPATCH_AUTH_TOKEN (must match process)
+    └── nodes.json                    # IPs of process + retail-N + company
+```
+
+### mqtt_credentials.json template
+
+```json
+{
+  "MQTT_HOST": "10.0.0.11",
+  "MQTT_PORT": 1883,
+  "MQTT_USER": "synthos_broker",
+  "MQTT_PASS": "<paste from process node's user/.env>"
+}
+```
+
+### dispatch_credentials.json template
+
+```json
+{
+  "DISPATCH_AUTH_TOKEN": "<paste from process node's user/.env>"
+}
+```
+
+### nodes.json template
+
+```json
+{
+  "process":   {"ip": "10.0.0.11", "user": "pi516gb"},
+  "company":   {"ip": "10.0.0.10", "user": "pi"},
+  "retail-1":  {"ip": "10.0.0.20", "user": "pi516gb"},
+  "retail-2":  {"ip": "10.0.0.21", "user": "pi516gb"}
+}
+```
+
+The retail-N installer (`install_retail_node.py`) reads these files
+from the USB if mounted at `~/.synthos/credentials/` to skip the
+interactive prompts. Without USB, the installer prompts for each
+value at install time.
+
+---
+
 ## One-time setup (first Mac ever)
 
 Generate the Ed25519 keypair. **Do this exactly once, ever.** If you regenerate

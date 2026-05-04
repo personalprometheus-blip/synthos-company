@@ -108,6 +108,50 @@ sqlite3 ~/synthos/synthos_build/user/signals.db ".tables" | head
 Restart any running services (systemd timers, market_daemon, trade_daemon).
 Confirm pi5 is heartbeating to pi4b.
 
+### A7. Restore distributed-trader components (added 2026-05-04, Phase D)
+
+Backups are data-only. Source code added by the Tier 1-7 distributed-
+trader migration (work_packet, work_packet_db, mqtt_client, heartbeat,
+dispatch_mode, gate14_evaluator, async_alpaca_client, synthos_dispatcher,
+synthos_trader_server, synthos_migration) is recovered from git, not
+from the tarball.
+
+```bash
+# Pull latest source — gets every file added since the backup was taken
+cd ~/synthos
+git pull origin main
+
+# Make sure new pip deps are installed (paho-mqtt, httpx, fastapi, uvicorn
+# are all in install_retail.py's APT_DEPS — apt install -f if missing)
+sudo apt-get install -y python3-paho-mqtt python3-httpx python3-fastapi python3-uvicorn
+
+# Restore mosquitto config (NOT in backup tarballs)
+sudo cp ~/synthos/synthos_build/config/mosquitto/synthos.conf /etc/mosquitto/conf.d/synthos.conf
+
+# Regenerate the mosquitto password file from MQTT_PASS in user/.env
+MQTT_PASS=$(grep '^MQTT_PASS=' ~/synthos/synthos_build/user/.env | cut -d= -f2)
+sudo mosquitto_passwd -b -c /etc/mosquitto/passwd synthos_broker "$MQTT_PASS"
+sudo chown mosquitto:mosquitto /etc/mosquitto/passwd
+sudo chmod 600 /etc/mosquitto/passwd
+
+# Drop the new systemd units (per CUTOVER_RUNBOOK.md)
+sudo systemctl daemon-reload
+sudo systemctl enable --now mosquitto.service synthos-trader-server.service \
+                            synthos-dispatcher.service
+
+# Verify
+systemctl is-active mosquitto.service synthos-trader-server.service synthos-dispatcher.service
+curl -sf http://127.0.0.1:8443/readyz
+```
+
+Without these steps, the restored node trades correctly via the daemon
+path but cannot serve any customer migrated to distributed mode.
+
+If a customer was on `_DISPATCH_MODE=distributed` at the time of backup,
+their setting is preserved in their signals.db. After restore + the
+above steps, the dispatcher will pick them up on the next cycle without
+operator intervention.
+
 ---
 
 ## B. Restore company node (pi4b) when pi5 is alive

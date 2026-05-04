@@ -707,7 +707,7 @@
 const M = {
   nodes: [
     { id:'pi4b', label:'pi4b', role:'Company Server · Pi 4B 8GB · 10.0.0.10', x:40, y:260, w:720, h:840 },
-    { id:'pi5',  label:'pi5 (retail_node)', role:'Trading Stack · Pi 5 16GB · 10.0.0.11', x:840, y:260, w:720, h:840 },
+    { id:'pi5',  label:'pi5 (retail_node + process hub)', role:'Trading Stack · Pi 5 16GB · 10.0.0.11', x:840, y:260, w:780, h:920 },
     { id:'pi2w_monitor',  label:'pi2w_monitor',  role:'External Watchdog · Pi Zero 2W · 10.0.0.121', x:40, y:40, w:300, h:200 },
     { id:'pi2w_sentinel', label:'pi2w_sentinel', role:'Display Node · Pi Zero 2W · 10.0.0.87',      x:1260, y:40, w:300, h:200 },
   ],
@@ -770,6 +770,7 @@ const M = {
     { id:'company_librarian',node:'pi4b', label:'company_librarian',desc:'SSH package audit + CVE scan. Cron Sun.', x:80,  y:590, w:160, h:40 },
     { id:'company_strongbox',node:'pi4b', label:'company_strongbox',desc:'Fernet-encrypt + Cloudflare R2 upload. Cron 2am.', x:260, y:590, w:150, h:40 },
     { id:'pi4b_heartbeat',   node:'pi4b', label:'node_heartbeat',   desc:'pi4b self metrics → monitor.db. Cron 5m.', x:430, y:590, w:160, h:40 },
+    { id:'mqtt_listener',    node:'pi4b', label:'mqtt_listener',    desc:'NEW 2026-05-04 (Tier 4). Subscribes to pi5 broker (process/heartbeat/+/+, process/regime, process/prices/+). Records every observation to auditor.db.mqtt_observations. Logs minute summaries + stale-heartbeat alerts. Systemd.', x:80,  y:650, w:160, h:40, patch:true },
 
     // pi5 agents
     { id:'retail_portal',    node:'pi5', label:'retail_portal',        desc:'Customer dashboard + API. AUTO/USER, halt endpoints, approval queue, support submit. Watchdog.', x:880, y:470, w:170, h:40, patch:true },
@@ -789,6 +790,12 @@ const M = {
     { id:'pi5_heartbeat',    node:'pi5', label:'node_heartbeat',       desc:'pi5 self metrics → pi4b monitor. Cron 1m.', x:1250, y:650, w:140, h:40 },
     { id:'rotate_logs',      node:'pi5', label:'rotate_logs',          desc:'Weekly rotation + 30-day archive cleanup. Cron Sun.', x:1400, y:650, w:160, h:40 },
     { id:'boot_sequence',    node:'pi5', label:'retail_boot_sequence', desc:'Network wait + integrity check on startup. @reboot.', x:880, y:710, w:170, h:40 },
+
+    // Tier 4-7 distributed-trader components (added 2026-05-04)
+    { id:'mosquitto',        node:'pi5', label:'mosquitto',             desc:'NEW 2026-05-04 (Tier 4). MQTT broker on 0.0.0.0:1883, password-auth, retained messages, autosave 30s. Telemetry plane: process/heartbeat/<node>/<agent>, process/regime, process/prices/<ticker>. Systemd.', x:880,  y:770, w:160, h:40, patch:true },
+    { id:'dispatcher',       node:'pi5', label:'synthos_dispatcher',    desc:'NEW 2026-05-04 (Tier 5/7). Process-node orchestrator. Builds WorkPacket per distributed-mode customer, pre-fetches Alpaca quotes batched, POSTs to retail trader_server (8 in flight), applies returned StateDelta single-writer, runs gate14 dispatcher-side. No-op if no customer is on distributed mode.', x:1060, y:770, w:180, h:40, patch:true },
+    { id:'trader_server',    node:'pi5', label:'synthos_trader_server', desc:'NEW 2026-05-04 (Tier 5/6). FastAPI HTTP server on :8443. Endpoints: /healthz /readyz /version /work. Each /work runs trader in asyncio.to_thread for cross-customer parallelism (~5x speedup measured). Auth via X-Dispatch-Token. Currently loopback target; future runs on dedicated retail-N nodes.', x:1260, y:770, w:180, h:40, patch:true },
+    { id:'migration_cli',    node:'pi5', label:'synthos_migration',     desc:'NEW 2026-05-04 (Tier 7). CLI for per-customer dispatch-mode migration. Subcommands: status, enable <cid>, disable <cid>, reset <cid>, enable-all/disable-all (--confirm). All operations write DISPATCH_MODE_CHANGE audit row to customer events table. See docs/CUTOVER_RUNBOOK.md.', x:1460, y:770, w:160, h:40, patch:true },
 
     // pi2w_monitor
     { id:'mon_heartbeat', node:'pi2w_monitor', label:'node_heartbeat', desc:'pi2w_monitor metrics → pi4b. Cron 1m.', x:60,  y:110, w:130, h:34 },
@@ -1128,8 +1135,12 @@ const M = {
     { time:'every 1m', seq:'heartbeat', label:'node_heartbeat (pi5, pi2w_monitor)', kind:'monitoring' },
     { time:'every 5m', seq:'heartbeat', label:'node_heartbeat (pi4b, pi2w_sentinel)', kind:'monitoring' },
     { time:'every 15m', seq:'heartbeat', label:'company_sentinel scan (stale heartbeats)', kind:'monitoring' },
-    { time:'every 60s', seq:'price_poll', label:'price_poller (during 8a-6p ET)', kind:'trading' },
+    { time:'every 60s', seq:'price_poll', label:'price_poller (during 8a-6p ET) — dual-write SQLite + MQTT', kind:'trading', patch:true },
     { time:'every 10m', seq:'daemon_run', label:'Reconciliation cycle (during daemon run)', kind:'trading' },
+    // Tier 4-7 distributed-trader periodic events (added 2026-05-04)
+    { time:'every 30s', seq:'mqtt_heartbeat', label:'MQTT heartbeats — long-running agents pulse to process/heartbeat/<node>/<agent>', kind:'monitoring', patch:true },
+    { time:'every 30s', seq:'dispatcher_cycle', label:'synthos_dispatcher cycle (filters distributed-mode customers, fans HTTP work packets to trader_server, applies deltas)', kind:'trading', patch:true },
+    { time:'every 60s', seq:'mqtt_listener_summary', label:'mqtt_listener summary (pi4b) — minute-window topic counts + stale-heartbeat warnings', kind:'monitoring', patch:true },
   ],
 };
 
@@ -2095,8 +2106,35 @@ const PIPELINE = {
       {n:'G5',name:'FINAL VERDICT',desc:'Weighted aggregate → GO / CAUTION / NO_GO. Persisted as VALIDATOR_NO_GO_<short_id> for per-customer dedup.',verdict:true},
     ],
   },
+  // 2026-05-04 — Tier 5-7 distributed-trader path. Daemon mode (default)
+  // skips this entirely; the trader subprocess runs in-process per customer
+  // as today. Distributed mode (per-customer flag _DISPATCH_MODE=distributed)
+  // routes through dispatcher + trader_server below; trader gates G0-G14
+  // still execute, but inside the HTTP server's thread pool against
+  // pre-loaded work-packet state instead of inline DB reads.
+  dispatcher: {
+    id:'dispatcher', num:'AGENT 11', name:'Distributed Dispatcher', sub:'6 stages · process node · 30s cycle · only fires for distributed-mode customers',
+    gates:[
+      {n:'D1',name:'Mode filter',patch:true,desc:'dispatch_mode.filter_customers_by_mode(active, "distributed") — drops customers still on daemon path. No-op if every customer is daemon mode.'},
+      {n:'D2',name:'Build packet',patch:true,desc:'For each distributed customer: load portfolio + positions + cooling_off + recent_outcomes from per-customer signals.db; load validated signals from shared signals.db; load market context (regime, market_state). Stamps creds + operating_mode + trading_mode from auth.db.'},
+      {n:'D3',name:'Prefetch quotes',patch:true,desc:'Collects every ticker across all customers\' signals + positions into one set, calls Alpaca multi-symbol quotes/latest endpoint ONCE per cycle (chunked at 50). Per-customer quote subset stamped into each WorkPacket.quotes field. Eliminates ~50-150ms per ticker per customer of Alpaca read latency from trader hot path.', sources:['Alpaca']},
+      {n:'D4',name:'POST /work',patch:true,desc:'ThreadPoolExecutor fans 8 concurrent HTTP POSTs (DISPATCH_MAX_PARALLEL) to RETAIL_URL/work. requests.Session keepalive — no TLS handshake per call. Per-customer keys = independent rate limits, concurrency essentially free.'},
+      {n:'D5',name:'Apply delta',patch:true,desc:'Single-writer delta application to master DBs. Drains delta.acknowledged_signal_ids → flips signals VALIDATED→ACTED_ON in shared DB. Writes log_events to per-customer DB. Position/cash deltas applied atomically.'},
+      {n:'D6',name:'Gate 14 (dispatcher-side)',patch:true,desc:'gate14_evaluator.evaluate_strategy_kill called with master-DB outcomes + portfolio. Was inside trader (DB I/O); moved here so trader stays stateless. If kill condition met, writes STRATEGY_KILL_CONDITION event to customer DB.'},
+    ],
+  },
+  trader_server: {
+    id:'trader_server', num:'AGENT 12', name:'Retail Trader Server', sub:'5 stages · FastAPI :8443 · async + to_thread per request',
+    gates:[
+      {n:'S1',name:'Auth',patch:true,desc:'X-Dispatch-Token header must match DISPATCH_AUTH_TOKEN env var. Empty token = open (dev only). 401 on mismatch.'},
+      {n:'S2',name:'Schema handshake',patch:true,desc:'Refuses packets whose schema_version major differs from server. Returns 200 with error in body (not 5xx) so dispatcher can log + advance without silent partial state.'},
+      {n:'S3',name:'asyncio.to_thread',patch:true,desc:'Trader code stays sync; each /work request runs in a thread so 5+ concurrent customers process in parallel on one event loop. Measured 4.9x speedup on 5 concurrent POSTs (94ms vs 461ms serial).'},
+      {n:'S4',name:'Drain accumulators',patch:true,desc:'After trader returns: collect _PENDING_ACKS, _GATE_TIMINGS_MS, position deltas, log events, trade outcomes for gate14. Build WorkResult.delta from these.'},
+      {n:'S5',name:'Return WorkResult',patch:true,desc:'JSON-encode delta + actions + alpaca_reconciliation + gate_timings_ms + wall_clock_ms. Dispatcher applies delta single-writer.'},
+    ],
+  },
   trader: {
-    id:'trade', num:'AGENT 1', name:'Trade Logic', sub:'13 gates · parallelism=3 customers',
+    id:'trade', num:'AGENT 1', name:'Trade Logic', sub:'13 gates · daemon=parallelism 3 / distributed=async to_thread',
     gates:[
       {n:'G0',name:'Account health',desc:'Alpaca status OK; equity reconciliation; orphan / ghost adoption pre-loop.', sources:['Alpaca']},
       {n:'G1',name:'System gate',patch:true,desc:'4-layer halt check: admin halt → legacy kill_switch → customer halt → last_good. sys.exit(0) on any halt. Validator CAUTION proceeds with restrictions; NO_GO blocks.'},
@@ -2126,6 +2164,13 @@ const REJECT_SCENARIOS = {
     fail:{gate:'Trade Gate 7', value:'cash_available=$1,200 after manual positions', threshold:'Model C floor $2,500', reason:'Manual positions eat cash — INSUFFICIENT_CASH_AFTER_MANUAL skip reason logged.'} },
   trade_g12_sticky: { label:'Trade G12 · sticky USER', phase:'trader', failAt:12,
     fail:{gate:'Trade Gate 12', value:'position_preferences[TSLA].sticky=user', threshold:'any sticky=user blocks', reason:'Customer marked TSLA as USER-managed — bot skips all signals for this ticker.'} },
+  // Tier 5-7 distributed-mode failure scenarios (added 2026-05-04)
+  dispatch_unreachable: { label:'Dispatch · trader_server unreachable', phase:'trader', failAt:0,
+    fail:{gate:'synthos_dispatcher → /work POST', value:'connection refused on http://10.0.0.20:8443', threshold:'TCP connect within 5s', reason:'Retail trader_server down — customer skipped this cycle, signals stay VALIDATED, dispatcher retries next cycle (idempotent).'} },
+  dispatch_schema_mismatch: { label:'Dispatch · work_packet schema mismatch', phase:'trader', failAt:0,
+    fail:{gate:'trader_server /work handshake', value:'incoming schema_version=2.0.0, server=1.0.0', threshold:'major version must match', reason:'Dispatcher and retail node deployed at different versions — server returns 200 with error in body, dispatcher logs and skips. No silent partial trades.'} },
+  dispatch_skip_daemon_mode: { label:'Dispatch · customer is daemon-mode (skipped)', phase:'trader', failAt:0,
+    fail:{gate:'dispatch_mode.resolve_customer_dispatch_mode', value:'_DISPATCH_MODE=daemon (per-customer setting)', threshold:'must be "distributed" for dispatcher to own this customer', reason:'This customer is intentionally on the legacy daemon path — dispatcher filters them out, market_daemon trades them. Use `synthos_migration.py enable <cid>` to flip.'} },
 };
 
 const SAMPLE_SIGNAL = { ticker:'AAPL', event:'earnings beat · Q1 guide raised', score:'—' };
@@ -2237,6 +2282,14 @@ function renderPipeline() {
           <div class="pipe-output-label">OUTCOME</div>
           <div id="pipe-output-detail" style="font-size:10.5px; color:var(--muted); margin-top:6px; letter-spacing:0.04em">awaiting signal…</div>
         </div>
+        <!-- 2026-05-04: Tier 5-7 distributed-trader path. Wraps the trader
+             in HTTP work-packet exchange. Daemon-mode customers skip this
+             entirely; distributed-mode customers go dispatcher → /work →
+             trader (in to_thread) → return delta → apply single-writer. -->
+        <div class="pipe-col-label" style="margin-top:24px;color:#ffb347">DISTRIBUTED EXECUTION · Tier 5-7 · per-customer toggle</div>
+        ${agentCard(PIPELINE.dispatcher, 'patch-bar')}
+        <div class="pipe-arrow"></div>
+        ${agentCard(PIPELINE.trader_server, 'patch-bar')}
       </div>
     </div>
     <div class="pipe-signal-card" id="pipe-signal">
@@ -2363,6 +2416,9 @@ function pipeFindAgent(aid) {
   if (PIPELINE.screener && PIPELINE.screener.id === aid) return PIPELINE.screener;
   if (PIPELINE.trader   && PIPELINE.trader.id   === aid) return PIPELINE.trader;
   if (PIPELINE.validator_final && PIPELINE.validator_final.id === aid) return PIPELINE.validator_final;
+  // 2026-05-04 — Tier 5-7 distributed-trader cards
+  if (PIPELINE.dispatcher    && PIPELINE.dispatcher.id    === aid) return PIPELINE.dispatcher;
+  if (PIPELINE.trader_server && PIPELINE.trader_server.id === aid) return PIPELINE.trader_server;
   for (const a of (PIPELINE.ingest||[]))     if (a.id === aid) return a;
   for (const a of (PIPELINE.validators||[])) if (a.id === aid) return a;
   return null;

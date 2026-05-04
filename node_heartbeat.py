@@ -50,6 +50,12 @@ MONITOR_URL   = os.getenv("MONITOR_URL",   "").rstrip("/")
 MONITOR_TOKEN = os.getenv("MONITOR_TOKEN", "")
 PI_ID         = os.getenv("PI_ID",         "pi4b-company")
 PI_LABEL      = os.getenv("PI_LABEL",      "pi4b Company Node")
+# Trading-mode fields are only meaningful on trading nodes (retail-N, pi5).
+# Non-trading nodes (company, monitor) leave these unset so monitor uses its
+# defaults instead of misleading hardcoded values like "SUPERVISED".
+OPERATING_MODE = os.getenv("OPERATING_MODE", "")
+TRADING_MODE   = os.getenv("TRADING_MODE",   "")
+KILL_SWITCH    = os.getenv("KILL_SWITCH",    "").lower() in ("1", "true", "yes")
 
 if not MONITOR_URL:
     print("[HB] MONITOR_URL not set — heartbeat skipped", flush=True)
@@ -140,14 +146,17 @@ def main():
     agents  = _detect_agents()
 
     payload = {
-        "pi_id":          PI_ID,
-        "label":          PI_LABEL,
-        "agents":         agents,
-        "operating_mode": "SUPERVISED",
-        "trading_mode":   "PAPER",
-        "kill_switch":    False,
+        "pi_id":  PI_ID,
+        "label":  PI_LABEL,
+        "agents": agents,
         **metrics,
     }
+    if OPERATING_MODE:
+        payload["operating_mode"] = OPERATING_MODE
+    if TRADING_MODE:
+        payload["trading_mode"]   = TRADING_MODE
+    if os.getenv("KILL_SWITCH") is not None and os.getenv("KILL_SWITCH") != "":
+        payload["kill_switch"]    = KILL_SWITCH
 
     try:
         import requests

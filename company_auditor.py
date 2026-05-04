@@ -35,7 +35,6 @@ import logging
 import os
 import re
 import sqlite3
-import sys
 import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -79,6 +78,10 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH     = Path(os.getenv('AUDITOR_DB_PATH', str(DATA_DIR / 'auditor.db')))
 LOG_DIR     = _PROJECT_DIR / os.getenv('AUDITOR_LOG_DIR', 'logs')
 
+# Pi5 SSH user's HOME directory — every SSH-based pi5 path is rooted here.
+# Override with PI5_REMOTE_HOME if your retail node uses a different UNIX user.
+_PI5_REMOTE_HOME = os.getenv('PI5_REMOTE_HOME', '/home/pi516gb')
+_PI5_REPO_ROOT   = f'{_PI5_REMOTE_HOME}/synthos/synthos_build'
 
 
 # ── REMOTE NODES (SSH-based scanning) ─────────────────────────────────────
@@ -86,7 +89,7 @@ REMOTE_NODES = {
     'pi5': {
         'ssh_host': 'SentinelRetail',
         'label': 'Retail Node (pi5)',
-        'log_dir': '/home/pi516gb/synthos/synthos_build/logs',
+        'log_dir': f'{_PI5_REPO_ROOT}/logs',
         # Portal + watchdog are both systemd units — track them via services.
         # The prior 'processes' pgrep match broke when portal migrated to
         # gunicorn (process name is 'gunicorn retail_portal:app', no .py).
@@ -110,11 +113,6 @@ REMOTE_NODES = {
         # the node comes back — remove 'disabled' to re-enable.
         'disabled': True,
     },
-    # 'pi2w_sentinel' — removed 2026-04-17, confirmed disabled indefinitely
-    # 2026-04-20. Display is currently off (power source: was USB from main PC,
-    # needs relocation to a standalone power supply before returning to
-    # service). No ETA. Leaving it in the monitor generated constant
-    # PROCESS_DOWN noise. Restore this entry when the display comes back.
 }
 
 # ── ERROR PATTERNS ────────────────────────────────────────────────────────
@@ -787,7 +785,7 @@ def check_customer_db_health() -> list[dict]:
     # Run a single SSH command that checks all customers at once
 
 
-    ok, output = _ssh_run(host, "python3 /home/pi516gb/synthos/synthos_build/src/customer_health_check.py", timeout=30)
+    ok, output = _ssh_run(host, f"python3 {_PI5_REPO_ROOT}/src/customer_health_check.py", timeout=30)
     if not ok:
         issues.append({
             'source_file': 'customer_db::unreachable',

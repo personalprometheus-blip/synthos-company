@@ -56,13 +56,16 @@ ALERT_TO             = os.getenv("ALERT_TO", "you@example.com")
 # operators who set only one side don't get silent 401s.
 SECRET_TOKEN         = os.getenv("SECRET_TOKEN") or os.getenv("MONITOR_TOKEN", "")
 RETAIL_PORTAL_URL    = os.getenv("RETAIL_PORTAL_URL", "http://10.0.0.11:5000")
+# Pi5 SSH user's HOME directory — every SSH-based pi5 path is rooted here.
+# Override with PI5_REMOTE_HOME if your retail node uses a different UNIX user.
+_PI5_REMOTE_HOME     = os.getenv("PI5_REMOTE_HOME", "/home/pi516gb")
+_PI5_REPO_ROOT       = f"{_PI5_REMOTE_HOME}/synthos/synthos_build"
 PORT                 = int(os.getenv("PORT", 5050))
 CF_ADMIN_EMAIL = os.getenv("OPERATOR_EMAIL", "").lower().strip()
 ADMIN_EMAIL    = os.getenv("ADMIN_EMAIL", CF_ADMIN_EMAIL).lower().strip()
 ADMIN_PW_HASH  = os.getenv("ADMIN_PASSWORD_HASH", "")
 app.secret_key = os.getenv("FLASK_SECRET_KEY", SECRET_TOKEN or __import__('os').urandom(24).hex())
 COMPANY_URL          = os.getenv("COMPANY_URL", "").rstrip("/")
-PORTAL_TOKEN         = os.getenv('PORTAL_TOKEN', '')
 SILENCE_WINDOW_HOURS = 4
 ALERT_START_HOUR     = 8
 ALERT_END_HOUR       = 20
@@ -77,20 +80,6 @@ REGISTRY_FILE = os.path.join(DATA_DIR, ".monitor_registry.json")
 # ── Company DB Path ──────────────────────────────────────────────────────────
 DB_PATH  = os.getenv("COMPANY_DB_PATH", os.path.join(DATA_DIR, "company.db"))
 LOG_DIR  = os.path.join(_HERE, "logs")   # synthos-company/logs/
-
-# ── Sentinel Display Bridge ───────────────────────────────────────────────────
-SENTINEL_URL   = os.getenv("SENTINEL_URL", "").rstrip("/")
-SENTINEL_TOKEN = os.getenv("SENTINEL_TOKEN", "")
-
-_display_bridge = None
-try:
-    import sentinel_bridge as _display_bridge
-    _display_bridge.start_watcher()  # Start drop folder monitor
-except ImportError:
-    pass  # sentinel_bridge.py not present — display features disabled
-
-DISPLAY_DROP_DIR = os.path.join(os.path.dirname(_HERE), "data", "display_uploads")
-os.makedirs(DISPLAY_DROP_DIR, exist_ok=True)
 
 
 # ── Company Database ──────────────────────────────────────────────────────────
@@ -912,115 +901,6 @@ def cmd_pending():
 
 
 
-# ── Command Center — Manual Agent Triggers ────────────────────────────────────
-import subprocess as _sp
-
-_AGENT_DIR = "/home/pi516gb/synthos/synthos_build/agents"
-_SRC_DIR   = "/home/pi516gb/synthos/synthos_build/src"
-_LOG_FILE  = "/home/pi516gb/synthos/synthos_build/logs/manual_run.log"
-
-_COMMAND_WHITELIST = {
-    "news_overnight":  {"cmd": f"cd {_AGENT_DIR} && python3 retail_news_agent.py --session=overnight",
-                        "label": "News Agent (Overnight)"},
-    "news_market":     {"cmd": f"cd {_AGENT_DIR} && python3 retail_news_agent.py --session=open",
-                        "label": "News Agent (Market)"},
-    "sentiment":       {"cmd": f"cd {_AGENT_DIR} && python3 retail_market_sentiment_agent.py",
-                        "label": "Sentiment Agent"},
-    "trade":           {"cmd": f"cd {_SRC_DIR} && python3 retail_scheduler.py --session=trade",
-                        "label": "Trade Logic"},
-    "screener":        {"cmd": f"cd {_AGENT_DIR} && python3 retail_sector_screener.py",
-                        "label": "Sector Screener"},
-    "prep_session":    {"cmd": f"cd {_SRC_DIR} && python3 retail_scheduler.py --session=prep",
-                        "label": "Prep Session"},
-    "open_session":    {"cmd": f"cd {_SRC_DIR} && python3 retail_scheduler.py --session=open",
-                        "label": "Open Session"},
-    "midday_session":  {"cmd": f"cd {_SRC_DIR} && python3 retail_scheduler.py --session=midday",
-                        "label": "Midday Session"},
-    "close_session":   {"cmd": f"cd {_SRC_DIR} && python3 retail_scheduler.py --session=close",
-                        "label": "Close Session"},
-}
-
-
-@app.route("/api/command/run-agent", methods=["POST"])
-def cmd_run_agent():
-    """Fire-and-forget: launch a whitelisted agent on SentinelRetail via SSH."""
-    token = request.headers.get("X-Token", "")
-    if token != SECRET_TOKEN and not _authorized():
-        return jsonify({"error": "unauthorized"}), 401
-    data = request.get_json(silent=True) or {}
-    action = data.get("action", "")
-    if action not in _COMMAND_WHITELIST:
-        return jsonify({"error": f"unknown action: {action}",
-                        "allowed": list(_COMMAND_WHITELIST.keys())}), 400
-    entry = _COMMAND_WHITELIST[action]
-    ssh_cmd = f"nohup bash -c '{entry['cmd']}' >> {_LOG_FILE} 2>&1 &"
-    try:
-        _sp.Popen(
-            ["ssh", "-o", "ConnectTimeout=5", "SentinelRetail", ssh_cmd],
-            stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
-        )
-        return jsonify({"ok": True, "action": action,
-                        "message": f"{entry['label']} started"}), 200
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-
-
-@app.route("/api/command/wave-override", methods=["POST"])
-def cmd_wave_override():
-    """Push wave animation override to retail portal."""
-    token = request.headers.get("X-Token", "")
-    if token != SECRET_TOKEN and not _authorized():
-        return jsonify({"error": "unauthorized"}), 401
-    data = request.get_json(silent=True) or {}
-    override_json = json.dumps({
-        "override": data.get("override", False),
-        "color": data.get("color"),
-        "amplitude": data.get("amplitude"),
-        "speed": data.get("speed"),
-        "frequency": data.get("frequency"),
-        "direction": data.get("direction"),
-    })
-    import subprocess as _sp
-    try:
-        # Pipe JSON via stdin to avoid shell quote escaping
-        _sp.run(
-            ["ssh", "-o", "ConnectTimeout=5", "SentinelRetail",
-             "tee", "/home/pi516gb/synthos/synthos_build/.wave_override"],
-            input=override_json.encode(), capture_output=True, timeout=10,
-        )
-        return jsonify({"ok": True})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-
-@app.route("/api/command/agent-status", methods=["GET"])
-def cmd_agent_status():
-    """Return recent AGENT_START / AGENT_COMPLETE events from pi5."""
-    token = request.headers.get("X-Token", "")
-    if token != SECRET_TOKEN and not _authorized():
-        return jsonify({"error": "unauthorized"}), 401
-    try:
-        cid = "30eff008-c27a-4c71-a788-05f883e4e3a0"
-        db_path = f"/home/pi516gb/synthos/synthos_build/data/customers/{cid}/signals.db"
-        sql = (
-            "SELECT event, agent, timestamp FROM system_log "
-            "WHERE event IN ('AGENT_START','AGENT_COMPLETE') "
-            "ORDER BY timestamp DESC LIMIT 10"
-        )
-        result = _sp.run(
-            ["ssh", "-o", "ConnectTimeout=5", "SentinelRetail",
-             f"sqlite3 -json '{db_path}' \"{sql}\""],
-            capture_output=True, text=True, timeout=10,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            import json as _json
-            events = _json.loads(result.stdout)
-            return jsonify({"ok": True, "events": events}), 200
-        return jsonify({"ok": True, "events": []}), 200
-    except Exception as e:
-        return jsonify({"ok": True, "events": [], "error": str(e)}), 200
-
 # ── Admin Override API ────────────────────────────────────────────────────────
 @app.route("/api/admin-override", methods=["GET", "POST"])
 def api_admin_override():
@@ -1478,48 +1358,6 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 .hmenu-item{padding:8px 14px;border-radius:8px;font-size:12px;font-weight:500;color:var(--muted);text-decoration:none;transition:all .15s;letter-spacing:0.03em}
 .hmenu-item:hover{background:rgba(255,255,255,0.05);color:var(--text)}
 
-/* COMMAND PANEL */
-.cmd-trigger{padding:4px 10px;border-radius:99px;background:rgba(123,97,255,0.08);
-  border:1px solid rgba(123,97,255,0.25);color:#a78bfa;font-size:10px;font-weight:600;
-  cursor:pointer;font-family:var(--sans);letter-spacing:0.05em;transition:all .15s}
-.cmd-trigger:hover{background:rgba(123,97,255,0.15);border-color:rgba(123,97,255,0.4);color:#c4b5fd}
-.cmd-overlay{position:fixed;top:0;right:0;bottom:0;left:0;background:rgba(0,0,0,0.4);
-  z-index:500;opacity:0;pointer-events:none;transition:opacity .2s}
-.cmd-overlay.open{opacity:1;pointer-events:all}
-.cc-slideout{position:fixed;top:0;right:0;bottom:0;width:320px;background:var(--surface);
-  border-left:1px solid var(--border2);z-index:501;
-  transform:translateX(100%);transition:transform .25s ease;
-  display:flex;flex-direction:column;overflow-y:auto}
-.cc-slideout.open{transform:translateX(0)}
-.cc-slideout-header{padding:16px 18px 12px;display:flex;align-items:center;gap:8px;
-  border-bottom:1px solid var(--border);flex-shrink:0}
-.cc-slideout-title{font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;
-  color:var(--text);flex:1}
-.cc-slideout-close{background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;
-  padding:4px 8px;border-radius:6px;transition:all .15s}
-.cc-slideout-close:hover{color:var(--text);background:rgba(255,255,255,0.05)}
-.cc-section{padding:14px 18px 8px}
-.cc-section-title{font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;
-  color:var(--muted);margin-bottom:10px}
-.cc-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.cc-btn{padding:10px 12px;border-radius:10px;border:1px solid var(--border);
-  background:var(--surface2);cursor:pointer;text-align:left;transition:all .15s;
-  font-family:var(--sans);display:flex;flex-direction:column;gap:3px}
-.cc-btn:hover{border-color:var(--border2);background:rgba(255,255,255,0.04)}
-.cc-btn:active{transform:scale(0.97)}
-.cc-btn-label{font-size:11px;font-weight:600;color:var(--text)}
-.cc-btn-sub{font-size:9px;color:var(--muted)}
-.cc-btn.running{border-color:rgba(123,97,255,0.3);background:rgba(123,97,255,0.06)}
-.cc-btn.running .cc-btn-label{color:#a78bfa}
-.cc-btn.full{grid-column:1/-1}
-.cc-status{padding:14px 18px;border-top:1px solid var(--border);flex-shrink:0}
-.cc-status-title{font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;
-  color:var(--muted);margin-bottom:8px}
-.cc-event{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:10px;font-family:var(--mono)}
-.cc-event-time{color:var(--dim);min-width:42px}
-.cc-event-icon{font-size:10px}
-.cc-event-name{color:var(--muted);flex:1}
-
 .bell-wrap{position:relative;cursor:pointer}
 .bell-btn{background:none;border:1px solid var(--border);border-radius:8px;padding:4px 8px;cursor:pointer;font-size:16px;line-height:1;transition:all .15s;color:var(--muted)}
 .bell-btn:hover{border-color:var(--border2);color:var(--text)}
@@ -1630,7 +1468,6 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
         <a href="/maintenance" class="hmenu-item">Maintenance</a>
         <a href="/project-status" class="hmenu-item">Project Status</a>
         <a href="/system-architecture" class="hmenu-item">System Architecture</a>
-        <a href="/display" class="hmenu-item">Sentinel Display</a>
         <a href="/audit" class="hmenu-item">Auditor</a>
         <a href="/logs" class="hmenu-item">Logs</a>
         <a href="/support-queue" class="hmenu-item">Customer Support</a>
@@ -1647,56 +1484,6 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
   </div>
 </header>
 
-
-<!-- COMMAND PANEL -->
-<div class="cc-overlay" id="cc-overlay" onclick="closeCmdPanel()"></div>
-<div class="cc-slideout" id="cc-slideout">
-  <div class="cc-slideout-header">
-    <div class="cc-slideout-title">Command Center</div>
-    <button class="cc-slideout-close" onclick="closeCmdPanel()">&#x2715;</button>
-  </div>
-  <div class="cc-section">
-    <div class="cc-section-title">Agents</div>
-    <div class="cc-grid">
-      <button class="cc-btn" data-action="news_overnight" onclick="runCommand(this)">
-        <span class="cc-btn-label">News</span><span class="cc-btn-sub">Overnight scan</span>
-      </button>
-      <button class="cc-btn" data-action="news_market" onclick="runCommand(this)">
-        <span class="cc-btn-label">News</span><span class="cc-btn-sub">Market hours</span>
-      </button>
-      <button class="cc-btn" data-action="sentiment" onclick="runCommand(this)">
-        <span class="cc-btn-label">Sentiment</span><span class="cc-btn-sub">The Pulse</span>
-      </button>
-      <button class="cc-btn" data-action="screener" onclick="runCommand(this)">
-        <span class="cc-btn-label">Screener</span><span class="cc-btn-sub">Sector scan</span>
-      </button>
-      <button class="cc-btn full" data-action="trade" onclick="runCommand(this)">
-        <span class="cc-btn-label">Trade Logic</span><span class="cc-btn-sub">Run trade evaluation for all customers</span>
-      </button>
-    </div>
-  </div>
-  <div class="cc-section">
-    <div class="cc-section-title">Sessions</div>
-    <div class="cc-grid">
-      <button class="cc-btn" data-action="prep_session" onclick="runCommand(this)">
-        <span class="cc-btn-label">Prep</span><span class="cc-btn-sub">Screener + News + Sentiment</span>
-      </button>
-      <button class="cc-btn" data-action="open_session" onclick="runCommand(this)">
-        <span class="cc-btn-label">Open</span><span class="cc-btn-sub">Full market open</span>
-      </button>
-      <button class="cc-btn" data-action="midday_session" onclick="runCommand(this)">
-        <span class="cc-btn-label">Midday</span><span class="cc-btn-sub">Sentiment + Trade</span>
-      </button>
-      <button class="cc-btn" data-action="close_session" onclick="runCommand(this)">
-        <span class="cc-btn-label">Close</span><span class="cc-btn-sub">End-of-day wrap</span>
-      </button>
-    </div>
-  </div>
-  <div class="cc-status" id="cc-status">
-    <div class="cc-status-title">Recent Activity</div>
-    <div id="cc-events" style="color:var(--dim);font-size:10px">Loading...</div>
-  </div>
-</div>
 
   <!-- MARKET ACTIVITY CHART — today's trading session, 10-min bins -->
   <div class="mkt-section">
@@ -1750,8 +1537,6 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
   </div>
   <div class="mon-tabs">
     <button class="mon-tab active" id="mon-tab-notif" onclick="switchMonTab('notif')">Notifications</button>
-    <button class="mon-tab" id="mon-tab-cmd" onclick="switchMonTab('cmd')">Commands</button>
-    <button class="mon-tab" id="mon-tab-wave" onclick="switchMonTab('wave')">Wave</button>
   </div>
   <div class="mon-tab-body" id="mon-tab-content"></div>
 </div>
@@ -2888,10 +2673,7 @@ function confirmCmd(type, value, msg) {
 }
 
 async function sendGlobalCmd(type, value) {
-  const statusEl = document.getElementById('cc-status');
   try {
-    statusEl.textContent = 'sending...';
-    statusEl.style.color = 'var(--amber)';
     const body = type === 'kill-switch' ? {active: value} : {mode: value};
     const r = await fetch('/api/command/' + type, {
       method: 'POST',
@@ -2901,19 +2683,12 @@ async function sendGlobalCmd(type, value) {
     if (r.ok) {
       const d = await r.json();
       toast('\u2713 ' + type + ' \u2192 ' + value + ' queued for ' + (d.queued_for||[]).length + ' nodes', 'ok');
-      statusEl.textContent = 'queued';
-      statusEl.style.color = 'var(--teal)';
     } else {
       toast('Command failed: HTTP ' + r.status, 'err');
-      statusEl.textContent = 'failed';
-      statusEl.style.color = 'var(--pink)';
     }
   } catch(e) {
     toast('Command error: ' + e.message, 'err');
-    statusEl.textContent = 'error';
-    statusEl.style.color = 'var(--pink)';
   }
-  setTimeout(() => { statusEl.textContent = ''; }, 5000);
 }
 
 function updateCommandState(pis) {
@@ -3182,83 +2957,6 @@ let countdown = 10;
 function tickCountdown() {
   countdown--;
   if (countdown <= 0) { countdown = 10; fetchStatus(); }
-}
-
-
-// ── COMMAND PANEL ──
-function toggleCmdPanel() {
-  var p = document.getElementById('cc-slideout');
-  var o = document.getElementById('cc-overlay');
-  var isOpen = p.classList.contains('open');
-  if (isOpen) { closeCmdPanel(); }
-  else { p.classList.add('open'); o.classList.add('open'); loadCmdStatus(); }
-}
-function closeCmdPanel() {
-  document.getElementById('cc-slideout').classList.remove('open');
-  document.getElementById('cc-overlay').classList.remove('open');
-  if (window._cmdInterval) { clearInterval(window._cmdInterval); window._cmdInterval = null; }
-}
-async function runCommand(btn) {
-  var action = btn.dataset.action;
-  btn.classList.add('running');
-  var origLabel = btn.querySelector('.cc-btn-label').textContent;
-  btn.querySelector('.cc-btn-label').textContent = 'Starting...';
-  try {
-    var r = await fetch('/api/command/run-agent', {
-      method: 'POST',
-      headers: {'X-Token': SECRET_TOKEN, 'Content-Type': 'application/json'},
-      body: JSON.stringify({action: action})
-    });
-    var d = await r.json();
-    if (d.ok) {
-      toast(d.message, 'ok');
-      btn.querySelector('.cc-btn-label').textContent = 'Running...';
-      setTimeout(function() {
-        btn.classList.remove('running');
-        btn.querySelector('.cc-btn-label').textContent = origLabel;
-      }, 15000);
-    } else {
-      toast(d.error || 'Command failed', 'err');
-      btn.classList.remove('running');
-      btn.querySelector('.cc-btn-label').textContent = origLabel;
-    }
-  } catch(e) {
-    toast('Could not reach server', 'err');
-    btn.classList.remove('running');
-    btn.querySelector('.cc-btn-label').textContent = origLabel;
-  }
-  // Refresh status after short delay
-  setTimeout(loadCmdStatus, 3000);
-  // Start auto-refresh while panel is open
-  if (!window._cmdInterval) {
-    window._cmdInterval = setInterval(loadCmdStatus, 10000);
-  }
-}
-async function loadCmdStatus() {
-  try {
-    var r = await fetch('/api/command/agent-status', {
-      headers: {'X-Token': SECRET_TOKEN}
-    });
-    var d = await r.json();
-    var el = document.getElementById('cc-events');
-    if (!d.events || !d.events.length) {
-      el.innerHTML = '<div style="color:var(--dim);font-size:10px;padding:4px 0">No recent activity</div>';
-      return;
-    }
-    el.innerHTML = d.events.map(function(ev) {
-      var time = (ev.timestamp || '').slice(11, 16);
-      var isComplete = ev.event === 'AGENT_COMPLETE';
-      var icon = isComplete ? '<span style="color:var(--teal)">&#x2713;</span>' : '<span style="color:var(--amber)">&#x25B6;</span>';
-      var label = (isComplete ? '' : '') + (ev.agent || 'Agent') + (isComplete ? ' complete' : ' started');
-      return '<div class="cmd-event">'
-        + '<span class="cmd-event-time">' + time + '</span>'
-        + '<span class="cmd-event-icon">' + icon + '</span>'
-        + '<span class="cmd-event-name">' + label + '</span>'
-        + '</div>';
-    }).join('');
-  } catch(e) {
-    document.getElementById('cc-events').innerHTML = '<div style="color:var(--pink);font-size:10px">Status unavailable</div>';
-  }
 }
 
 
@@ -3615,7 +3313,7 @@ function updateMktSummary() {
 var _monPanelOpen=false, _monTab='notif';
 function toggleMonPanel(){_monPanelOpen=!_monPanelOpen;document.getElementById('mon-panel').classList.toggle('open',_monPanelOpen);document.getElementById('mon-overlay').classList.toggle('open',_monPanelOpen);if(_monPanelOpen){switchMonTab(_monTab);_updateBellBadge();}}
 function closeMonPanel(){_monPanelOpen=false;document.getElementById('mon-panel').classList.remove('open');document.getElementById('mon-overlay').classList.remove('open');}
-function switchMonTab(tab){_monTab=tab;document.querySelectorAll('.mon-tab').forEach(function(t){t.classList.remove('active');});document.getElementById('mon-tab-'+tab).classList.add('active');if(tab==='notif')loadMonNotifications();else if(tab==='cmd')loadMonCommands();else if(tab==='wave')loadWaveControls();}
+function switchMonTab(tab){_monTab=tab;document.querySelectorAll('.mon-tab').forEach(function(t){t.classList.remove('active');});document.getElementById('mon-tab-'+tab).classList.add('active');if(tab==='notif')loadMonNotifications();}
 async function loadMonNotifications(){
   var el = document.getElementById('mon-tab-content');
   el.innerHTML = '<div class="mon-empty">Loading...</div>';
@@ -3690,8 +3388,6 @@ async function loadMonNotifications(){
 
   el.innerHTML = html || '<div class="mon-empty">No notifications</div>';
 }
-function loadMonCommands(){var el=document.getElementById('mon-tab-content');function cb(a,l,s,f){return '<button data-action="'+a+'" onclick="runMonCmd(this)" style="padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--surface2);cursor:pointer;text-align:left;font-family:var(--sans);'+(f?'grid-column:1/-1;':'')+'" onmouseover="this.style.borderColor=&#39;rgba(255,255,255,0.15)&#39;" onmouseout="this.style.borderColor=&#39;var(--border)&#39;">'+'<div style="font-size:11px;font-weight:600;color:var(--text)">'+l+'</div><div style="font-size:9px;color:var(--muted)">'+s+'</div></button>';}el.innerHTML='<div style="margin-bottom:14px"><div style="font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Agents</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+cb('news_overnight','News','Overnight')+cb('news_market','News','Market')+cb('sentiment','Sentiment','The Pulse')+cb('screener','Screener','Sectors')+cb('trade','Trade Logic','All customers',true)+'</div></div><div><div style="font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Sessions</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+cb('prep_session','Prep','Full prep')+cb('open_session','Open','Market open')+cb('midday_session','Midday','Mid check')+cb('close_session','Close','End of day')+'</div></div>';}
-async function runMonCmd(btn){var action=btn.dataset.action;var orig=btn.querySelector('div').textContent;btn.querySelector('div').textContent='Starting...';btn.style.borderColor='rgba(123,97,255,0.3)';try{var r=await fetch('/api/command/run-agent',{method:'POST',headers:{'X-Token':SECRET_TOKEN,'Content-Type':'application/json'},body:JSON.stringify({action:action})});var d=await r.json();if(d.ok){toast(d.message,'ok');}else{toast(d.error||'Failed','err');}}catch(e){toast('Error','err');}setTimeout(function(){btn.querySelector('div').textContent=orig;btn.style.borderColor='var(--border)';},10000);}
 var _prevPendingSignups=-1;var _prevNewCustomers=-1;
 
 // 2026-04-28 — bell "Mark all as read" semantics. Operator note:
@@ -3802,44 +3498,6 @@ setTimeout(_updateBellBadge,2000);
 // ── INIT ──
 /* DBG */ try { document.getElementById('dbg-keys').textContent = 'INIT REACHED'; } catch(e){}
 
-function loadWaveControls(){
-  var el=document.getElementById('mon-tab-content');
-  el.innerHTML='<div style="margin-bottom:16px">'
-    +'<div style="font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:12px">Wave Override</div>'
-    +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">'
-    +'<label style="font-size:11px;color:var(--text);display:flex;align-items:center;gap:6px;cursor:pointer">'
-    +'<input type="checkbox" id="wave-override" onchange="toggleWaveOverride()"'+(window._waveOverride?' checked':'')+'>Override animation</label></div>'
-    +'<div style="font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Agent Color</div>'
-    +'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:16px">'
-    +'<button onclick="setWaveAgent(&#39;teal&#39;)" style="padding:8px;border-radius:8px;border:1px solid rgba(0,245,212,0.3);background:rgba(0,245,212,0.1);color:#00f5d4;font-size:10px;font-weight:700;cursor:pointer">Trade</button>'
-    +'<button onclick="setWaveAgent(&#39;purple&#39;)" style="padding:8px;border-radius:8px;border:1px solid rgba(123,97,255,0.3);background:rgba(123,97,255,0.1);color:#7b61ff;font-size:10px;font-weight:700;cursor:pointer">News</button>'
-    +'<button onclick="setWaveAgent(&#39;amber&#39;)" style="padding:8px;border-radius:8px;border:1px solid rgba(255,179,71,0.3);background:rgba(255,179,71,0.1);color:#ffb347;font-size:10px;font-weight:700;cursor:pointer">Sentiment</button>'
-    +'<button onclick="setWaveAgent(&#39;pink&#39;)" style="padding:8px;border-radius:8px;border:1px solid rgba(255,75,110,0.3);background:rgba(255,75,110,0.1);color:#ff4b6e;font-size:10px;font-weight:700;cursor:pointer">Screener</button>'
-    +'</div>'
-    +'<div style="font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Amplitude</div>'
-    +'<input type="range" id="wave-amp" min="5" max="40" value="'+(window._waveAmpOverride||30)+'" oninput="setWaveAmp(this.value)" style="width:100%;accent-color:var(--teal)">'
-    +'<div style="display:flex;justify-content:space-between;font-size:9px;color:var(--dim);margin-top:2px"><span>Idle</span><span id="wave-amp-val">'+(window._waveAmpOverride||30)+'</span><span>Max</span></div>'
-    +'<div style="font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-top:14px;margin-bottom:8px">Speed</div>'
-    +'<input type="range" id="wave-speed" min="3" max="30" value="'+(window._waveSpeedOverride||10)+'" oninput="setWaveSpeed(this.value)" style="width:100%;accent-color:var(--teal)">'
-    +'<div style="display:flex;justify-content:space-between;font-size:9px;color:var(--dim);margin-top:2px"><span>Slow</span><span id="wave-speed-val">'+(window._waveSpeedOverride||10)+'</span><span>Fast</span></div>'
-    +'<div style="font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-top:14px;margin-bottom:8px">Frequency</div>'
-    +'<input type="range" id="wave-freq" min="3" max="30" value="'+(window._waveFreqOverride||10)+'" oninput="setWaveFreq(this.value)" style="width:100%;accent-color:var(--teal)">'
-    +'<div style="display:flex;justify-content:space-between;font-size:9px;color:var(--dim);margin-top:2px"><span>Low</span><span id="wave-freq-val">'+(window._waveFreqOverride||10)+'</span><span>High</span></div>'
-    +'<div style="font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-top:14px;margin-bottom:8px">Direction</div>'
-    +'<div style="display:flex;gap:8px">'
-    +'<button onclick="setWaveDir(1)" style="flex:1;padding:8px;border-radius:8px;border:1px solid rgba(0,245,212,0.3);background:rgba(0,245,212,0.1);color:#00f5d4;font-size:10px;font-weight:700;cursor:pointer">&#x25B6; Forward</button>'
-    +'<button onclick="setWaveDir(-1)" style="flex:1;padding:8px;border-radius:8px;border:1px solid rgba(255,75,110,0.3);background:rgba(255,75,110,0.1);color:#ff4b6e;font-size:10px;font-weight:700;cursor:pointer">&#x25C0; Reverse</button>'
-    +'</div>'
-    +'</div>';
-}
-window._waveOverride=false;window._waveColorOverride=null;window._waveAmpOverride=null;window._waveSpeedOverride=10;window._waveFreqOverride=10;window._waveDirOverride=1;
-function toggleWaveOverride(){window._waveOverride=document.getElementById('wave-override').checked;if(!window._waveOverride){window._waveColorOverride=null;window._waveAmpOverride=null;}pushWaveOverride();}
-function setWaveAgent(color){window._waveColorOverride=color;window._waveOverride=true;var cb=document.getElementById('wave-override');if(cb)cb.checked=true;pushWaveOverride();toast('Wave: '+color,'ok');}
-function setWaveAmp(val){window._waveAmpOverride=parseInt(val);document.getElementById('wave-amp-val').textContent=val;pushWaveOverride();}
-function setWaveSpeed(val){window._waveSpeedOverride=parseInt(val);document.getElementById('wave-speed-val').textContent=val;pushWaveOverride();}
-function setWaveFreq(val){window._waveFreqOverride=parseInt(val);document.getElementById('wave-freq-val').textContent=val;pushWaveOverride();}
-function setWaveDir(d){window._waveDirOverride=d;window._waveOverride=true;var cb=document.getElementById('wave-override');if(cb)cb.checked=true;pushWaveOverride();loadWaveControls();}
-function pushWaveOverride(){fetch('/api/command/wave-override',{method:'POST',headers:{'X-Token':SECRET_TOKEN,'Content-Type':'application/json'},body:JSON.stringify({override:window._waveOverride,color:window._waveColorOverride,amplitude:window._waveAmpOverride,speed:window._waveSpeedOverride/10,frequency:window._waveFreqOverride/10,direction:window._waveDirOverride})}).catch(function(){});}
 
 // ── ADMIN OVERRIDES ──
 let admOverrides = {trading_gate:'ALL', operating_mode:'ALL'};
@@ -4464,7 +4122,7 @@ _LOG_SOURCES = {
     'boot':        {'node': 'pi5',  'file': 'boot.log',          'label': 'Boot Seq'},
     'pi5-hb':      {'node': 'pi5',  'file': 'heartbeat.log',     'label': 'Heartbeat'},
 }
-_PI5_LOG_DIR = '/home/pi516gb/synthos/synthos_build/logs'
+_PI5_LOG_DIR = f'{_PI5_REPO_ROOT}/logs'
 # Backward compat
 _COMPANY_LOG_FILES = {k: v['file'] for k, v in _LOG_SOURCES.items() if v['node'] == 'pi4b'}
 
@@ -4480,17 +4138,12 @@ _VALID_BACKUP_STREAMS = ("customer", "retail")
 @app.route("/receive_backup", methods=["POST"])
 def receive_backup():
     """
-    Accept a backup archive from a retail/process Pi and stage it for Strongbox.
+    Accept a v2 encrypted backup archive from a retail/process Pi and stage it
+    for Strongbox.
 
     Auth: X-Token header (same as /console).
-
-    v2 (preferred): pi_id + stream ∈ {customer, retail} + .enc archive (Fernet-encrypted by source Pi)
-        Staged at ~/.backup_staging/<stream>/<pi_id>/<filename>
-        Filename MUST end in .enc
-
-    v1 (legacy, accepted during transition): pi_id + .tar.gz archive (plaintext)
-        Staged at ~/.backup_staging/<pi_id>/<filename>
-        Strongbox encrypts before R2 upload.
+    Required fields: pi_id, stream ∈ {customer, retail}, archive (.enc, Fernet-encrypted by source Pi)
+    Staged at ~/.backup_staging/<stream>/<pi_id>/<filename>
     """
     if not _authorized():
         return jsonify({"error": "unauthorized"}), 401
@@ -4508,32 +4161,25 @@ def receive_backup():
         return jsonify({"error": "archive filename required"}), 400
 
     stream = (request.form.get("stream") or "").strip().lower()
+    if not stream:
+        return jsonify({"error": "stream field required (customer or retail)"}), 400
+    if stream not in _VALID_BACKUP_STREAMS:
+        return jsonify({"error": f"stream must be one of {_VALID_BACKUP_STREAMS}"}), 400
+    if not upload_name.endswith(".enc"):
+        return jsonify({"error": "archive must end in .enc"}), 400
 
-    if stream:
-        # v2 path
-        if stream not in _VALID_BACKUP_STREAMS:
-            return jsonify({"error": f"stream must be one of {_VALID_BACKUP_STREAMS}"}), 400
-        if not upload_name.endswith(".enc"):
-            return jsonify({"error": "v2 stream archive must end in .enc"}), 400
-        staging_dir = os.path.join(_STAGING_ROOT, stream, pi_id)
-        fname = upload_name
-    else:
-        # v1 legacy path
-        staging_dir = os.path.join(_STAGING_ROOT, pi_id)
-        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        fname = f"synthos_backup_{pi_id}_{date_str}.tar.gz"
-
+    staging_dir = os.path.join(_STAGING_ROOT, stream, pi_id)
+    fname = upload_name
     os.makedirs(staging_dir, exist_ok=True)
     fpath = os.path.join(staging_dir, fname)
     f.save(fpath)
 
     size_kb = os.path.getsize(fpath) / 1024
-    label = f"{stream}:{pi_id}" if stream else f"legacy:{pi_id}"
-    print(f"[Company] Staged backup: {fname} ({size_kb:.1f} KB) from {label}")
+    print(f"[Company] Staged backup: {fname} ({size_kb:.1f} KB) from {stream}:{pi_id}")
     return jsonify({
         "ok": True,
         "staged": fname,
-        "stream": stream or None,
+        "stream": stream,
         "size_kb": round(size_kb, 1),
     }), 200
 
@@ -4715,7 +4361,6 @@ def _subpage_header(page_name):
         '<a href="/maintenance">Maintenance</a>'
         '<a href="/project-status">Project Status</a>'
         '<a href="/system-architecture">System Architecture</a>'
-        '<a href="/display">Sentinel Display</a>'
         '<a href="/audit">Auditor</a>'
         '<a href="/logs">Logs</a>'
         '<a href="/approvals">Approvals</a>'
@@ -5838,647 +5483,6 @@ def api_project_status_refresh():
         "last_updated": data.get("meta", {}).get("last_updated"),
     }), 200
 
-
-# ── Sentinel Display Bridge ──────────────────────────────────────────────────
-_display_bridge = None
-try:
-    import sentinel_bridge as _display_bridge
-    _display_bridge.start_watcher()  # Start drop folder monitor
-except ImportError:
-    pass  # sentinel_bridge.py not present — display features disabled
-
-DISPLAY_DROP_DIR = os.path.join(os.path.dirname(_HERE), "data", "display_uploads")
-os.makedirs(DISPLAY_DROP_DIR, exist_ok=True)
-
-# ── Sentinel Display ──────────────────────────────────────────────────────────
-
-DISPLAY_HTML = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Sentinel Display — Synthos Company</title>
-<style>
-:root{--bg:#0e0f11;--card:#16181d;--border:#23262e;--text:#c9cdd5;--dim:#556;
---accent:#4fc3f7;--accent2:#81c784;--warn:#ffb74d;--err:#ef5350;--radius:10px;
---font:'SF Mono',ui-monospace,'Cascadia Code','Fira Code',monospace}
-*{margin:0;padding:0;box-sizing:border-box}
-body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:0.82rem;line-height:1.6;padding:1.5rem}
-a{color:var(--accent);text-decoration:none}
-h1{font-size:1.1rem;font-weight:600;margin-bottom:1rem;letter-spacing:0.03em}
-h2{font-size:0.88rem;font-weight:600;margin:1.5rem 0 0.5rem;letter-spacing:0.05em;text-transform:uppercase;color:var(--dim)}
-
-.topbar{display:flex;align-items:center;gap:1rem;margin-bottom:1.5rem;flex-wrap:wrap}
-.topbar a{font-size:0.72rem;letter-spacing:0.08em;color:var(--dim)}
-.topbar a:hover{color:var(--accent)}
-.topbar a.active{color:var(--accent);border-bottom:1px solid var(--accent)}
-
-.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:1rem;margin-bottom:1rem}
-.status-row{display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem}
-.status-pill{display:inline-flex;align-items:center;gap:0.4rem;padding:0.3rem 0.7rem;border-radius:20px;font-size:0.75rem;background:var(--bg);border:1px solid var(--border)}
-.dot{width:8px;height:8px;border-radius:50%;display:inline-block}
-.dot.green{background:#4caf50}.dot.red{background:#ef5350}.dot.yellow{background:#ffb74d}.dot.blue{background:var(--accent)}
-
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1rem}
-.scene-grid{display:flex;gap:0.5rem;flex-wrap:wrap}
-.scene-btn{padding:0.4rem 0.9rem;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);cursor:pointer;font-family:var(--font);font-size:0.78rem;transition:all 0.2s}
-.scene-btn:hover{border-color:var(--accent);color:var(--accent)}
-.scene-btn.active{background:var(--accent);color:var(--bg);border-color:var(--accent);font-weight:600}
-
-.theme-dots{display:flex;gap:0.6rem;align-items:center;margin-top:0.5rem}
-.theme-dot{width:28px;height:28px;border-radius:50%;cursor:pointer;border:2px solid var(--border);transition:all 0.2s}
-.theme-dot:hover{transform:scale(1.15)}.theme-dot.active{border-color:var(--accent);box-shadow:0 0 8px var(--accent)}
-
-.slider-row{display:flex;align-items:center;gap:0.8rem;margin:0.5rem 0}
-.slider-row label{min-width:60px;font-size:0.75rem;color:var(--dim)}
-.slider-row input[type=range]{flex:1;accent-color:var(--accent)}
-.slider-row .val{min-width:30px;text-align:right;font-size:0.78rem}
-
-.chip{display:inline-block;padding:0.25rem 0.6rem;border-radius:4px;border:1px solid var(--border);background:var(--bg);font-size:0.75rem;cursor:pointer;margin:0.2rem}
-.chip:hover{border-color:var(--accent)}.chip.active{background:var(--accent);color:var(--bg);border-color:var(--accent)}
-
-.dropzone{border:2px dashed var(--border);border-radius:var(--radius);padding:2rem;text-align:center;color:var(--dim);transition:all 0.3s;cursor:pointer;margin:0.5rem 0}
-.dropzone.dragover{border-color:var(--accent);background:rgba(79,195,247,0.05);color:var(--accent)}
-.dropzone input{display:none}
-
-.asset-table{width:100%;border-collapse:collapse;margin-top:0.5rem}
-.asset-table th,.asset-table td{text-align:left;padding:0.4rem 0.6rem;border-bottom:1px solid var(--border);font-size:0.78rem}
-.asset-table th{color:var(--dim);font-weight:500}
-
-.btn{padding:0.35rem 0.8rem;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);cursor:pointer;font-family:var(--font);font-size:0.75rem;transition:all 0.2s}
-.btn:hover{border-color:var(--accent);color:var(--accent)}
-.btn.danger{color:var(--err)}.btn.danger:hover{border-color:var(--err)}
-
-.log-box{background:#0a0b0d;border:1px solid var(--border);border-radius:6px;padding:0.8rem;max-height:200px;overflow-y:auto;font-size:0.72rem;line-height:1.5;white-space:pre-wrap;color:#8a8}
-.toast{position:fixed;bottom:1.5rem;right:1.5rem;padding:0.6rem 1.2rem;border-radius:8px;background:#1e1e1e;border:1px solid var(--border);color:var(--text);font-size:0.78rem;opacity:0;transition:opacity 0.3s;z-index:999;pointer-events:none}
-.toast.show{opacity:1}
-select{background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.3rem 0.5rem;font-family:var(--font);font-size:0.78rem}
-#wave-fullscreen{position:fixed;inset:0;z-index:500;background:#080b12;display:flex;flex-direction:column;align-items:center;justify-content:center;transform:rotate(0deg)}
-#wave-fullscreen canvas{width:100%;height:100%;display:block}
-#wave-label{position:absolute;bottom:20px;left:50%;transform:translateX(-50%);font-size:11px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;font-family:var(--font);pointer-events:none}
-#wave-exit{position:absolute;top:12px;right:12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:4px 12px;font-size:10px;color:rgba(255,255,255,0.3);cursor:pointer;font-family:var(--font);z-index:501}
-#wave-exit:hover{color:rgba(255,255,255,0.7);border-color:rgba(255,255,255,0.3)}
-.controls-wrap{transition:opacity 0.3s}
-</style>
-</head>
-<body>
-{{ subpage_hdr|safe }}
-
-
-<div id="wave-fullscreen">
-  <canvas id="sentinel-wave"></canvas>
-  <div id="wave-label" style="color:rgba(0,245,212,0.5)">MONITORING</div>
-  <button id="wave-exit" onclick="exitWaveMode()">EXIT WAVE</button>
-  <button id="wave-sleep-btn" onclick="_wvSleepOn=!_wvSleepOn;this.textContent=_wvSleepOn?'SLEEP 9PM-9AM: ON':'SLEEP: OFF';this.style.color=_wvSleepOn?'rgba(0,245,212,0.5)':'rgba(255,75,110,0.5)'" style="position:absolute;top:12px;right:130px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:4px 12px;font-size:10px;color:rgba(0,245,212,0.5);cursor:pointer;font-family:var(--font);z-index:501">SLEEP 9PM-9AM: ON</button>
-</div>
-
-<div class="controls-wrap" id="controls-wrap" style="display:none">
-<div style="margin-bottom:0.8rem"><button class="btn" onclick="enterWaveMode()" style="background:rgba(0,245,212,0.08);border-color:rgba(0,245,212,0.2);color:#4fc3f7">&#x25B6; Wave Mode</button></div>
-<h1>Sentinel Display Control</h1>
-
-<div class="status-row" id="statusRow">
-  <span class="status-pill"><span class="dot" id="connDot"></span><span id="connLabel">Checking…</span></span>
-  <span class="status-pill"><span class="dot" id="svcDot"></span><span id="svcLabel">Service: —</span></span>
-  <span class="status-pill"><span class="dot blue"></span><span id="sceneLabel">Scene: —</span></span>
-  <span class="status-pill"><span class="dot blue"></span><span id="themeLabel">Theme: —</span></span>
-</div>
-
-<div class="grid">
-  <!-- Scene Selector -->
-  <div class="card">
-    <h2>Active Scene</h2>
-    <div class="scene-grid" id="sceneGrid"></div>
-  </div>
-
-  <!-- Theme Selector -->
-  <div class="card">
-    <h2>Theme</h2>
-    <div class="theme-dots" id="themeDots"></div>
-  </div>
-
-  <!-- Brightness -->
-  <div class="card">
-    <h2>Brightness</h2>
-    <div class="slider-row">
-      <label>Day</label>
-      <input type="range" min="0" max="100" id="dayBri" oninput="deBri('day',this.value)">
-      <span class="val" id="dayBriVal">—</span>
-    </div>
-    <div class="slider-row">
-      <label>Night</label>
-      <input type="range" min="0" max="100" id="nightBri" oninput="deBri('night',this.value)">
-      <span class="val" id="nightBriVal">—</span>
-    </div>
-  </div>
-
-  <!-- Day/Night Mode -->
-  <div class="card">
-    <h2>Day / Night Mode</h2>
-    <div id="dnChips" style="margin-top:0.4rem"></div>
-  </div>
-
-  <!-- Animations -->
-  <div class="card">
-    <h2>Boot Animation</h2>
-    <div id="bootChips" style="margin-top:0.3rem"></div>
-    <h2>Idle Animation</h2>
-    <div id="idleChips" style="margin-top:0.3rem"></div>
-  </div>
-</div>
-
-<!-- Upload -->
-<div class="card" style="margin-top:0.5rem">
-  <h2>Upload Display Assets</h2>
-  <div style="display:flex;align-items:center;gap:0.8rem;margin-bottom:0.5rem">
-    <label style="font-size:0.75rem;color:var(--dim)">Category:</label>
-    <select id="uploadCat">
-      <option value="auto">Auto-detect</option>
-      <option value="boot">Boot</option>
-      <option value="idle">Idle</option>
-      <option value="informational">Informational</option>
-      <option value="theme">Theme</option>
-    </select>
-  </div>
-  <div class="dropzone" id="dropzone">
-    <div>Drop files here or <strong>click to browse</strong></div>
-    <div style="font-size:0.7rem;color:var(--dim);margin-top:0.3rem">PNG, JPG, BMP, GIF, JSON, PY — max 8 MB</div>
-    <input type="file" id="fileInput" multiple accept=".png,.jpg,.jpeg,.bmp,.gif,.json,.py">
-  </div>
-</div>
-
-<!-- Assets Table -->
-<div class="card">
-  <h2>Installed Assets</h2>
-  <table class="asset-table">
-    <thead><tr><th>File</th><th>Category</th><th>Size</th><th></th></tr></thead>
-    <tbody id="assetBody"><tr><td colspan="4" style="color:var(--dim)">Loading…</td></tr></tbody>
-  </table>
-</div>
-
-<!-- Service & Logs -->
-<div class="card">
-  <h2>Service</h2>
-  <div style="display:flex;gap:0.5rem;margin-bottom:0.8rem">
-    <button class="btn" onclick="svcAction('restart')">Restart Display</button>
-    <button class="btn" onclick="loadLogs()">Refresh Logs</button>
-  </div>
-  <div class="log-box" id="logBox">No logs loaded.</div>
-</div>
-
-<div class="toast" id="toast"></div>
-
-<script>
-const T='"""+"""{{TOKEN}}"""+"""';
-const H={headers:{'X-Token':T,'Content-Type':'application/json'}};
-let _briTimer=null;
-
-function toast(msg,err){const t=document.getElementById('toast');t.textContent=msg;t.style.borderColor=err?'var(--err)':'var(--accent)';t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2500)}
-
-async function api(path,opts){try{const r=await fetch(path,{...opts,headers:{...opts?.headers,'X-Token':T}});const j=await r.json();if(!r.ok)throw new Error(j.error||r.statusText);return j}catch(e){toast(e.message,true);throw e}}
-
-async function loadStatus(){
-  try{
-    const s=await api('/api/display/status');
-    document.getElementById('connDot').className='dot '+(s.display_detected?'green':'red');
-    document.getElementById('connLabel').textContent=s.display_detected?'Connected':'No Display';
-    document.getElementById('svcDot').className='dot '+(s.service_active?'green':'yellow');
-    document.getElementById('svcLabel').textContent='Service: '+(s.service_active?'Running':'Stopped');
-    document.getElementById('sceneLabel').textContent='Scene: '+(s.current_scene||'—');
-    document.getElementById('themeLabel').textContent='Theme: '+(s.config?.theme?.active||'—');
-
-    // Scenes
-    const scenes=['idle','boot','trade','news','weather','alert','settings'];
-    const sg=document.getElementById('sceneGrid');
-    sg.innerHTML=scenes.map(sc=>`<button class="scene-btn ${sc===s.current_scene?'active':''}" onclick="setScene('${sc}')">${sc}</button>`).join('');
-
-    // Themes
-    const colors={retro:'#00ff41',amber:'#ffb300',arctic:'#4fc3f7',ghost:'#e0e0e0'};
-    const td=document.getElementById('themeDots');
-    const active=s.config?.theme?.active||'retro';
-    td.innerHTML=Object.entries(colors).map(([n,c])=>`<div class="theme-dot ${n===active?'active':''}" style="background:${c}" title="${n}" onclick="setTheme('${n}')"></div>`).join('');
-
-    // Brightness
-    const dayB=s.config?.day_brightness??90, nightB=s.config?.night_brightness??40;
-    document.getElementById('dayBri').value=dayB;document.getElementById('dayBriVal').textContent=dayB;
-    document.getElementById('nightBri').value=nightB;document.getElementById('nightBriVal').textContent=nightB;
-
-    // Day/Night
-    const dnMode=s.config?.daynight_mode||'auto';
-    const dnEl=document.getElementById('dnChips');
-    dnEl.innerHTML=['auto','force_day','force_night'].map(m=>`<span class="chip ${m===dnMode?'active':''}" onclick="setDN('${m}')">${m.replace('_',' ')}</span>`).join('');
-
-    // Animations
-    const bootAnims=s.config?.animations?.available_boot||['retro_terminal'];
-    const idleAnims=s.config?.animations?.available_idle||['retro_matrix'];
-    const curBoot=s.config?.animations?.boot||'';
-    const curIdle=s.config?.animations?.idle||'';
-    document.getElementById('bootChips').innerHTML=bootAnims.map(a=>`<span class="chip ${a===curBoot?'active':''}" onclick="setAnim('boot','${a}')">${a}</span>`).join('');
-    document.getElementById('idleChips').innerHTML=idleAnims.map(a=>`<span class="chip ${a===curIdle?'active':''}" onclick="setAnim('idle','${a}')">${a}</span>`).join('');
-
-    // Assets
-    loadAssets();
-  }catch(e){
-    document.getElementById('connDot').className='dot red';
-    document.getElementById('connLabel').textContent='Error';
-  }
-}
-
-async function loadAssets(){
-  try{
-    const a=await api('/api/display/assets');
-    const tb=document.getElementById('assetBody');
-    if(!a.assets||!a.assets.length){tb.innerHTML='<tr><td colspan="4" style="color:var(--dim)">No assets installed</td></tr>';return}
-    tb.innerHTML=a.assets.map(f=>`<tr><td>${f.name}</td><td>${f.category}</td><td>${f.size_kb} KB</td><td><button class="btn danger" onclick="removeAsset('${f.name}')">Remove</button></td></tr>`).join('');
-  }catch(e){}
-}
-
-async function setScene(sc){await api('/api/display/scene',{method:'POST',body:JSON.stringify({scene:sc}),...H});toast('Scene → '+sc);loadStatus()}
-async function setTheme(th){await api('/api/display/theme',{method:'POST',body:JSON.stringify({theme:th}),...H});toast('Theme → '+th);loadStatus()}
-async function setDN(mode){await api('/api/display/daynight',{method:'POST',body:JSON.stringify({mode}),...H});toast('Day/Night → '+mode);loadStatus()}
-async function setAnim(kind,name){await api('/api/display/animation',{method:'POST',body:JSON.stringify({kind,name}),...H});toast(kind+' → '+name);loadStatus()}
-
-function deBri(which,val){
-  document.getElementById(which+'BriVal').textContent=val;
-  clearTimeout(_briTimer);
-  _briTimer=setTimeout(()=>{
-    api('/api/display/brightness',{method:'POST',body:JSON.stringify({[which+'_brightness']:parseInt(val)}),...H});
-    toast('Brightness updated');
-  },400);
-}
-
-async function removeAsset(name){if(!confirm('Remove '+name+'?'))return;await api('/api/display/assets/'+encodeURIComponent(name),{method:'DELETE'});toast('Removed '+name);loadStatus()}
-async function svcAction(act){await api('/api/display/restart',{method:'POST',...H});toast('Service restarting…');setTimeout(loadStatus,3000)}
-
-async function loadLogs(){
-  try{const d=await api('/api/display/logs');document.getElementById('logBox').textContent=d.logs||'No logs available.'}catch(e){document.getElementById('logBox').textContent='Failed to load logs.'}
-}
-
-// Drag-and-drop upload
-const dz=document.getElementById('dropzone'), fi=document.getElementById('fileInput');
-dz.addEventListener('click',()=>fi.click());
-dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('dragover')});
-dz.addEventListener('dragleave',()=>dz.classList.remove('dragover'));
-dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('dragover');uploadFiles(e.dataTransfer.files)});
-fi.addEventListener('change',()=>{uploadFiles(fi.files);fi.value=''});
-
-async function uploadFiles(files){
-  const cat=document.getElementById('uploadCat').value;
-  for(const f of files){
-    const fd=new FormData();fd.append('file',f);fd.append('category',cat);
-    try{
-      const r=await fetch('/api/display/upload',{method:'POST',headers:{'X-Token':T},body:fd});
-      const j=await r.json();if(!r.ok)throw new Error(j.error||'Upload failed');
-      toast('Uploaded: '+f.name);
-    }catch(e){toast('Upload failed: '+e.message,true)}
-  }
-  loadStatus();
-}
-
-// ── WAVE MODE ──
-var _wvFrame=0,_wvId=null,_wvRunning=null;
-var _wvColors={teal:{r:0,g:245,b:212},purple:{r:123,g:97,b:255},amber:{r:255,g:179,b:71},pink:{r:255,g:75,b:110}};
-var _wvCur={r:0,g:245,b:212};
-var _wvNames={'retail_trade_logic_agent.py':'Trade Logic','retail_news_agent.py':'News','retail_market_sentiment_agent.py':'Sentiment','retail_sector_screener.py':'Screener'};
-
-function enterWaveMode(){
-  document.getElementById('wave-fullscreen').style.display='flex';
-  document.getElementById('controls-wrap').style.display='none';
-  if(!_wvId)_wvId=requestAnimationFrame(drawWave);
-  pollAgentPulse();
-}
-function exitWaveMode(){
-  document.getElementById('wave-fullscreen').style.display='none';
-  document.getElementById('controls-wrap').style.display='';
-  if(_wvId){cancelAnimationFrame(_wvId);_wvId=null;}
-}
-
-function drawWave(){
-  var canvas=document.getElementById('sentinel-wave');
-  if(!canvas){_wvId=requestAnimationFrame(drawWave);return;}
-  var ctx=canvas.getContext('2d');
-  var dpr=window.devicePixelRatio||1;
-  var w=canvas.clientWidth,h=canvas.clientHeight;
-  canvas.width=w*dpr;canvas.height=h*dpr;
-  ctx.scale(dpr,dpr);ctx.clearRect(0,0,w,h);
-
-  var active=!!_wvRunning;
-  var colorKey=active?(_wvRunning.color||'teal'):'teal';
-  var tgt=_wvColors[colorKey]||_wvColors.teal;
-  _wvCur.r+=((tgt.r-_wvCur.r)*0.04);
-  _wvCur.g+=((tgt.g-_wvCur.g)*0.04);
-  _wvCur.b+=((tgt.b-_wvCur.b)*0.04);
-  var c={r:Math.round(_wvCur.r),g:Math.round(_wvCur.g),b:Math.round(_wvCur.b)};
-
-  var ovSpeed=(active&&_wvRunning.speed)?_wvRunning.speed:1;
-  var ovDir=(active&&_wvRunning.direction)?_wvRunning.direction:1;
-  var t=_wvFrame*0.015*ovDir*ovSpeed;
-  var heartbeat=Math.sin(t*0.4)*0.5+0.5;
-  var ampOverride=(active&&_wvRunning.amplitude)?_wvRunning.amplitude:null;
-  var baseAmp=ampOverride?ampOverride:(active?50:(6+heartbeat*20));
-  var numWaves=active?9:5;
-  var speed=active?1.0:0.2;
-  var midY=h/2;
-  var freqMult=(active&&_wvRunning.frequency)?_wvRunning.frequency:1.0;
-
-  for(var i=0;i<numWaves;i++){
-    var alpha=active?(0.1+(i/numWaves)*0.2):(0.04+heartbeat*0.03+(i/numWaves)*0.1);
-    var amp=baseAmp*(0.4+(i/numWaves)*0.6);
-    var freq=(0.006+i*0.002)*freqMult;
-    var phase=t*speed+i*0.8;
-    ctx.beginPath();ctx.moveTo(0,midY);
-    for(var x=0;x<=w;x+=2){
-      var y=midY+Math.sin(x*freq-phase)*amp+Math.sin(x*freq*1.5-phase*0.7)*amp*0.3;
-      ctx.lineTo(x,y);
-    }
-    ctx.strokeStyle='rgba('+c.r+','+c.g+','+c.b+','+alpha+')';
-    ctx.lineWidth=active?2.0:1.5;ctx.stroke();
-    if(i===numWaves-1){
-      ctx.lineTo(w,h);ctx.lineTo(0,h);ctx.closePath();
-      var grad=ctx.createLinearGradient(0,midY,0,h);
-      grad.addColorStop(0,'rgba('+c.r+','+c.g+','+c.b+',0.05)');
-      grad.addColorStop(1,'rgba('+c.r+','+c.g+','+c.b+',0)');
-      ctx.fillStyle=grad;ctx.fill();
-    }
-  }
-
-  // Label
-  var lbl=document.getElementById('wave-label');
-  if(lbl){
-    if(active&&_wvRunning.agent){
-      var name=_wvNames[_wvRunning.agent]||_wvRunning.agent;
-      lbl.textContent=name.toUpperCase()+' \u00B7 SCANNING';
-      lbl.style.color='rgba('+c.r+','+c.g+','+c.b+',0.6)';
-    }else{
-      lbl.textContent='MONITORING';
-      lbl.style.color='rgba('+c.r+','+c.g+','+c.b+','+(0.15+heartbeat*0.1)+')';
-    }
-  }
-
-  _wvFrame++;
-  _wvId=requestAnimationFrame(drawWave);
-}
-
-var _wvSleepOn=true; // auto sleep 21:00-09:00 ET
-function isWvSleepTime(){
-  if(!_wvSleepOn)return false;
-  var now=new Date();
-  var et=new Date(now.toLocaleString('en-US',{timeZone:'America/New_York'}));
-  var h=et.getHours();
-  return h>=21||h<9;
-}
-
-async function pollAgentPulse(){
-  if(document.getElementById('wave-fullscreen').style.display==='none')return;
-  // Sleep schedule: dim screen 21:00-09:00 ET
-  var canvas=document.getElementById('sentinel-wave');
-  var lbl=document.getElementById('wave-label');
-  if(isWvSleepTime()){
-    if(canvas)canvas.style.opacity='0';
-    if(lbl)lbl.style.opacity='0';
-    setTimeout(pollAgentPulse,30000);
-    return;
-  }else{
-    if(canvas)canvas.style.opacity='1';
-    if(lbl)lbl.style.opacity='1';
-  }
-  try{
-    var r=await fetch('/api/proxy/agent-pulse');
-    if(r.ok){var d=await r.json();_wvRunning=d.running||null;}
-  }catch(e){}
-  setTimeout(pollAgentPulse,5000);
-}
-
-// Start in wave mode by default
-enterWaveMode();
-
-// Auto-refresh (controls mode)
-loadStatus();
-setInterval(loadStatus,10000);
-</script>
-</body>
-</html>
-"""
-
-# Inject the token into DISPLAY_HTML at render time
-def _render_display_html():
-    token = request.args.get("token", "") or request.cookies.get("company_token", "")
-    return DISPLAY_HTML.replace("{{TOKEN}}", token).replace("{{ subpage_hdr|safe }}", _subpage_header("Sentinel Display"))
-
-
-@app.route("/api/proxy/agent-pulse")
-def proxy_agent_pulse():
-    """Proxy agent pulse from retail portal for sentinel display."""
-    import requests as _req
-    try:
-        cookie = _get_admin_session_cookie()
-        r = _req.get(f"{RETAIL_PORTAL_URL}/api/agent-pulse",
-                     cookies={"synthos_s": cookie}, timeout=8)
-        return jsonify(r.json()), r.status_code
-    except Exception as e:
-        return jsonify({"running": None, "error": str(e)}), 502
-
-
-@app.route("/display")
-def display_page():
-    """Render the Sentinel display control panel."""
-    return _render_display_html()
-
-
-@app.route("/api/display/status")
-def api_display_status():
-    """Full display status JSON."""
-    if not _authorized():
-        return jsonify({"error": "unauthorized"}), 401
-    # Try sentinel_bridge first (when present), then fall back to direct HTTP
-    if _display_bridge is not None:
-        try:
-            return jsonify(_display_bridge.get_display_status()), 200
-        except Exception as e:
-            return jsonify({"error": str(e), "display_detected": False}), 200
-    if SENTINEL_URL:
-        try:
-            import urllib.request as _ur
-            headers = {"Accept": "application/json"}
-            if SENTINEL_TOKEN:
-                headers["X-Token"] = SENTINEL_TOKEN
-            req = _ur.Request(f"{SENTINEL_URL}/api/status", headers=headers)
-            with _ur.urlopen(req, timeout=4) as resp:
-                data = json.loads(resp.read())
-            data.setdefault("display_detected", True)
-            return jsonify(data), 200
-        except Exception as e:
-            return jsonify({"error": str(e), "display_detected": False,
-                            "sentinel_url": SENTINEL_URL}), 200
-    return jsonify({"error": "No sentinel bridge or SENTINEL_URL configured",
-                    "display_detected": False}), 200
-
-
-@app.route("/api/display/scene", methods=["POST"])
-def api_display_scene():
-    """Change the active scene."""
-    if not _authorized():
-        return jsonify({"error": "unauthorized"}), 401
-    data = request.get_json(silent=True) or {}
-    scene = data.get("scene")
-    if not scene:
-        return jsonify({"error": "missing 'scene'"}), 400
-    try:
-        _display_bridge.set_scene(scene)
-        return jsonify({"ok": True, "scene": scene}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/display/brightness", methods=["POST"])
-def api_display_brightness():
-    """Adjust day/night brightness."""
-    if not _authorized():
-        return jsonify({"error": "unauthorized"}), 401
-    data = request.get_json(silent=True) or {}
-    try:
-        cfg = _display_bridge.read_config()
-        changed = False
-        if "day_brightness" in data:
-            cfg["day_brightness"] = int(data["day_brightness"])
-            changed = True
-        if "night_brightness" in data:
-            cfg["night_brightness"] = int(data["night_brightness"])
-            changed = True
-        if changed:
-            _display_bridge.write_config(cfg)
-            _display_bridge.set_brightness(cfg.get("day_brightness", 90))
-        return jsonify({"ok": True}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/display/theme", methods=["POST"])
-def api_display_theme():
-    """Change the display theme."""
-    if not _authorized():
-        return jsonify({"error": "unauthorized"}), 401
-    data = request.get_json(silent=True) or {}
-    theme = data.get("theme")
-    if not theme:
-        return jsonify({"error": "missing 'theme'"}), 400
-    try:
-        _display_bridge.set_theme(theme)
-        return jsonify({"ok": True, "theme": theme}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/display/daynight", methods=["POST"])
-def api_display_daynight():
-    """Set day/night mode: auto, force_day, force_night."""
-    if not _authorized():
-        return jsonify({"error": "unauthorized"}), 401
-    data = request.get_json(silent=True) or {}
-    mode = data.get("mode")
-    if mode not in ("auto", "force_day", "force_night"):
-        return jsonify({"error": "invalid mode — use auto, force_day, or force_night"}), 400
-    try:
-        _display_bridge.set_daynight_mode(mode)
-        return jsonify({"ok": True, "mode": mode}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/display/animation", methods=["POST"])
-def api_display_animation():
-    """Set boot or idle animation."""
-    if not _authorized():
-        return jsonify({"error": "unauthorized"}), 401
-    data = request.get_json(silent=True) or {}
-    kind = data.get("kind")
-    name = data.get("name")
-    if kind not in ("boot", "idle") or not name:
-        return jsonify({"error": "need 'kind' (boot|idle) and 'name'"}), 400
-    try:
-        if kind == "boot":
-            _display_bridge.set_boot_animation(name)
-        else:
-            _display_bridge.set_idle_animation(name)
-        return jsonify({"ok": True, "kind": kind, "name": name}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/display/assets")
-def api_display_assets():
-    """List installed display assets."""
-    if not _authorized():
-        return jsonify({"error": "unauthorized"}), 401
-    try:
-        assets = _display_bridge.list_assets()
-        return jsonify({"assets": assets}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-DISPLAY_ALLOWED_EXT = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".json", ".py"}
-
-@app.route("/api/display/upload", methods=["POST"])
-def api_display_upload():
-    """Upload a display asset (drag-and-drop or form)."""
-    if not _authorized():
-        return jsonify({"error": "unauthorized"}), 401
-    if "file" not in request.files:
-        return jsonify({"error": "no file provided"}), 400
-    f = request.files["file"]
-    if not f.filename:
-        return jsonify({"error": "empty filename"}), 400
-    safe = secure_filename(f.filename)
-    ext = os.path.splitext(safe)[1].lower()
-    if ext not in DISPLAY_ALLOWED_EXT:
-        return jsonify({"error": f"file type {ext} not allowed"}), 400
-    category = request.form.get("category", "auto")
-    # Save to drop dir — watcher will pick it up, or install directly
-    dest = os.path.join(DISPLAY_DROP_DIR, safe)
-    f.save(dest)
-    try:
-        result = _display_bridge.install_asset(dest, category=category if category != "auto" else None)
-        return jsonify({"ok": True, "installed": result}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/display/assets/<filename>", methods=["DELETE"])
-def api_display_remove_asset(filename):
-    """Remove an installed display asset."""
-    if not _authorized():
-        return jsonify({"error": "unauthorized"}), 401
-    safe = secure_filename(filename)
-    try:
-        _display_bridge.remove_asset(safe)
-        return jsonify({"ok": True, "removed": safe}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/display/restart", methods=["POST"])
-def api_display_restart():
-    """Restart the Sentinel display service."""
-    if not _authorized():
-        return jsonify({"error": "unauthorized"}), 401
-    try:
-        _display_bridge.restart_display_service()
-        return jsonify({"ok": True, "message": "restart requested"}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/display/logs")
-def api_display_logs():
-    """Get recent display log output."""
-    if not _authorized():
-        return jsonify({"error": "unauthorized"}), 401
-    lines = int(request.args.get("lines", 50))
-    try:
-        logs = _display_bridge.get_display_logs(lines=lines)
-        return jsonify({"logs": logs}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
 
 
 # ── Auditor Findings ──────────────────────────────────────────────────────────
@@ -10286,7 +9290,7 @@ async function buildNodeTabs() {
     const r = await fetch('/api/status', {headers:{}});
     const pis = await r.json();
     const tabsEl = document.getElementById('node-tabs');
-    const skip = new Set(['pi4b-company','pi2w-monitor','pi2w-sentinel']);
+    const skip = new Set(['pi4b-company','pi2w-monitor']);
     Object.entries(pis).forEach(([pi_id, pi]) => {
       if (skip.has(pi_id)) return;
       const label = pi.label || pi_id;

@@ -41,7 +41,6 @@ import logging
 import os
 import signal
 import sqlite3
-import sys
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta

@@ -203,7 +203,6 @@
       {"alias": "auditor", "file": "company_auditor.py", "job": "Cross-node log scanner (SSH)", "status": "built"},
       {"alias": "scoop", "file": "company_scoop.py", "job": "Email queue drain, Resend dispatch", "status": "built"},
       {"alias": "sentinel", "file": "company_sentinel.py", "job": "Heartbeat receiver, silence alerts", "status": "built"},
-      {"alias": "server", "file": "company_server.py", "job": "Event queue API, backup receiver", "status": "built"},
       {"alias": "archivist", "file": "company_archivist.py", "job": "DB row archival to compressed JSON", "status": "built"},
       {"alias": "vault", "file": "company_vault.py", "job": "License keys, compliance, secrets", "status": "built"},
       {"alias": "fidget", "file": "company_fidget.py", "job": "Keep-alive, usage anomaly detection", "status": "built"},

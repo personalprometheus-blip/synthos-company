@@ -228,9 +228,13 @@ The following architectural decisions were made and locked on 2026-04-05:
   the wrong design for v3. Customers do not have their own nodes. `synthos-login.service` is stopped
   and disabled. `login_server/` code is kept for reference but is no longer active.
 
-- **company_server.py is internal API only.** Port 5010 on the Pi 4B is no longer publicly exposed.
-  `admin.synth-cloud.com` DNS and Cloudflare Access app have been removed. The company server is
-  a private backend API called by the Pi 5 retail portal over the local network.
+- **company_server.py retired 2026-05-04.** The dual-server design (port 5010
+  for backend API + port 5050 for monitor) never deployed in production —
+  pi5's `COMPANY_URL` has been pointed at port 5050 all along. All routes
+  that lived in `company_server.py` (`/api/queue`, `/receive_backup`,
+  `/api/auditor/findings`, etc.) were merged into `synthos_monitor.py`.
+  The original is archived at
+  `documentation/archive/company_server.py.retired_2026-05-04`.
 
 - **Single portal model.** All web access — customers and admin — goes through the Pi 5 retail portal
   at `app.synth-cloud.com`. The Pi 4B exposes only SSH externally (`ssh.synth-cloud.com`).
@@ -245,7 +249,7 @@ portal.synth-cloud.com  →  redirect  →  app.synth-cloud.com (Pi 5, port 5001
                               → their trading        → trading dashboard
                                 dashboard             + Company Admin link
                                                       → calls Pi 4B API
-                                                        (company_server :5010)
+                                                        (synthos_monitor :5050)
 ```
 
 ### Domain map (final)
@@ -255,4 +259,4 @@ portal.synth-cloud.com  →  redirect  →  app.synth-cloud.com (Pi 5, port 5001
 | `portal.synth-cloud.com` | redirect → app.synth-cloud.com | none |
 | `ssh.synth-cloud.com` | Pi 4B port 22 | Cloudflare Access |
 | `ssh2.synth-cloud.com` | Pi 5 port 22 | Cloudflare Access |
-| ~~`admin.synth-cloud.com`~~ | ~~Pi 4B port 5010~~ | REMOVED |
+| ~~`admin.synth-cloud.com`~~ | ~~Pi 4B port 5010~~ | REMOVED (server retired 2026-05-04) |

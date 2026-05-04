@@ -2561,7 +2561,7 @@ const AGENT_NAMES = {
   'retail_backup':'Backup',
   'trade_logic_agent':'Trade Logic','news_agent':'News','market_sentiment_agent':'Market Sentiment',
   'synthos_monitor':'Monitor','scoop':'Scoop','strongbox':'Strongbox',
-  'company_server':'Server','company_vault':'Vault','company_archivist':'Librarian',
+  'company_vault':'Vault','company_archivist':'Librarian',
   'company_sentinel':'Sentinel','company_keepalive':'Keepalive','company_auditor':'Auditor'
 };
 
@@ -2574,7 +2574,7 @@ const EXPECTED_AGENTS = {
     'retail_shutdown','retail_interrogation_listener','retail_patch','retail_backup'
   ],
   company: [
-    'company_server','scoop','strongbox','company_vault',
+    'scoop','strongbox','company_vault',
     'company_archivist','company_sentinel','company_keepalive','company_auditor'
   ],
   monitor: ['synthos_monitor']
@@ -3577,7 +3577,11 @@ document.addEventListener('click',function(e){if(!document.getElementById('hbtn'
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# COMPANY SERVER ROUTES (merged from company_server.py)
+# COMPANY SERVER ROUTES (originally from company_server.py — that file was
+# retired 2026-05-04 after pi5's COMPANY_URL was confirmed pointed at port
+# 5050 (this monitor) all along; the dual-server architecture in old docs
+# never deployed. Original archived at
+# documentation/archive/company_server.py.retired_2026-05-04 for reference.)
 # ══════════════════════════════════════════════════════════════════════════════
 
 @app.route("/api/queue/stats", methods=["GET"])

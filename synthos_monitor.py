@@ -1470,6 +1470,7 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
         <a href="/system-architecture" class="hmenu-item">System Architecture</a>
         <a href="/audit" class="hmenu-item">Auditor</a>
         <a href="/logs" class="hmenu-item">Logs</a>
+        <a href="/customers" class="hmenu-item">Customers</a>
         <a href="/support-queue" class="hmenu-item">Customer Support</a>
         <a href="/customer-billing" class="hmenu-item">Customer Billing</a>
         <a href="/customer-activity" class="hmenu-item">Customer Activity</a>
@@ -4403,6 +4404,7 @@ def _subpage_header(page_name):
         '<a href="/system-architecture">System Architecture</a>'
         '<a href="/audit">Auditor</a>'
         '<a href="/logs">Logs</a>'
+        '<a href="/customers">Customers</a>'
         '<a href="/approvals">Approvals</a>'
         '<a href="/support-queue">Customer Support</a>'
         '<a href="/customer-billing">Customer Billing</a>'
@@ -6044,6 +6046,23 @@ def api_monitor_settings():
                 push_failed.append(pi.get("label") or pi_ip)
 
     return jsonify({"ok": True, "written": written, "pushed": pushed, "push_failed": push_failed})
+
+
+# ── CUSTOMERS PAGE (consolidated) ─────────────────────────────────────────────
+# 2026-05-05: single tabbed view that includes the four customer-admin
+# sub-pages (Approvals / Support / Activity / Billing). Tab state is in
+# the URL hash (#approvals etc.) so refresh preserves the active tab.
+# Old standalone routes below still work; phase 6 will redirect them.
+
+@app.route("/customers")
+def customers_page():
+    """Consolidated customer admin: Approvals / Support / Activity / Billing."""
+    if not _authorized():
+        return redirect(url_for("login"))
+    return _subpage_header('Customers') + render_template(
+        'customers.html',
+        secret_token=SECRET_TOKEN,
+    )
 
 
 # ── APPROVALS PAGE ────────────────────────────────────────────────────────────

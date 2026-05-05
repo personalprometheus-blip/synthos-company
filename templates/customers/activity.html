@@ -3,18 +3,65 @@
 body{background:#0a0c14;color:rgba(255,255,255,0.88);font-family:'Inter',system-ui,sans-serif;font-size:14px;min-height:100vh}
 ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:99px}
 .ca-wrap{max-width:1200px;margin:0 auto;padding:20px 24px}
-.ca-h{font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.4);margin-bottom:14px}
-.ca-form{background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:16px;margin-bottom:18px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;align-items:end}
+.ca-h{font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.4);margin-bottom:10px;display:flex;align-items:center;gap:10px}
+.ca-h::after{content:'';flex:1;height:1px;background:rgba(255,255,255,0.07)}
+.ca-h-meta{font-size:10px;font-weight:500;color:rgba(255,255,255,0.3);text-transform:none;letter-spacing:0;margin-left:auto;font-family:'JetBrains Mono',monospace}
+
+/* ── Customer Directory (Phase A) ───────────────────────────────────── */
+.ca-dir{background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:0;margin-bottom:24px;overflow:hidden}
+.ca-dir-empty{padding:40px;text-align:center;color:rgba(255,255,255,0.3);font-size:12px}
+.ca-dir-table{width:100%;border-collapse:collapse;font-size:12px}
+.ca-dir-table thead th{
+  text-align:left;padding:12px 14px;border-bottom:1px solid rgba(255,255,255,0.08);
+  font-weight:600;color:rgba(255,255,255,0.4);font-size:9px;text-transform:uppercase;letter-spacing:0.08em;
+  background:rgba(255,255,255,0.02);position:sticky;top:0;
+}
+.ca-dir-table tbody td{padding:11px 14px;border-bottom:1px solid rgba(255,255,255,0.04);vertical-align:middle}
+.ca-dir-table tbody tr:hover td{background:rgba(255,255,255,0.025)}
+.ca-dir-table tbody tr:last-child td{border-bottom:none}
+.ca-dir-name{font-weight:600;color:rgba(255,255,255,0.95);font-size:13px}
+.ca-dir-email{font-family:'JetBrains Mono',monospace;font-size:11px;color:rgba(255,255,255,0.6)}
+.ca-dir-uuid{font-family:'JetBrains Mono',monospace;font-size:10px;color:rgba(255,255,255,0.3);cursor:pointer}
+.ca-dir-uuid:hover{color:rgba(255,255,255,0.6)}
+.ca-dir-uuid.copied{color:#00f5d4}
+.ca-pill{display:inline-flex;align-items:center;gap:4px;padding:2px 9px;border-radius:99px;font-size:10px;font-weight:600;letter-spacing:0.04em;font-family:inherit;line-height:1.6}
+.ca-pill-tier{background:rgba(123,97,255,0.08);border:1px solid rgba(123,97,255,0.25);color:#a78bfa}
+.ca-pill-active{background:rgba(0,245,212,0.06);border:1px solid rgba(0,245,212,0.22);color:#00f5d4}
+.ca-pill-trial{background:rgba(123,97,255,0.06);border:1px solid rgba(123,97,255,0.22);color:#a78bfa}
+.ca-pill-past{background:rgba(245,166,35,0.07);border:1px solid rgba(245,166,35,0.25);color:#f5a623}
+.ca-pill-cancel{background:rgba(255,75,110,0.06);border:1px solid rgba(255,75,110,0.22);color:#ff4b6e}
+.ca-pill-mute{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);color:rgba(255,255,255,0.45)}
+.ca-pill-paper{background:rgba(123,97,255,0.06);border:1px solid rgba(123,97,255,0.2);color:#a78bfa}
+.ca-pill-live{background:rgba(0,245,212,0.07);border:1px solid rgba(0,245,212,0.25);color:#00f5d4}
+.ca-check{display:inline-block;width:14px;height:14px;border-radius:99px;text-align:center;font-size:9px;line-height:14px;font-weight:700}
+.ca-check-yes{background:rgba(0,245,212,0.15);color:#00f5d4}
+.ca-check-no{background:rgba(255,255,255,0.04);color:rgba(255,255,255,0.3)}
+.ca-msg-btn{
+  background:rgba(0,245,212,0.06);border:1px solid rgba(0,245,212,0.22);color:#00f5d4;
+  border-radius:6px;padding:5px 11px;font-size:10px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;
+  cursor:not-allowed;opacity:0.4;font-family:inherit;
+}
+.ca-msg-btn[disabled]:hover::after{
+  content:'Phase C';position:absolute;background:#0a0c14;color:rgba(255,255,255,0.7);
+  border:1px solid rgba(255,255,255,0.1);padding:2px 6px;border-radius:4px;font-size:9px;
+  margin-top:18px;margin-left:-30px;
+}
+.ca-dir-relative{font-size:10px;color:rgba(255,255,255,0.4);margin-top:2px}
+
+/* ── Customer Activity Report (existing, reorganized) ──────────────── */
+.ca-form{background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:16px;margin-bottom:18px}
+.ca-form-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;align-items:end;margin-bottom:14px}
 .ca-form label{display:block;font-size:10px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px}
 .ca-form input,.ca-form select{width:100%;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:8px 10px;color:rgba(255,255,255,0.88);font-family:'JetBrains Mono',monospace;font-size:12px}
 .ca-form input:focus,.ca-form select:focus{outline:none;border-color:rgba(0,245,212,0.4)}
-.ca-form button{background:rgba(0,245,212,0.1);border:1px solid rgba(0,245,212,0.3);color:#00f5d4;border-radius:6px;padding:8px 16px;font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer}
-.ca-form button:hover{background:rgba(0,245,212,0.18)}
-.ca-presets{display:flex;gap:6px;flex-wrap:wrap;grid-column:1/-1}
-.ca-presets button{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);color:rgba(255,255,255,0.6);font-size:10px;padding:5px 10px;text-transform:none;letter-spacing:0}
+.ca-form button.ca-run{background:rgba(0,245,212,0.1);border:1px solid rgba(0,245,212,0.3);color:#00f5d4;border-radius:6px;padding:8px 18px;font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;font-family:inherit}
+.ca-form button.ca-run:hover{background:rgba(0,245,212,0.18)}
+.ca-presets{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.ca-presets button{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);color:rgba(255,255,255,0.6);font-size:10px;padding:5px 10px;border-radius:5px;cursor:pointer;font-family:inherit;letter-spacing:0;text-transform:none}
 .ca-presets button:hover{background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.88)}
-.ca-customer-list{max-height:140px;overflow-y:auto;border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:6px;background:rgba(255,255,255,0.02)}
-.ca-customer-list label{display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:4px;cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:10px;color:rgba(255,255,255,0.6);text-transform:none;letter-spacing:0;margin:0}
+.ca-form-actions{display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid rgba(255,255,255,0.06)}
+.ca-customer-list{max-height:280px;overflow-y:auto;border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:6px;background:rgba(255,255,255,0.02)}
+.ca-customer-list label{display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:4px;cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:10px;color:rgba(255,255,255,0.6);text-transform:none;letter-spacing:0;margin:0}
 .ca-customer-list label:hover{background:rgba(255,255,255,0.04)}
 .ca-customer-list input[type=checkbox]{margin-right:4px;width:auto}
 .ca-customer-list .ca-bulk{padding:4px 6px;border-bottom:1px solid rgba(255,255,255,0.06);margin-bottom:4px;display:flex;gap:8px}
@@ -44,18 +91,53 @@ body{background:#0a0c14;color:rgba(255,255,255,0.88);font-family:'Inter',system-
 </style>
 
 <div class="ca-wrap">
+
+  <!-- ═══════════════════════════════════════════════════════════════════
+       CUSTOMER DIRECTORY (Phase A)
+       Top-of-tab snapshot of every customer with key fields. Future-home
+       for one-click messaging (Phase C). Independent of the report below.
+       ═══════════════════════════════════════════════════════════════════ -->
+  <div class="ca-h">
+    Customer Directory
+    <span class="ca-h-meta" id="ca-dir-count">—</span>
+  </div>
+  <div class="ca-dir" id="ca-dir-wrap">
+    <div class="ca-dir-empty" id="ca-dir-loading">Loading customer list…</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════
+       CUSTOMER ACTIVITY REPORT (existing tool, reorganized layout)
+       Date controls + presets + Run Report up top, customer multi-select
+       sized larger below. Future report types can stack alongside this.
+       ═══════════════════════════════════════════════════════════════════ -->
   <div class="ca-h">Customer Activity Report</div>
 
   <form class="ca-form" id="ca-form" onsubmit="return runCAReport(event)">
-    <div>
-      <label>Start date</label>
-      <input type="date" id="ca-start" required>
+    <div class="ca-form-row">
+      <div>
+        <label>Start date</label>
+        <input type="date" id="ca-start" required>
+      </div>
+      <div>
+        <label>End date</label>
+        <input type="date" id="ca-end" required>
+      </div>
     </div>
-    <div>
-      <label>End date</label>
-      <input type="date" id="ca-end" required>
+
+    <div class="ca-presets">
+      <button type="button" onclick="caPreset('today')">Today</button>
+      <button type="button" onclick="caPreset('yesterday')">Yesterday</button>
+      <button type="button" onclick="caPreset('this_week')">This week</button>
+      <button type="button" onclick="caPreset('last_week')">Last week</button>
+      <button type="button" onclick="caPreset('mtd')">MTD</button>
+      <button type="button" onclick="caPreset('since_baseline')">Since 2026-04-23</button>
     </div>
-    <div style="grid-column:1/-1">
+
+    <div class="ca-form-actions">
+      <button type="submit" class="ca-run">Run report</button>
+    </div>
+
+    <div>
       <label>Customers</label>
       <div class="ca-customer-list" id="ca-customers">
         <div class="ca-bulk">
@@ -67,17 +149,6 @@ body{background:#0a0c14;color:rgba(255,255,255,0.88);font-family:'Inter',system-
         <div id="ca-customer-checkboxes"><div style="font-size:10px;color:rgba(255,255,255,0.3);padding:4px">loading customer list...</div></div>
       </div>
     </div>
-    <div class="ca-presets">
-      <button type="button" onclick="caPreset('today')">Today</button>
-      <button type="button" onclick="caPreset('yesterday')">Yesterday</button>
-      <button type="button" onclick="caPreset('this_week')">This week</button>
-      <button type="button" onclick="caPreset('last_week')">Last week</button>
-      <button type="button" onclick="caPreset('mtd')">MTD</button>
-      <button type="button" onclick="caPreset('since_baseline')">Since 2026-04-23</button>
-    </div>
-    <div style="grid-column:1/-1;display:flex;justify-content:flex-end">
-      <button type="submit">Run report</button>
-    </div>
   </form>
 
   <div id="ca-output">
@@ -87,6 +158,10 @@ body{background:#0a0c14;color:rgba(255,255,255,0.88);font-family:'Inter',system-
 
 <script>
 const SECRET_TOKEN = '{{ secret_token }}';
+
+// Cache the directory fetch so the report's customer multi-select can
+// reuse it without a second HTTP round-trip.
+let _caDirCustomers = null;
 
 function ymd(d){
   const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), dd=String(d.getDate()).padStart(2,'0');
@@ -119,23 +194,142 @@ function caCustToggle(on){
   document.querySelectorAll('#ca-customer-checkboxes input').forEach(cb=>cb.checked=on);
 }
 
-async function loadCustomerList(){
-  // Pull from existing billing endpoint to populate the customer multi-select.
+// ── DIRECTORY ─────────────────────────────────────────────────────────
+// Pretty-format helpers for the directory table.
+function fmtRelativeDate(iso){
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  const days = Math.floor((Date.now() - d.getTime()) / 86400000);
+  if (days < 1) return 'today';
+  if (days === 1) return '1 day ago';
+  if (days < 30) return days + ' days ago';
+  if (days < 365) return Math.floor(days/30) + ' mo ago';
+  return Math.floor(days/365) + 'y ago';
+}
+
+function fmtTier(tier){
+  if (!tier) return '<span class="ca-pill ca-pill-mute">—</span>';
+  const label = tier.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase());
+  return '<span class="ca-pill ca-pill-tier">' + label + '</span>';
+}
+
+function fmtStatus(status){
+  if (!status) return '<span class="ca-pill ca-pill-mute">—</span>';
+  const cls = status === 'active'    ? 'ca-pill-active'
+            : status === 'trialing'  ? 'ca-pill-trial'
+            : status === 'past_due'  ? 'ca-pill-past'
+            : status === 'cancelled' ? 'ca-pill-cancel'
+            : 'ca-pill-mute';
+  return '<span class="ca-pill ' + cls + '">' + status.replace(/_/g,' ') + '</span>';
+}
+
+function fmtTradingMode(mode){
+  if (!mode) return '<span class="ca-pill ca-pill-mute">—</span>';
+  const cls = mode === 'LIVE' ? 'ca-pill-live' : 'ca-pill-paper';
+  return '<span class="ca-pill ' + cls + '">' + mode + '</span>';
+}
+
+function escHtml(s){
+  return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+async function copyUuid(el){
+  const uuid = el.getAttribute('data-uuid');
+  if (!uuid) return;
   try {
-    const r = await fetch('/api/proxy/billing/all-customers', {headers:{'X-Token':SECRET_TOKEN}});
-    if (!r.ok) throw new Error('billing fetch '+r.status);
-    const d = await r.json();
-    const custs = (d.customers || []).filter(c => c.id);
-    const el = document.getElementById('ca-customer-checkboxes');
-    if (!custs.length) { el.innerHTML = '<div style="font-size:10px;color:rgba(255,255,255,0.3);padding:4px">no customers found</div>'; return; }
-    el.innerHTML = custs.map(c => {
-      const name = c.display_name || c.email || c.id.slice(0,8);
-      return `<label><input type="checkbox" value="${c.id}"> ${name} <span style="color:rgba(255,255,255,0.3);margin-left:auto">${c.id.slice(0,8)}</span></label>`;
-    }).join('');
-  } catch(e) {
-    document.getElementById('ca-customer-checkboxes').innerHTML =
-      '<div style="font-size:10px;color:#ff4b6e;padding:4px">failed to load customer list ('+e+'). You can still use "owner" or "ALL".</div>';
+    await navigator.clipboard.writeText(uuid);
+    el.classList.add('copied');
+    const orig = el.textContent;
+    el.textContent = 'copied!';
+    setTimeout(() => { el.classList.remove('copied'); el.textContent = orig; }, 1100);
+  } catch(e) { /* swallow */ }
+}
+
+async function loadDirectory(){
+  // Reuse cache if already fetched (avoids a second call from the report
+  // form's loadCustomerList shim below).
+  if (_caDirCustomers === null) {
+    try {
+      const r = await fetch('/api/proxy/billing/all-customers', {headers:{'X-Token':SECRET_TOKEN}});
+      if (!r.ok) throw new Error('billing fetch '+r.status);
+      const d = await r.json();
+      _caDirCustomers = (d.customers || []).filter(c => c.id);
+    } catch(e) {
+      _caDirCustomers = [];
+      const wrap = document.getElementById('ca-dir-wrap');
+      wrap.innerHTML = '<div class="ca-dir-empty" style="color:#ff4b6e">Failed to load customer list — ' + escHtml(String(e)) + '</div>';
+      return;
+    }
   }
+  const custs = _caDirCustomers;
+  const wrap = document.getElementById('ca-dir-wrap');
+  document.getElementById('ca-dir-count').textContent =
+    custs.length + ' customer' + (custs.length === 1 ? '' : 's');
+
+  if (!custs.length) {
+    wrap.innerHTML = '<div class="ca-dir-empty">No customers yet.</div>';
+    return;
+  }
+
+  // Sort by created_at descending (newest first) — operator-friendly default.
+  custs.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+
+  const rows = custs.map(c => {
+    const name = c.name || '(unnamed)';
+    const email = c.email || '—';
+    const uuid = c.id || '';
+    const uuidShort = uuid ? uuid.slice(0,8) + '…' : '—';
+    return `
+      <tr>
+        <td><div class="ca-dir-name">${escHtml(name)}</div></td>
+        <td><div class="ca-dir-email">${escHtml(email)}</div></td>
+        <td>${fmtTier(c.pricing_tier)}</td>
+        <td>${fmtStatus(c.subscription_status)}</td>
+        <td>${fmtTradingMode(c.trading_mode)}</td>
+        <td><span class="ca-check ${c.has_alpaca ? 'ca-check-yes' : 'ca-check-no'}">${c.has_alpaca ? '✓' : '✗'}</span></td>
+        <td><div style="font-size:11px;color:rgba(255,255,255,0.7)">${fmtRelativeDate(c.created_at)}</div></td>
+        <td><span class="ca-dir-uuid" data-uuid="${escHtml(uuid)}" onclick="copyUuid(this)" title="${escHtml(uuid)}">${escHtml(uuidShort)}</span></td>
+        <td><button class="ca-msg-btn" disabled title="Coming in Phase C">Message</button></td>
+      </tr>
+    `;
+  }).join('');
+
+  wrap.innerHTML = `
+    <table class="ca-dir-table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Email</th>
+          <th>Plan</th>
+          <th>Status</th>
+          <th>Trading</th>
+          <th>Alpaca</th>
+          <th>Joined</th>
+          <th>UUID</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+// ── REPORT FORM (existing customer multi-select, fed from cache) ─────
+async function loadCustomerList(){
+  // Wait for the directory's fetch to land, then mirror its customers
+  // into the report's checkbox multi-select.
+  if (_caDirCustomers === null) {
+    // Race: directory not loaded yet. Trigger the fetch and reuse the cache.
+    await loadDirectory();
+  }
+  const custs = _caDirCustomers || [];
+  const el = document.getElementById('ca-customer-checkboxes');
+  if (!custs.length) { el.innerHTML = '<div style="font-size:10px;color:rgba(255,255,255,0.3);padding:4px">no customers found</div>'; return; }
+  el.innerHTML = custs.map(c => {
+    const name = c.name || c.email || c.id.slice(0,8);
+    return `<label><input type="checkbox" value="${escHtml(c.id)}"> ${escHtml(name)} <span style="color:rgba(255,255,255,0.3);margin-left:auto">${escHtml(c.id.slice(0,8))}</span></label>`;
+  }).join('');
 }
 
 function fmtDollar(n, sign){
@@ -314,7 +508,7 @@ function caDownloadCSV(){
       rows.push([cr.display_name, t.ticker, t.sector, t.shares, t.entry, t.exit, t.pnl, t.ret_pct, t.days_held, t.exit_reason, t.opened_at, t.closed_at]);
     });
   });
-  const csv = rows.map(r => r.map(c => '"' + String(c == null ? '' : c).replace(/"/g, '""') + '"').join(',')).join('\\n');
+  const csv = rows.map(r => r.map(c => '"' + String(c == null ? '' : c).replace(/"/g, '""') + '"').join(',')).join('\n');
   const blob = new Blob([csv], {type: 'text/csv'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -322,7 +516,11 @@ function caDownloadCSV(){
   a.click();
 }
 
-// Default to today on first load
+// Boot order: directory first (it owns the customer-list cache), then
+// the report's checkbox population reuses the cache, then default the
+// date range to today so the form is immediately runnable.
+loadDirectory();
 caPreset('today');
 loadCustomerList();
 </script>
+

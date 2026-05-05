@@ -47,6 +47,21 @@ load_dotenv(os.path.join(_script_dir, "company.env"))
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200 MB upload limit (backup archives grow with customer count)
 
+
+# 2026-05-05: prevent stale HTML on operator-facing pages. Without this,
+# browsers cache subpage HTML aggressively and a menu/template change on
+# the server doesn't appear until the operator hard-refreshes. The cmd
+# portal is single-operator and bandwidth is irrelevant; never-cache is
+# the right tradeoff. JSON / static assets keep their own caching.
+@app.after_request
+def _no_cache_html(response):
+    ct = (response.headers.get("Content-Type") or "").lower()
+    if ct.startswith("text/html"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
 # ── Config ────────────────────────────────────────────────────────────────────
 RESEND_API_KEY       = os.getenv("RESEND_API_KEY")
 ALERT_FROM           = os.getenv("ALERT_FROM", "alerts@example.com")

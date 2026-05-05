@@ -8,20 +8,31 @@ body{background:#0a0c14;color:rgba(255,255,255,0.88);font-family:'Inter',system-
 .ca-h-meta{font-size:10px;font-weight:500;color:rgba(255,255,255,0.3);text-transform:none;letter-spacing:0;margin-left:auto;font-family:'JetBrains Mono',monospace}
 
 /* ── Customer Directory (Phase A) ───────────────────────────────────── */
-.ca-dir{background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:0;margin-bottom:24px;overflow:hidden}
+.ca-dir{background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:0;margin-bottom:24px;overflow:auto}
 .ca-dir-empty{padding:40px;text-align:center;color:rgba(255,255,255,0.3);font-size:12px}
-.ca-dir-table{width:100%;border-collapse:collapse;font-size:12px}
+.ca-dir-table{width:100%;border-collapse:collapse;font-size:12px;table-layout:auto}
 .ca-dir-table thead th{
-  text-align:left;padding:12px 14px;border-bottom:1px solid rgba(255,255,255,0.08);
+  text-align:left;padding:10px 9px;border-bottom:1px solid rgba(255,255,255,0.08);
   font-weight:600;color:rgba(255,255,255,0.4);font-size:9px;text-transform:uppercase;letter-spacing:0.08em;
-  background:rgba(255,255,255,0.02);position:sticky;top:0;
+  background:rgba(255,255,255,0.02);position:sticky;top:0;white-space:nowrap;
 }
-.ca-dir-table tbody td{padding:11px 14px;border-bottom:1px solid rgba(255,255,255,0.04);vertical-align:middle}
+.ca-dir-table tbody td{padding:9px 9px;border-bottom:1px solid rgba(255,255,255,0.04);vertical-align:middle}
 .ca-dir-table tbody tr:hover td{background:rgba(255,255,255,0.025)}
 .ca-dir-table tbody tr:last-child td{border-bottom:none}
-.ca-dir-name{font-weight:600;color:rgba(255,255,255,0.95);font-size:13px}
-.ca-dir-email{font-family:'JetBrains Mono',monospace;font-size:11px;color:rgba(255,255,255,0.6)}
-.ca-dir-uuid{font-family:'JetBrains Mono',monospace;font-size:10px;color:rgba(255,255,255,0.3);cursor:pointer}
+/* Per-column width hints. Email can be long; clip with ellipsis instead
+   of letting it push UUID off-screen. UUID + Joined + Plan + Status +
+   Trading all stay nowrap so they never wrap or truncate. */
+.ca-dir-table th.col-email,.ca-dir-table td.col-email{max-width:240px}
+.ca-dir-table th.col-uuid,.ca-dir-table td.col-uuid{white-space:nowrap;min-width:108px}
+.ca-dir-table th.col-joined,.ca-dir-table td.col-joined{white-space:nowrap;min-width:90px}
+.ca-dir-table th.col-plan,.ca-dir-table td.col-plan,
+.ca-dir-table th.col-status,.ca-dir-table td.col-status,
+.ca-dir-table th.col-trading,.ca-dir-table td.col-trading,
+.ca-dir-table th.col-alpaca,.ca-dir-table td.col-alpaca,
+.ca-dir-table th.col-msg,.ca-dir-table td.col-msg{white-space:nowrap}
+.ca-dir-name{font-weight:600;color:rgba(255,255,255,0.95);font-size:13px;white-space:nowrap}
+.ca-dir-email{font-family:'JetBrains Mono',monospace;font-size:11px;color:rgba(255,255,255,0.6);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;max-width:240px}
+.ca-dir-uuid{font-family:'JetBrains Mono',monospace;font-size:10px;color:rgba(255,255,255,0.3);cursor:pointer;white-space:nowrap}
 .ca-dir-uuid:hover{color:rgba(255,255,255,0.6)}
 .ca-dir-uuid.copied{color:#00f5d4}
 .ca-pill{display:inline-flex;align-items:center;gap:4px;padding:2px 9px;border-radius:99px;font-size:10px;font-weight:600;letter-spacing:0.04em;font-family:inherit;line-height:1.6}
@@ -283,14 +294,14 @@ async function loadDirectory(){
     return `
       <tr>
         <td><div class="ca-dir-name">${escHtml(name)}</div></td>
-        <td><div class="ca-dir-email">${escHtml(email)}</div></td>
-        <td>${fmtTier(c.pricing_tier)}</td>
-        <td>${fmtStatus(c.subscription_status)}</td>
-        <td>${fmtTradingMode(c.trading_mode)}</td>
-        <td><span class="ca-check ${c.has_alpaca ? 'ca-check-yes' : 'ca-check-no'}">${c.has_alpaca ? '✓' : '✗'}</span></td>
-        <td><div style="font-size:11px;color:rgba(255,255,255,0.7)">${fmtRelativeDate(c.created_at)}</div></td>
-        <td><span class="ca-dir-uuid" data-uuid="${escHtml(uuid)}" onclick="copyUuid(this)" title="${escHtml(uuid)}">${escHtml(uuidShort)}</span></td>
-        <td><button class="ca-msg-btn" disabled title="Coming in Phase C">Message</button></td>
+        <td class="col-email"><div class="ca-dir-email" title="${escHtml(email)}">${escHtml(email)}</div></td>
+        <td class="col-plan">${fmtTier(c.pricing_tier)}</td>
+        <td class="col-status">${fmtStatus(c.subscription_status)}</td>
+        <td class="col-trading">${fmtTradingMode(c.trading_mode)}</td>
+        <td class="col-alpaca"><span class="ca-check ${c.has_alpaca ? 'ca-check-yes' : 'ca-check-no'}">${c.has_alpaca ? '✓' : '✗'}</span></td>
+        <td class="col-joined"><div style="font-size:11px;color:rgba(255,255,255,0.7)">${fmtRelativeDate(c.created_at)}</div></td>
+        <td class="col-uuid"><span class="ca-dir-uuid" data-uuid="${escHtml(uuid)}" onclick="copyUuid(this)" title="${escHtml(uuid)}">${escHtml(uuidShort)}</span></td>
+        <td class="col-msg"><button class="ca-msg-btn" disabled title="Coming in Phase C">Message</button></td>
       </tr>
     `;
   }).join('');
@@ -300,14 +311,14 @@ async function loadDirectory(){
       <thead>
         <tr>
           <th>Name</th>
-          <th>Email</th>
-          <th>Plan</th>
-          <th>Status</th>
-          <th>Trading</th>
-          <th>Alpaca</th>
-          <th>Joined</th>
-          <th>UUID</th>
-          <th></th>
+          <th class="col-email">Email</th>
+          <th class="col-plan">Plan</th>
+          <th class="col-status">Status</th>
+          <th class="col-trading">Trading</th>
+          <th class="col-alpaca">Alpaca</th>
+          <th class="col-joined">Joined</th>
+          <th class="col-uuid">UUID</th>
+          <th class="col-msg"></th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>

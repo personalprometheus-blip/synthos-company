@@ -1473,7 +1473,6 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
         <a href="/support-queue" class="hmenu-item">Customer Support</a>
         <a href="/customer-billing" class="hmenu-item">Customer Billing</a>
         <a href="/customer-activity" class="hmenu-item">Customer Activity</a>
-        <a href="/pill-usage" class="hmenu-item">Pill Usage</a>
         <a href="/company-finances" class="hmenu-item">Company Finances</a>
         <a href="/reports" class="hmenu-item">Reports</a>
         <div style="height:1px;background:rgba(255,255,255,0.07);margin:4px 0"></div>
@@ -1760,6 +1759,11 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
         <div class="todo-header">
           <span class="todo-title">AI Triage</span>
           <span class="todo-count clear" id="todo-badge">Loading</span>
+        </div>
+        <div style="display:flex;gap:6px;padding:6px 14px 8px;border-bottom:1px solid var(--border)">
+          <button class="appr-filter active" id="aud-f-ALL" onclick="filterAudit(null)">All</button>
+          <button class="appr-filter" id="aud-f-LOGS" onclick="filterAudit('logs')">Logs</button>
+          <button class="appr-filter" id="aud-f-TS" onclick="filterAudit('ticker_state')">Ticker State</button>
         </div>
         <div class="todo-scroll" id="todo-list">
           <div class="todo-empty">Loading issues...</div>
@@ -2774,34 +2778,66 @@ async function confirmDelete() {
 }
 
 // ── TODOS ──
+let _auditFilter = null;  // null=All, 'logs', 'ticker_state'
+
+function _todoFromIssue(i, source) {
+  return {
+    id: i.id, title: i.context ? i.context.substring(0, 120) : 'Unknown',
+    severity: (i.severity || 'low').toUpperCase(),
+    category: i.source_file || '', pi_id: '',
+    date: i.last_seen ? i.last_seen.substring(0,10) : '',
+    action: 'Hits: ' + (i.hit_count || 1),
+    source: source,
+    resolved: false
+  };
+}
+
 async function fetchTodos() {
+  // Pull both sources in parallel; tag each issue with its source so
+  // the auditor filter row can show a slice without re-fetching.
+  let logsTodos = [];
+  let tsTodos   = [];
   try {
-    const r = await fetch('/api/auditor/findings');
-    if (!r.ok) return;
-    const data = await r.json();
-    allTodos = (data.issues || []).map(function(i) {
-      return {
-        id: i.id, title: i.context ? i.context.substring(0, 120) : 'Unknown',
-        severity: (i.severity || 'low').toUpperCase(),
-        category: i.source_file || '', pi_id: '',
-        date: i.last_seen ? i.last_seen.substring(0,10) : '',
-        action: 'Hits: ' + (i.hit_count || 1),
-        resolved: false
-      };
-    });
-    allTodos.sort((a,b) => (SEV_ORDER[a.severity]??9) - (SEV_ORDER[b.severity]??9));
-    renderTodos();
-    updateFleetStats();
+    const [rLogs, rTs] = await Promise.all([
+      fetch('/api/auditor/findings').then(r=>r.ok?r.json():{issues:[]}).catch(()=>({issues:[]})),
+      fetch('/api/auditor/ticker-state').then(r=>r.ok?r.json():{issues:[]}).catch(()=>({issues:[]})),
+    ]);
+    logsTodos = (rLogs.issues || []).map(i => _todoFromIssue(i, 'logs'));
+    tsTodos   = (rTs.issues   || []).map(i => _todoFromIssue(i, 'ticker_state'));
   } catch(e) {}
+  allTodos = logsTodos.concat(tsTodos);
+  allTodos.sort((a,b) => (SEV_ORDER[a.severity]??9) - (SEV_ORDER[b.severity]??9));
+  renderTodos();
+  updateFleetStats();
+}
+
+function filterAudit(source) {
+  _auditFilter = source;
+  document.querySelectorAll('[id^="aud-f-"]').forEach(b=>b.classList.remove('active'));
+  const target = source==='logs' ? 'aud-f-LOGS'
+               : source==='ticker_state' ? 'aud-f-TS' : 'aud-f-ALL';
+  document.getElementById(target)?.classList.add('active');
+  renderTodos();
 }
 
 function renderTodos() {
   const el    = document.getElementById('todo-list');
   const badge = document.getElementById('todo-badge');
-  const open  = allTodos.filter(t=>!t.resolved);
-  badge.textContent = open.length > 0 ? open.length + ' open' : 'All clear';
-  badge.className   = 'todo-count ' + (open.length > 0 ? '' : 'clear');
-  if (!open.length) { el.innerHTML = '<div class="todo-empty">✓ No open issues</div>'; return; }
+  const allOpen = allTodos.filter(t=>!t.resolved);
+  // Badge always reflects total open across all sources, so the filter
+  // doesn't hide the existence of issues in the other tab.
+  badge.textContent = allOpen.length > 0 ? allOpen.length + ' open' : 'All clear';
+  badge.className   = 'todo-count ' + (allOpen.length > 0 ? '' : 'clear');
+  const open = _auditFilter
+    ? allOpen.filter(t => t.source === _auditFilter)
+    : allOpen;
+  if (!open.length) {
+    const msg = _auditFilter
+      ? `✓ No ${_auditFilter==='ticker_state'?'ticker state':'logs'} issues`
+      : '✓ No open issues';
+    el.innerHTML = `<div class="todo-empty">${msg}</div>`;
+    return;
+  }
   const sevDot = {CRITICAL:'ts-crit',HIGH:'ts-high',MEDIUM:'ts-med',LOW:'ts-low'};
   el.innerHTML = open.slice(0,15).map(t =>
     '<div class="todo-item">'
@@ -4371,7 +4407,6 @@ def _subpage_header(page_name):
         '<a href="/support-queue">Customer Support</a>'
         '<a href="/customer-billing">Customer Billing</a>'
         '<a href="/customer-activity">Customer Activity</a>'
-        '<a href="/pill-usage">Pill Usage</a>'
         '<a href="/company-finances">Company Finances</a>'
         '<a href="/reports">Reports</a>'
         '<div style="height:1px;background:rgba(255,255,255,0.07);margin:4px 0"></div>'
@@ -6015,276 +6050,15 @@ def api_monitor_settings():
 
 @app.route("/approvals")
 def approvals_page():
-    """Standalone account approval queue page."""
+    """Standalone account approval queue page.
+
+    Body extracted to templates/customers/approvals.html (2026-05-05,
+    Phase 0 of /customers consolidation). Behavior unchanged."""
     if not _authorized():
         return redirect(url_for("login"))
-    return _subpage_header('Approvals') + _APPROVALS_BODY
+    return _subpage_header('Approvals') + render_template('customers/approvals.html')
 
 
-_APPROVALS_BODY = """
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{background:#0a0c14;color:rgba(255,255,255,0.88);font-family:'Inter',system-ui,sans-serif;font-size:14px;min-height:100vh}
-.appr-page{max-width:1000px;margin:0 auto;padding:20px 24px}
-.appr-title{font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.4);margin-bottom:14px;display:flex;align-items:center;gap:8px}
-.appr-title::after{content:'';flex:1;height:1px;background:rgba(255,255,255,0.07)}
-.appr-filters{display:flex;gap:6px;margin-bottom:16px}
-.af{padding:5px 14px;border-radius:8px;font-size:11px;font-weight:600;background:transparent;border:1px solid rgba(255,255,255,0.07);color:rgba(255,255,255,0.4);cursor:pointer;font-family:inherit;transition:all .15s;letter-spacing:0.03em}
-.af:hover{background:rgba(255,255,255,0.04);color:rgba(255,255,255,0.88)}
-.af.active{background:rgba(245,166,35,0.08);border-color:rgba(245,166,35,0.25);color:#f5a623}
-.appr-card{background:rgba(17,21,32,0.8);border:1px solid rgba(255,255,255,0.07);border-radius:14px;overflow:hidden;margin-bottom:10px}
-.appr-card-hdr{display:flex;align-items:center;gap:14px;padding:14px 18px;border-bottom:1px solid rgba(255,255,255,0.05)}
-.appr-avatar{width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:center;flex-shrink:0}
-.appr-avatar svg{width:18px;height:18px;color:rgba(255,255,255,0.3)}
-.appr-name{font-size:14px;font-weight:600}
-.appr-email{font-size:12px;color:rgba(255,255,255,0.4);font-family:'JetBrains Mono',monospace}
-.appr-meta{display:flex;gap:16px;padding:10px 18px;font-size:11px;color:rgba(255,255,255,0.4)}
-.appr-meta span{display:flex;align-items:center;gap:4px}
-.appr-actions{display:flex;gap:8px;padding:10px 18px 14px}
-.appr-btn{padding:6px 18px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s;letter-spacing:0.03em}
-.appr-approve{background:rgba(0,245,212,0.08);border:1px solid rgba(0,245,212,0.2);color:#00f5d4}
-.appr-approve:hover{background:rgba(0,245,212,0.15)}
-.appr-reject{background:rgba(255,75,110,0.08);border:1px solid rgba(255,75,110,0.2);color:#ff4b6e}
-.appr-reject:hover{background:rgba(255,75,110,0.15)}
-.appr-status{padding:2px 10px;border-radius:99px;font-size:10px;font-weight:700;margin-left:auto}
-.appr-empty{text-align:center;padding:40px;color:rgba(255,255,255,0.3);font-size:13px}
-.toast{position:fixed;bottom:24px;right:24px;padding:10px 20px;border-radius:10px;font-size:12px;font-weight:600;opacity:0;transition:opacity .3s;z-index:999;pointer-events:none}
-.toast.show{opacity:1}
-.toast.ok{background:rgba(0,245,212,0.1);border:1px solid rgba(0,245,212,0.2);color:#00f5d4}
-.toast.err{background:rgba(255,75,110,0.1);border:1px solid rgba(255,75,110,0.2);color:#ff4b6e}
-</style>
-
-<div id="toast" class="toast"></div>
-<div class="appr-page">
-  <div class="appr-title">Account Approval Queue</div>
-  <div class="appr-filters">
-    <button class="af active" id="af-PENDING" onclick="filterAppr('PENDING')">Pending</button>
-    <button class="af" id="af-APPROVED" onclick="filterAppr('APPROVED')">Approved</button>
-    <button class="af" id="af-REJECTED" onclick="filterAppr('REJECTED')">Rejected</button>
-    <button class="af" id="af-ALL" onclick="filterAppr(null)">All</button>
-  </div>
-  <div id="appr-list"><div class="appr-empty">Loading...</div></div>
-
-  <div class="appr-title" style="margin-top:28px">Invite Codes</div>
-  <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px">
-    <button class="af" onclick="generateInvite()" style="background:rgba(0,245,212,0.06);border-color:rgba(0,245,212,0.15);color:#00f5d4">Generate New Code</button>
-  </div>
-  <div id="gen-box" style="display:none;margin-bottom:14px;padding:14px 18px;background:rgba(0,245,212,0.04);border:1px solid rgba(0,245,212,0.15);border-radius:10px">
-    <div style="font-size:9px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:rgba(255,255,255,0.35);margin-bottom:6px">Generated Invite Code</div>
-    <div style="display:flex;align-items:center;gap:12px">
-      <span id="gen-code" style="font-family:monospace;font-size:18px;font-weight:700;color:#00f5d4;letter-spacing:0.08em"></span>
-      <button id="copy-btn" style="padding:4px 12px;border-radius:6px;font-size:10px;font-weight:600;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.5);cursor:pointer" onclick="copyCode()">Copy</button>
-    </div>
-    <div style="font-size:10px;color:rgba(255,255,255,0.25);margin-top:6px">Share this code with the user to include on their signup form</div>
-  </div>
-  <div id="invite-list"></div>
-</div>
-
-<script>
-const TOKEN = '';
-let _filter = 'PENDING';
-
-function toast(msg,type){
-  const el=document.getElementById('toast');
-  el.textContent=msg;el.className='toast show '+type;
-  setTimeout(()=>el.classList.remove('show'),2800);
-}
-
-async function loadApprovals(){
-  try{
-    let url='/api/proxy/pending-signups';
-    if(_filter) url+='?status='+_filter;
-    const r=await fetch(url,{headers:{}});
-    const d=await r.json();
-    const list=document.getElementById('appr-list');
-    if(!d.signups||!d.signups.length){
-      list.innerHTML='<div class="appr-empty">No '+(_filter?_filter.toLowerCase()+' ':'')+'signups found</div>';
-      return;
-    }
-    const escapeHtml = (s) => String(s||'').replace(/[&<>"']/g, c =>
-      ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    list.innerHTML=d.signups.map(s=>{
-      const ts=s.created_at?new Date(s.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'}):'\u2014';
-      const sc=s.status==='PENDING'?'#f5a623':s.status==='APPROVED'?'#00f5d4':'#ff4b6e';
-      const sbg=s.status==='PENDING'?'rgba(245,166,35,0.08)':s.status==='APPROVED'?'rgba(0,245,212,0.08)':'rgba(255,75,110,0.08)';
-      // Two-tier signup model \u2014 show which path this row came in via.
-      const rt=(s.request_type||'subscribe').toLowerCase();
-      const isReq=rt==='request_access';
-      const typeColor=isReq?'#b496ff':'#00f5d4';
-      const typeBg=isReq?'rgba(123,97,255,0.1)':'rgba(0,245,212,0.06)';
-      const typeBorder=isReq?'rgba(123,97,255,0.25)':'rgba(0,245,212,0.18)';
-      const typeLabel=isReq?'Request':'Signup';
-      const typePill='<span style="background:'+typeBg+';color:'+typeColor+';border:1px solid '+typeBorder+';padding:2px 8px;border-radius:99px;font-size:9px;font-weight:700;letter-spacing:0.04em;margin-right:8px">'+typeLabel+'</span>';
-      let actions='';
-      if(s.status==='PENDING'){
-        actions='<button class="appr-btn appr-approve" onclick="approve('+s.id+')">Approve</button>'
-               +'<button class="appr-btn appr-reject" onclick="reject('+s.id+')">Reject</button>';
-      }
-      const custId=s.customer_id?'<span>ID: '+s.customer_id.slice(0,8)+'...</span>':'';
-      // request_access submissions don't have a verified email yet (verification
-      // happens on /setup-account after admin approves), so the verified pill
-      // would always be red and meaningless. Suppress it for that path.
-      const verifiedPill = isReq ? '' :
-        (s.email_verified
-          ? '<span style="margin-left:6px;font-size:9px;font-weight:700;color:#00f5d4;background:rgba(0,245,212,0.1);padding:1px 6px;border-radius:99px">&check; Verified</span>'
-          : '<span style="margin-left:6px;font-size:9px;font-weight:700;color:#ff4b6e;background:rgba(255,75,110,0.1);padding:1px 6px;border-radius:99px">&cross; Unverified</span>');
-      // For request_access: show why_interested + how_heard inline so admin
-      // has the context they need before clicking Approve.
-      let extra='';
-      if(isReq && (s.why_interested || s.how_heard)){
-        const why=s.why_interested?escapeHtml(s.why_interested):'<span style="opacity:0.4">(not provided)</span>';
-        const how=s.how_heard?escapeHtml(s.how_heard):'\u2014';
-        extra='<div style="margin-top:8px;padding:8px 12px;background:rgba(123,97,255,0.04);border:1px solid rgba(123,97,255,0.12);border-radius:8px;font-size:11px;line-height:1.5;color:rgba(255,255,255,0.7)">'
-             +'<div style="font-family:monospace;font-size:9px;color:#b496ff;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:4px">How heard: '+how+'</div>'
-             +'<div style="white-space:pre-wrap">'+why+'</div>'
-             +'</div>';
-      }
-      return '<div class="appr-card">'
-        +'<div class="appr-card-hdr">'
-        +'<div class="appr-avatar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg></div>'
-        +'<div><div class="appr-name">'+typePill+escapeHtml(s.name)+'</div><div class="appr-email">'+escapeHtml(s.email)+verifiedPill+'</div></div>'
-        +'<span class="appr-status" style="background:'+sbg+';color:'+sc+'">'+s.status+'</span>'
-        +'</div>'
-        +'<div class="appr-meta"><span>\u260E '+escapeHtml(s.phone||'\u2014')+'</span><span>\u23F0 '+ts+'</span>'+custId+'</div>'
-        +extra
-        +(actions?'<div class="appr-actions">'+actions+'</div>':'')
-        +'</div>';
-    }).join('');
-  }catch(e){console.error(e)}
-}
-
-function filterAppr(s){
-  _filter=s;
-  document.querySelectorAll('.af').forEach(b=>b.classList.remove('active'));
-  document.getElementById(s?'af-'+s:'af-ALL').classList.add('active');
-  loadApprovals();
-}
-var allSignups=[];
-async function approve(id){
-  var _s=allSignups.find(function(x){return x.id===id});
-  if(_s && !_s.email_verified){
-    if(!confirm('WARNING: Email NOT verified. Approve anyway?'))return;
-  } else {
-    if(!confirm('Approve this signup? Creates customer account and database.'))return;
-  }
-  const r=await fetch('/api/proxy/approve-signup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({signup_id:id})});
-  const d=await r.json();
-  if(d.ok){toast('Account approved: '+(d.email||''),'ok');loadApprovals()}
-  else toast('Error: '+(d.error||'Unknown'),'err');
-}
-
-async function reject(id){
-  if(!confirm('Reject this signup request?'))return;
-  const r=await fetch('/api/proxy/reject-signup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({signup_id:id})});
-  const d=await r.json();
-  if(d.ok){toast('Signup rejected','ok');loadApprovals()}
-  else toast('Error: '+(d.error||'Unknown'),'err');
-}
-
-async function generateInvite(){
-  const r=await fetch('/api/proxy/generate-invite',{method:'POST',headers:{'Content-Type':'application/json'}});
-  const d=await r.json();
-  if(d.ok){
-    document.getElementById('gen-code').textContent=d.code;
-    document.getElementById('copy-btn').style.display='inline';
-    toast('Invite code generated: '+d.code,'ok');
-    loadInvites();
-  } else toast('Error: '+(d.error||'Unknown'),'err');
-}
-
-function copyCode(){
-  const code=document.getElementById('gen-code').textContent;
-  if(code) navigator.clipboard.writeText(code).then(function(){toast('Copied to clipboard','ok')});
-}
-
-var _inviteNotes={};
-
-async function loadInviteNotes(){
-  try{
-    const r=await fetch('/api/invite-notes');
-    const d=await r.json();
-    if(d.ok) _inviteNotes=d.notes||{};
-  }catch(e){}
-}
-
-async function loadInvites(){
-  try{
-    await loadInviteNotes();
-    const r=await fetch('/api/proxy/invite-codes');
-    const d=await r.json();
-    const el=document.getElementById('invite-list');
-    if(!el) return;
-    if(!d.codes||!d.codes.length){el.innerHTML='<div style="text-align:center;padding:20px;color:rgba(255,255,255,0.3)">No invite codes yet</div>';return}
-    el.innerHTML=d.codes.map(function(c){
-      var ts=c.created_at?new Date(c.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'\u2014';
-      var used=c.is_used;
-      var sc=used?'rgba(255,255,255,0.3)':'#00f5d4';
-      var bg=used?'rgba(255,255,255,0.02)':'rgba(0,245,212,0.04)';
-      var stTxt=used?'Used':'Available';
-      var stClr=used?'rgba(255,75,110,0.7)':'rgba(0,245,212,0.7)';
-      var n=_inviteNotes[c.code]||{};
-      var noteTxt=n.note||n.recipient_name||'';
-      var sentBadge=n.sent_at?'<span style="font-size:9px;color:rgba(0,245,212,0.6);background:rgba(0,245,212,0.08);padding:1px 6px;border-radius:99px;margin-left:4px">&check; Sent'+(n.recipient_email?' to '+n.recipient_email:'')+'</span>':'';
-      return '<div style="display:flex;align-items:center;gap:10px;padding:10px 16px;border:1px solid rgba(255,255,255,0.05);border-radius:10px;margin-bottom:6px;background:'+bg+';flex-wrap:wrap">'
-        +'<span style="font-family:monospace;font-size:13px;font-weight:700;color:'+sc+';letter-spacing:0.04em;min-width:120px">'+c.code+'</span>'
-        +'<span style="font-size:10px;color:rgba(255,255,255,0.3);min-width:90px">'+ts+'</span>'
-        +'<span style="font-size:10px;color:'+stClr+';min-width:55px">'+stTxt+'</span>'
-        +sentBadge
-        +'<button onclick="promptSendEmail(&#39;'+c.code+'&#39;)" style="padding:3px 10px;border-radius:6px;font-size:10px;font-weight:600;background:rgba(138,92,246,0.08);border:1px solid rgba(138,92,246,0.2);color:#8a5cf6;cursor:pointer;font-family:inherit;white-space:nowrap">Send To Email</button>'
-        +'<input id="note-'+c.code+'" value="'+noteTxt.replace(/"/g,'&quot;')+'" placeholder="Recipient note\u2026" onblur="saveInviteNote(&#39;'+c.code+'&#39;)" style="flex:1;min-width:140px;padding:4px 10px;border-radius:6px;font-size:11px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);color:rgba(255,255,255,0.8);font-family:inherit;outline:none">'
-        +'<span id="note-status-'+c.code+'" style="font-size:9px;font-weight:600;min-width:50px;opacity:0;transition:opacity .3s"></span>'
-        +'</div>';
-    }).join('');
-  }catch(e){console.error(e)}
-}
-
-function promptSendEmail(code){
-  var n=_inviteNotes[code]||{};
-  var defEmail=n.recipient_email||'';
-  var email=prompt('Send invite code '+code+' to email address:',defEmail);
-  if(!email) return;
-  email=email.trim();
-  if(!email||!email.includes('@')){toast('Invalid email address','err');return}
-  var name=document.getElementById('note-'+code)?.value||'';
-  sendInviteEmail(code,email,name);
-}
-
-async function sendInviteEmail(code,email,recipientName){
-  try{
-    toast('Sending\u2026','ok');
-    const r=await fetch('/api/invite-send-email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code,email:email,recipient_name:recipientName})});
-    const d=await r.json();
-    if(d.ok){toast('Invite sent to '+email,'ok');loadInvites()}
-    else toast('Error: '+(d.error||'Send failed'),'err');
-  }catch(e){toast('Network error','err')}
-}
-
-async function saveInviteNote(code){
-  var el=document.getElementById('note-'+code);
-  if(!el) return;
-  var note=el.value.trim();
-  var prev=(_inviteNotes[code]||{}).note||(_inviteNotes[code]||{}).recipient_name||'';
-  if(note===prev) return;
-  var st=document.getElementById('note-status-'+code);
-  try{
-    const r=await fetch('/api/invite-note',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code,note:note})});
-    const d=await r.json();
-    if(d.ok){
-      if(!_inviteNotes[code]) _inviteNotes[code]={};
-      _inviteNotes[code].note=note;
-      if(st){st.textContent='Saved \u2713';st.style.color='rgba(0,245,212,0.7)';st.style.opacity='1';setTimeout(function(){st.style.opacity='0'},2500)}
-    } else {
-      if(st){st.textContent='Error';st.style.color='rgba(255,75,110,0.7)';st.style.opacity='1';setTimeout(function(){st.style.opacity='0'},3000)}
-    }
-  }catch(e){
-    if(st){st.textContent='Error';st.style.color='rgba(255,75,110,0.7)';st.style.opacity='1';setTimeout(function(){st.style.opacity='0'},3000)}
-  }
-}
-
-loadApprovals();
-loadInvites();
-</script>
-"""
 
 @app.route("/monitor")
 def monitor_dashboard():
@@ -6421,6 +6195,88 @@ def api_behavior_baseline_proxy():
         return jsonify({"error": f"Retail returned {r.status_code}"}), 503
     except Exception as e:
         return jsonify({"error": f"Could not reach retail at {pi_ip}:5001 — {e}"}), 503
+
+
+@app.route("/api/auditor/ticker-state")
+def api_auditor_ticker_state():
+    """
+    Fetch ticker_state gap audit from pi5 retail portal and translate it
+    into the same {issues:[...]} shape as /api/auditor/findings so the
+    auditor panel can render both sources via one filter row.
+
+    Cross-node proxy — same pattern as /api/audit/<pi_id> and
+    /api/behavior-baseline. Uses SECRET_TOKEN bearer auth.
+    """
+    retail_pi = None
+    with registry_lock:
+        for pid, p in pi_registry.items():
+            if 'retail' in str(p.get("pi_id", "")).lower() \
+               or 'retail' in str(p.get("label", "")).lower():
+                retail_pi = p
+                break
+    if not retail_pi:
+        return jsonify({"issues": [], "error": "Retail Pi not found in registry"}), 200
+    pi_ip = retail_pi.get("ip") or retail_pi.get("pi_ip")
+    if not pi_ip:
+        return jsonify({"issues": [], "error": "Retail Pi IP unknown"}), 200
+    try:
+        import requests as _req
+        r = _req.get(
+            f"http://{pi_ip}:5001/api/ticker-state-audit",
+            headers={"Authorization": f"Bearer {SECRET_TOKEN}"},
+            timeout=10,
+        )
+        if r.status_code != 200:
+            return jsonify({"issues": [], "error": f"pi5 returned {r.status_code}"}), 200
+        report = r.json()
+    except Exception as e:
+        return jsonify({"issues": [], "error": f"Could not reach pi5 — {e}"}), 200
+
+    # Translate report → detected_issues format. Two sources:
+    #   1. anomalies (HIGH+CRITICAL) → individual per-ticker issues
+    #   2. by_owner aggregate → one summary issue per owner with gaps
+    issues = []
+    audit_ts = report.get("ts")
+    for a in (report.get("anomalies") or []):
+        ticker = a.get("ticker", "?")
+        field  = a.get("field", "?")
+        owner  = a.get("owner", "?")
+        age_h  = a.get("age_hours")
+        age_str = f"{age_h:.1f}h" if isinstance(age_h, (int, float)) else "?"
+        sev    = (a.get("severity") or "medium").lower()
+        issues.append({
+            "id":          f"ts-anomaly:{ticker}:{field}",
+            "context":     f"{ticker}.{field} NULL for {age_str} (owner: {owner})",
+            "severity":    sev,
+            "source_file": f"ticker_state::{owner}",
+            "last_seen":   audit_ts,
+            "hit_count":   1,
+        })
+    # Owner-summary rows: surface gap counts even when no HIGH/CRITICAL anomalies
+    # exist. Severity 'low' so they sit below real anomalies in the sort.
+    for owner, b in (report.get("by_owner") or {}).items():
+        gaps = b.get("gaps", 0)
+        if gaps == 0:
+            continue
+        anom = b.get("anomalies", 0)
+        fields_n = len(b.get("fields") or [])
+        suffix = f" — {anom} anomaly" if anom else ""
+        issues.append({
+            "id":          f"ts-summary:{owner}",
+            "context":     f"{owner}: {gaps} NULL gaps across {fields_n} fields{suffix}",
+            "severity":    "medium" if anom else "low",
+            "source_file": f"ticker_state::summary",
+            "last_seen":   audit_ts,
+            "hit_count":   gaps,
+        })
+    return jsonify({
+        "issues":           issues,
+        "total_unresolved": len(issues),
+        "by_severity":      {},
+        "audit_ts":         audit_ts,
+        "active_tickers":   report.get("active_ticker_count"),
+        "total_gaps":       report.get("total_gaps"),
+    })
 
 
 @app.route("/api/audit/<pi_id>")
@@ -7554,6 +7410,10 @@ def proxy_direct_message():
 
 @app.route("/support-queue")
 def support_queue_page():
+    """Customer support queue page.
+
+    Body extracted to templates/customers/support.html (2026-05-05,
+    Phase 0 of /customers consolidation). Behavior unchanged."""
     if not _authorized():
         return redirect(url_for("login"))
     resp = make_response(
@@ -7563,418 +7423,13 @@ def support_queue_page():
         '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">'
         '</head><body>'
         + _subpage_header('Customer Support')
-        + _SUPPORT_QUEUE_BODY
+        + render_template('customers/support.html')
         + '</body></html>'
     )
     resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
     return resp
 
 
-_SUPPORT_QUEUE_BODY = r"""
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{background:#0a0c14;color:rgba(255,255,255,0.88);font-family:'Inter',system-ui,sans-serif;font-size:14px;min-height:100vh}
-::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:99px}
-.sq-page{max-width:1000px;margin:0 auto;padding:20px 24px}
-.sq-title{font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.4);margin-bottom:14px;display:flex;align-items:center;gap:8px}
-.sq-title::after{content:'';flex:1;height:1px;background:rgba(255,255,255,0.07)}
-.sq-stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
-.sq-stat{border-radius:12px;padding:14px 16px;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.02)}
-.sq-stat-label{font-size:9px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:4px}
-.sq-stat-val{font-size:28px;font-weight:700;font-family:'JetBrains Mono',monospace;line-height:1}
-.sq-stat-sub{font-size:9px;color:rgba(255,255,255,0.25);margin-top:4px}
-.sq-stat.amber .sq-stat-label{color:#f5a623}.sq-stat.amber .sq-stat-val{color:#f5a623}
-.sq-stat.purple .sq-stat-label{color:#7b61ff}.sq-stat.purple .sq-stat-val{color:#7b61ff}
-.sq-stat.pink .sq-stat-label{color:#ff4b6e}.sq-stat.pink .sq-stat-val{color:#ff4b6e}
-.sq-stat.teal .sq-stat-label{color:#00f5d4}.sq-stat.teal .sq-stat-val{color:#00f5d4}
-.sq-filters{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap}
-.sq-f{padding:5px 14px;border-radius:8px;font-size:11px;font-weight:600;background:transparent;border:1px solid rgba(255,255,255,0.07);color:rgba(255,255,255,0.4);cursor:pointer;font-family:inherit;transition:all .15s}
-.sq-f.active{background:rgba(0,245,212,0.06);border-color:rgba(0,245,212,0.15);color:#00f5d4}
-.sq-f.f-archived.active{background:rgba(255,255,255,0.04);border-color:rgba(255,255,255,0.12);color:rgba(255,255,255,0.5)}
-.sq-card{background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px 16px;margin-bottom:8px;cursor:pointer;transition:border-color .15s;border-left:3px solid rgba(255,255,255,0.08)}
-.sq-card:hover{border-color:rgba(255,255,255,0.15)}
-.sq-card.st-open{border-left-color:#f5a623}
-.sq-card.st-in_progress{border-left-color:#7b61ff}
-.sq-card.st-resolved{border-left-color:#00f5d4}
-.sq-card.st-archived{border-left-color:rgba(255,255,255,0.15);opacity:0.6}
-.sq-card.st-closed{border-left-color:rgba(255,255,255,0.1)}
-.sq-card-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
-.sq-subj{font-size:13px;font-weight:600}
-.sq-badge{font-size:8px;font-weight:700;padding:2px 8px;border-radius:99px;text-transform:uppercase;letter-spacing:0.06em}
-.sq-badge.portal{background:rgba(0,245,212,0.08);color:#00f5d4}
-.sq-badge.account{background:rgba(123,97,255,0.08);color:#7b61ff}
-.sq-badge.suggestion{background:rgba(245,166,35,0.08);color:#f5a623}
-.sq-badge.beta_test{background:rgba(255,75,110,0.08);color:#ff4b6e}
-.sq-badge.direct_message{background:rgba(123,97,255,0.08);color:#7b61ff}
-.sq-badge.system{background:rgba(255,255,255,0.05);color:rgba(255,255,255,0.5)}
-.sq-status{font-size:8px;font-weight:700;padding:2px 8px;border-radius:99px;text-transform:uppercase}
-.sq-status.open{background:rgba(245,166,35,0.1);color:#f5a623}
-.sq-status.in_progress{background:rgba(123,97,255,0.1);color:#7b61ff}
-.sq-status.resolved{background:rgba(0,245,212,0.1);color:#00f5d4}
-.sq-status.archived{background:rgba(255,255,255,0.05);color:rgba(255,255,255,0.35)}
-.sq-status.closed{background:rgba(255,255,255,0.05);color:rgba(255,255,255,0.3)}
-.sq-meta{font-size:10px;color:rgba(255,255,255,0.35);margin-top:2px}
-.sq-preview{font-size:11px;color:rgba(255,255,255,0.25);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sq-archive-btn{padding:3px 10px;border-radius:6px;font-size:9px;font-weight:600;border:1px solid rgba(255,255,255,0.08);background:transparent;color:rgba(255,255,255,0.3);cursor:pointer;margin-left:6px;transition:all .15s}
-.sq-archive-btn:hover{border-color:rgba(255,255,255,0.2);color:rgba(255,255,255,0.6)}
-.sq-detail{background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:16px;margin-bottom:16px}
-.sq-msg{padding:8px 10px;border-radius:8px;margin-bottom:6px}
-.sq-msg.customer{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06)}
-.sq-msg.admin{background:rgba(123,97,255,0.06);border:1px solid rgba(123,97,255,0.12)}
-.sq-msg-head{font-size:9px;color:rgba(255,255,255,0.35);margin-bottom:3px}
-.sq-msg-body{font-size:12px;color:rgba(255,255,255,0.88);line-height:1.5;white-space:pre-wrap}
-.sq-reply-box{width:100%;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 10px;color:rgba(255,255,255,0.88);font-size:12px;font-family:'Inter',sans-serif;min-height:60px;resize:vertical;outline:none;margin-top:8px}
-.sq-reply-btn{padding:6px 16px;border-radius:6px;border:none;background:#00f5d4;color:#000;font-size:11px;font-weight:700;cursor:pointer;margin-top:6px}
-.sq-status-btns{display:flex;gap:6px;margin-top:8px}
-.sq-st-btn{padding:4px 10px;border-radius:6px;font-size:9px;font-weight:600;border:1px solid rgba(255,255,255,0.1);background:transparent;color:rgba(255,255,255,0.4);cursor:pointer;transition:all .15s}
-.sq-st-btn:hover{border-color:rgba(255,255,255,0.2);color:rgba(255,255,255,0.7)}
-.sq-panel-tab{position:fixed;right:0;top:50%;transform:translateY(-50%);z-index:300;background:#0d1120;border:1px solid rgba(255,255,255,0.1);border-right:none;border-radius:10px 0 0 10px;padding:12px 8px;cursor:pointer;transition:transform .15s;display:flex;flex-direction:column;align-items:center;gap:6px}
-.sq-panel-tab:hover{transform:translateY(-50%) translateX(-4px)}
-.sq-panel-tab svg{width:16px;height:16px;opacity:0.5}
-.sq-panel-tab span{writing-mode:vertical-rl;text-orientation:mixed;font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.4)}
-.sq-panel-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.5);backdrop-filter:blur(4px);z-index:350;opacity:0;pointer-events:none;transition:opacity .2s}
-.sq-panel-overlay.open{opacity:1;pointer-events:all}
-.sq-panel{position:fixed;right:0;top:0;bottom:0;width:min(480px,90vw);background:#0d1120;border-left:1px solid rgba(255,255,255,0.1);z-index:400;transform:translateX(100%);transition:transform .3s cubic-bezier(0.4,0,0.2,1);display:flex;flex-direction:column}
-.sq-panel.open{transform:translateX(0)}
-.sq-panel-hdr{padding:16px 20px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.07)}
-.sq-panel-close{width:28px;height:28px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:transparent;color:rgba(255,255,255,0.5);cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center}
-.sq-panel-close:hover{border-color:rgba(255,255,255,0.2);color:rgba(255,255,255,0.8)}
-.sq-tab-bar{display:flex;border-bottom:1px solid rgba(255,255,255,0.07);padding:0 20px}
-.sq-tab{padding:10px 16px;font-size:11px;font-weight:600;color:rgba(255,255,255,0.35);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s}
-.sq-tab.active{color:#00f5d4;border-bottom-color:#00f5d4}
-.sq-tab:hover{color:rgba(255,255,255,0.7)}
-.sq-tab-body{flex:1;overflow-y:auto;padding:16px 20px}
-.sq-tab-content{display:none}.sq-tab-content.active{display:block}
-.sq-input{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:rgba(255,255,255,0.88);font-size:12px;outline:none;font-family:'Inter',sans-serif;width:100%}
-.sq-input:focus{border-color:rgba(0,245,212,0.3)}
-.sq-create-btn{padding:8px 16px;border-radius:8px;border:none;font-size:11px;font-weight:700;cursor:pointer;transition:all .15s}
-.sq-create-btn.pink{background:rgba(255,75,110,0.08);border:1px solid rgba(255,75,110,0.2);color:#ff4b6e}
-.sq-create-btn.teal{background:rgba(0,245,212,0.06);border:1px solid rgba(0,245,212,0.15);color:#00f5d4}
-.sq-create-btn:hover{filter:brightness(1.2)}
-.sq-test-card{padding:12px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;margin-bottom:8px}
-.sq-test-title{font-size:12px;font-weight:600}
-.sq-test-desc{font-size:11px;color:rgba(255,255,255,0.4);margin-top:3px}
-.sq-test-meta{font-size:10px;color:rgba(255,255,255,0.3);margin-top:4px}
-.sq-test-actions{display:flex;gap:6px;margin-top:8px}
-.sq-test-btn{padding:4px 12px;border-radius:6px;font-size:9px;font-weight:600;cursor:pointer;border:1px solid;transition:all .15s}
-.sq-test-btn.archive{border-color:rgba(255,255,255,0.1);background:transparent;color:rgba(255,255,255,0.4)}
-.sq-test-btn.archive:hover{border-color:rgba(255,255,255,0.25);color:rgba(255,255,255,0.7)}
-.sq-test-btn.cancel{border-color:rgba(255,75,110,0.2);background:rgba(255,75,110,0.06);color:#ff4b6e}
-.sq-test-btn.cancel:hover{background:rgba(255,75,110,0.12)}
-.sq-test-btn.clear{border-color:rgba(0,245,212,0.2);background:rgba(0,245,212,0.06);color:#00f5d4}
-.sq-test-btn.clear:hover{background:rgba(0,245,212,0.12)}
-.sq-resp{padding:10px 12px;border:1px solid rgba(255,255,255,0.06);border-radius:8px;margin-bottom:6px;cursor:pointer;transition:border-color .15s}
-.sq-resp:hover{border-color:rgba(255,255,255,0.15)}
-.sq-resp-head{font-size:10px;color:rgba(255,255,255,0.35);margin-bottom:3px}
-.sq-resp-body{font-size:11px;color:rgba(255,255,255,0.7);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sq-toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);padding:8px 20px;border-radius:8px;font-size:12px;font-weight:600;z-index:999;opacity:0;transition:opacity .3s;pointer-events:none}
-.sq-toast.show{opacity:1}.sq-toast.ok{background:#00f5d4;color:#000}.sq-toast.err{background:#ff4b6e;color:#fff}
-</style>
-<div class="sq-page">
-  <div class="sq-stat-grid">
-    <div class="sq-stat amber"><div class="sq-stat-label">Open</div><div class="sq-stat-val" id="sq-s-open">0</div><div class="sq-stat-sub">awaiting review</div></div>
-    <div class="sq-stat purple"><div class="sq-stat-label">In Progress</div><div class="sq-stat-val" id="sq-s-progress">0</div><div class="sq-stat-sub">being handled</div></div>
-    <div class="sq-stat pink"><div class="sq-stat-label">Beta Tests</div><div class="sq-stat-val" id="sq-s-beta">0</div><div class="sq-stat-sub">active tests</div></div>
-    <div class="sq-stat teal"><div class="sq-stat-label">Resolved</div><div class="sq-stat-val" id="sq-s-resolved">0</div><div class="sq-stat-sub">completed</div></div>
-  </div>
-  <div class="sq-filters">
-    <button class="sq-f active" data-filter="all">All</button>
-    <button class="sq-f" data-filter="open">Open</button>
-    <button class="sq-f" data-filter="in_progress">In Progress</button>
-    <button class="sq-f" data-filter="resolved">Resolved</button>
-    <button class="sq-f" data-filter="beta_test" data-cat="beta_test">Beta Tests</button>
-    <button class="sq-f f-archived" data-filter="archived">Archived</button>
-  </div>
-  <div id="sq-list"><div style="color:rgba(255,255,255,0.3);text-align:center;padding:30px">Loading...</div></div>
-  <div id="sq-detail"></div>
-</div>
-<div class="sq-panel-tab" id="sq-panel-tab">
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
-  <span>Tools</span>
-</div>
-<div class="sq-panel-overlay" id="sq-panel-overlay"></div>
-<div class="sq-panel" id="sq-panel">
-  <div class="sq-panel-hdr"><div style="font-size:14px;font-weight:700">Support Tools</div><button class="sq-panel-close" id="sq-panel-close-btn">&times;</button></div>
-  <div class="sq-tab-bar" id="sq-tab-bar">
-    <div class="sq-tab active" data-tab="beta">Beta Tests</div>
-    <div class="sq-tab" data-tab="dm">Direct Message</div>
-    <div class="sq-tab" data-tab="resp">Responses</div>
-  </div>
-  <div class="sq-tab-body">
-    <div class="sq-tab-content active" id="sq-tc-beta">
-      <div style="margin-bottom:16px">
-        <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.4);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:10px">Create New Test</div>
-        <div style="display:flex;flex-direction:column;gap:8px">
-          <input class="sq-input" id="bt-title" aria-label="Beta test title" placeholder="Test title (e.g. Signup flow verification)">
-          <textarea class="sq-input" id="bt-desc" aria-label="Beta test description" placeholder="Description of what to test..." style="min-height:60px;resize:vertical"></textarea>
-          <div style="display:flex;gap:8px;align-items:center">
-            <span style="font-size:10px;color:rgba(255,255,255,0.35)">Required:</span>
-            <input class="sq-input" id="bt-required" aria-label="Required tester count" type="number" value="2" min="1" max="10" style="width:50px">
-            <button type="button" class="sq-create-btn pink" id="bt-create-btn">Create &amp; Broadcast</button>
-          </div>
-        </div>
-      </div>
-      <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.4);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px">Active Tests</div>
-      <div id="bt-list"><div style="font-size:11px;color:rgba(255,255,255,0.2);text-align:center;padding:20px">Loading...</div></div>
-    </div>
-    <div class="sq-tab-content" id="sq-tc-dm">
-      <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.4);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:10px">Send Direct Message</div>
-      <div style="display:flex;flex-direction:column;gap:8px">
-        <select class="sq-input" id="dm-customer" aria-label="Customer"><option value="">Loading customers...</option></select>
-        <select class="sq-input" id="dm-category" aria-label="Message category"><option value="account">Account</option><option value="system">System</option><option value="alert">Alert</option><option value="daily">Daily</option></select>
-        <input class="sq-input" id="dm-title" aria-label="Message title" placeholder="Message title">
-        <textarea class="sq-input" id="dm-body" aria-label="Message body" placeholder="Message body..." style="min-height:80px;resize:vertical"></textarea>
-        <button type="button" class="sq-create-btn teal" id="dm-send-btn">Send to Customer</button>
-      </div>
-    </div>
-    <div class="sq-tab-content" id="sq-tc-resp">
-      <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.4);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:10px">Recent Customer Messages</div>
-      <div id="resp-list"><div style="font-size:11px;color:rgba(255,255,255,0.2);text-align:center;padding:20px">Loading...</div></div>
-    </div>
-  </div>
-</div>
-<div class="sq-toast" id="sq-toast"></div>
-<script>
-var _sqFilter=null,_sqCatFilter=null,_allTickets=[];
-
-function sqToast(m,t){var e=document.getElementById("sq-toast");e.textContent=m;e.className="sq-toast show "+(t||"ok");setTimeout(function(){e.className="sq-toast"},3000)}
-
-// ── PANEL ──
-function openSqPanel(){document.getElementById("sq-panel").classList.add("open");document.getElementById("sq-panel-overlay").classList.add("open");document.getElementById("sq-panel-tab").style.display="none";sqLoadBetaTests();sqLoadCustomerList()}
-function closeSqPanel(){document.getElementById("sq-panel").classList.remove("open");document.getElementById("sq-panel-overlay").classList.remove("open");document.getElementById("sq-panel-tab").style.display=""}
-document.getElementById("sq-panel-tab").addEventListener("click",openSqPanel);
-document.getElementById("sq-panel-overlay").addEventListener("click",closeSqPanel);
-document.getElementById("sq-panel-close-btn").addEventListener("click",closeSqPanel);
-
-// ── TABS ──
-document.getElementById("sq-tab-bar").addEventListener("click",function(e){
-  var tab=e.target.dataset.tab;if(!tab)return;
-  document.querySelectorAll(".sq-tab").forEach(function(t){t.classList.remove("active")});
-  document.querySelectorAll(".sq-tab-content").forEach(function(t){t.classList.remove("active")});
-  e.target.classList.add("active");
-  document.getElementById("sq-tc-"+tab).classList.add("active");
-  if(tab==="resp")sqLoadResponses();if(tab==="beta")sqLoadBetaTests();
-});
-
-// ── FILTERS ──
-document.querySelector(".sq-filters").addEventListener("click",function(e){
-  var btn=e.target.closest(".sq-f");if(!btn)return;
-  var f=btn.dataset.filter;
-  _sqFilter=(f==="all")?null:(f==="beta_test"?null:f);
-  _sqCatFilter=btn.dataset.cat||null;
-  document.querySelectorAll(".sq-f").forEach(function(b){b.classList.remove("active")});
-  btn.classList.add("active");
-  document.getElementById("sq-detail").innerHTML="";
-  sqRenderTickets();
-});
-
-// ── STATS ──
-function sqUpdateStats(){var o=0,p=0,r=0;_allTickets.forEach(function(t){if(t.status==="open")o++;else if(t.status==="in_progress")p++;else if(t.status==="resolved")r++});document.getElementById("sq-s-open").textContent=o;document.getElementById("sq-s-progress").textContent=p;document.getElementById("sq-s-resolved").textContent=r}
-
-// ── TICKETS ──
-async function sqLoadTickets(){
-  var el=document.getElementById("sq-list");
-  try{
-    var r=await fetch("/api/proxy/support/all-tickets");
-    var d=await r.json();
-    _allTickets=d.tickets||[];
-    sqUpdateStats();
-    sqRenderTickets();
-  }catch(e){el.innerHTML="<div style='color:#ff4b6e;padding:20px;text-align:center'>Error loading tickets: "+e.message+"</div>"}
-}
-
-function sqRenderTickets(){
-  var el=document.getElementById("sq-list");
-  var tickets=_allTickets.filter(function(t){
-    if(_sqFilter==="archived")return t.status==="archived";
-    if(_sqFilter&&t.status!==_sqFilter)return false;
-    if(_sqCatFilter&&t.category!==_sqCatFilter)return false;
-    if(!_sqFilter&&!_sqCatFilter&&t.status==="archived")return false;
-    return true;
-  });
-  if(!tickets.length){el.innerHTML="<div style='color:rgba(255,255,255,0.3);text-align:center;padding:30px'>No tickets found</div>";return}
-  el.innerHTML=tickets.map(function(t){
-    var last=t.last_message?t.last_message.message.slice(0,80):"";
-    var name=t.customer_name||t.customer_email||(t.customer_id||"").slice(0,8);
-    var archBtn=t.status!=="archived"?" <button class='sq-archive-btn' data-action='archive' data-tid='"+t.ticket_id+"' data-cid='"+(t.customer_id||"")+"'>Archive</button>":"";
-    return "<div class='sq-card st-"+t.status+"' data-action='view' data-tid='"+t.ticket_id+"' data-cid='"+(t.customer_id||"")+"'>"
-      +"<div class='sq-card-top'>"
-      +"<div class='sq-subj'>"+(t.subject||"")+"</div>"
-      +"<div style='display:flex;gap:4px;align-items:center'><span class='sq-badge "+t.category+"'>"+t.category+"</span>"
-      +"<span class='sq-status "+t.status+"'>"+t.status.replace("_"," ")+"</span>"+archBtn+"</div></div>"
-      +"<div class='sq-meta'>"+name+" &middot; "+(t.updated_at||"").slice(0,16)+" &middot; "+(t.message_count||0)+" msg</div>"
-      +(last?"<div class='sq-preview'>"+last+"</div>":"")
-      +"</div>";
-  }).join("");
-}
-
-// ── EVENT DELEGATION for tickets ──
-document.getElementById("sq-list").addEventListener("click",function(e){
-  var archBtn=e.target.closest("[data-action='archive']");
-  if(archBtn){e.stopPropagation();sqArchive(archBtn.dataset.tid,archBtn.dataset.cid);return}
-  var card=e.target.closest("[data-action='view']");
-  if(card)sqViewTicket(card.dataset.tid,card.dataset.cid);
-});
-
-async function sqArchive(tid,cid){
-  await fetch("/api/proxy/support/status/"+tid,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:"archived",customer_id:cid})});
-  sqToast("Archived: "+tid);sqLoadTickets();
-}
-
-async function sqViewTicket(ticketId,customerId){
-  var el=document.getElementById("sq-detail");
-  try{
-    var r=await fetch("/api/proxy/support/ticket/"+ticketId+"?customer_id="+customerId);
-    var d=await r.json();
-    if(!d.ticket){el.innerHTML="Ticket not found";return}
-    var t=d.ticket;var msgs=d.messages||[];
-    var html="<div class='sq-detail'>";
-    html+="<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px'>";
-    html+="<div style='font-size:14px;font-weight:700'>"+t.subject+"</div>";
-    html+="<div style='display:flex;gap:4px;align-items:center'><span class='sq-status "+t.status+"'>"+t.status.replace("_"," ")+"</span>";
-    if(t.status!=="archived")html+="<button class='sq-archive-btn' data-action='detail-archive' data-tid='"+ticketId+"' data-cid='"+customerId+"'>Archive</button>";
-    html+="</div></div>";
-    html+="<div style='font-size:10px;color:rgba(255,255,255,0.35);margin-bottom:12px'>"+t.ticket_id+" &middot; "+t.category+"</div>";
-    msgs.forEach(function(m){
-      var cls=m.sender==="admin"?"admin":"customer";
-      html+="<div class='sq-msg "+cls+"'>";
-      html+="<div class='sq-msg-head'>"+(m.sender==="admin"?"You":"Customer")+" &middot; "+(m.created_at||"").slice(0,16)+"</div>";
-      html+="<div class='sq-msg-body'>"+m.message+"</div></div>";
-    });
-    html+="<textarea class='sq-reply-box' id='sq-reply' aria-label='Reply to customer' placeholder='Write a reply...'></textarea>";
-    html+="<div style='display:flex;justify-content:space-between;align-items:center'>";
-    html+="<button class='sq-reply-btn' data-action='reply' data-tid='"+ticketId+"' data-cid='"+customerId+"'>Send Reply</button>";
-    html+="<div class='sq-status-btns'>";
-    html+="<button class='sq-st-btn' data-action='status' data-tid='"+ticketId+"' data-cid='"+customerId+"' data-st='in_progress'>In Progress</button>";
-    html+="<button class='sq-st-btn' data-action='status' data-tid='"+ticketId+"' data-cid='"+customerId+"' data-st='resolved'>Resolved</button>";
-    html+="<button class='sq-st-btn' data-action='status' data-tid='"+ticketId+"' data-cid='"+customerId+"' data-st='archived'>Archive</button>";
-    html+="</div></div></div>";
-    el.innerHTML=html;
-    el.scrollIntoView({behavior:"smooth"});
-  }catch(e){el.innerHTML="Error loading ticket"}
-}
-
-// ── EVENT DELEGATION for detail view ──
-document.getElementById("sq-detail").addEventListener("click",function(e){
-  var btn=e.target.closest("[data-action]");if(!btn)return;
-  var action=btn.dataset.action;
-  if(action==="detail-archive"){sqArchive(btn.dataset.tid,btn.dataset.cid);return}
-  if(action==="reply"){var msg=document.getElementById("sq-reply").value.trim();if(msg)sqReply(btn.dataset.tid,btn.dataset.cid,msg);return}
-  if(action==="status"){sqSetStatus(btn.dataset.tid,btn.dataset.cid,btn.dataset.st);return}
-});
-
-async function sqReply(tid,cid,msg){
-  await fetch("/api/proxy/support/reply/"+tid,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:msg,customer_id:cid})});
-  sqToast("Reply sent");sqViewTicket(tid,cid);
-}
-
-async function sqSetStatus(tid,cid,st){
-  await fetch("/api/proxy/support/status/"+tid,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:st,customer_id:cid})});
-  sqToast("Status: "+st.replace("_"," "));sqLoadTickets();
-  if(st!=="archived")sqViewTicket(tid,cid);else document.getElementById("sq-detail").innerHTML="";
-}
-
-// ── BETA TESTS ──
-document.getElementById("bt-create-btn").addEventListener("click",sqCreateBetaTest);
-async function sqCreateBetaTest(){
-  var title=document.getElementById("bt-title").value.trim();
-  var desc=document.getElementById("bt-desc").value.trim();
-  var req=parseInt(document.getElementById("bt-required").value)||2;
-  if(!title||!desc){sqToast("Title and description required","err");return}
-  var r=await fetch("/api/beta-tests",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title:title,description:desc,required_confirmations:req})});
-  var d=await r.json();
-  if(d.ok){sqToast("Beta test created: "+d.test_id);document.getElementById("bt-title").value="";document.getElementById("bt-desc").value="";sqLoadBetaTests()}
-  else{sqToast(d.error||"Failed","err")}
-}
-
-async function sqLoadBetaTests(){
-  var el=document.getElementById("bt-list");
-  try{
-    var r=await fetch("/api/beta-tests");var d=await r.json();var tests=d.tests||[];
-    var active=tests.filter(function(t){return t.status==="active"}).length;
-    document.getElementById("sq-s-beta").textContent=active;
-    if(!tests.length){el.innerHTML="<div style='font-size:11px;color:rgba(255,255,255,0.2);text-align:center;padding:20px'>No beta tests yet</div>";return}
-    el.innerHTML=tests.map(function(t){
-      var stColor=t.status==="cleared"?"#00f5d4":t.status==="cancelled"?"#ff4b6e":t.status==="archived"?"rgba(255,255,255,0.35)":"#f5a623";
-      var actions="";
-      if(t.status==="active"){
-        actions="<div class='sq-test-actions'>"
-          +"<button class='sq-test-btn clear' data-action='beta-status' data-id='"+t.id+"' data-st='cleared'>Clear Test</button>"
-          +"<button class='sq-test-btn archive' data-action='beta-status' data-id='"+t.id+"' data-st='archived'>Archive</button>"
-          +"<button class='sq-test-btn cancel' data-action='beta-status' data-id='"+t.id+"' data-st='cancelled'>Cancel Test</button>"
-          +"</div>";
-      }
-      return "<div class='sq-test-card'>"
-        +"<div style='display:flex;justify-content:space-between;align-items:center'>"
-        +"<div class='sq-test-title'>"+t.id+": "+t.title+"</div>"
-        +"<span style='font-size:9px;font-weight:700;color:"+stColor+";text-transform:uppercase'>"+t.status+"</span></div>"
-        +"<div class='sq-test-desc'>"+(t.description||"").slice(0,100)+"</div>"
-        +"<div class='sq-test-meta'>Required: "+t.required_confirmations+" confirmations</div>"
-        +actions+"</div>";
-    }).join("");
-  }catch(e){}
-}
-
-document.getElementById("bt-list").addEventListener("click",function(e){
-  var btn=e.target.closest("[data-action='beta-status']");if(!btn)return;
-  sqBetaStatus(btn.dataset.id,btn.dataset.st);
-});
-
-async function sqBetaStatus(testId,status){
-  try{var r=await fetch("/api/beta-tests/"+testId+"/status",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:status})});
-  var d=await r.json();if(d.ok){sqToast("Test "+testId+": "+status);sqLoadBetaTests()}else{sqToast(d.error||"Failed","err")}}
-  catch(e){sqToast("Error: "+e.message,"err")}
-}
-
-// ── DIRECT MESSAGE ──
-document.getElementById("dm-send-btn").addEventListener("click",sqSendDirect);
-async function sqSendDirect(){
-  var cid=document.getElementById("dm-customer").value;
-  var title=document.getElementById("dm-title").value.trim();
-  var body=document.getElementById("dm-body").value.trim();
-  if(!cid){sqToast("Select a customer first","err");return}
-  if(!title){sqToast("Enter a message title","err");return}
-  if(!body){sqToast("Enter a message body","err");return}
-  try{var r=await fetch("/api/proxy/direct-message",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({customer_id:cid,title:title,message:body})});
-  if(!r.ok){sqToast("Server error: HTTP "+r.status,"err");return}
-  var d=await r.json();if(d.ok){sqToast("Message sent");document.getElementById("dm-title").value="";document.getElementById("dm-body").value="";sqLoadTickets()}
-  else{sqToast(d.error||"Send failed","err")}}catch(e){sqToast("Network error: "+e.message,"err")}
-}
-
-async function sqLoadCustomerList(){
-  try{var r=await fetch("/api/proxy/billing/all-customers");var d=await r.json();
-  var sel=document.getElementById("dm-customer");if(!sel)return;
-  var custs=d.customers||[];sel.innerHTML="<option value=''>Select customer...</option>";
-  custs.forEach(function(c){var opt=document.createElement("option");opt.value=c.id;opt.textContent=(c.name||c.email||c.id.slice(0,8));sel.appendChild(opt)})}catch(e){}
-}
-
-// ── RESPONSES ──
-async function sqLoadResponses(){
-  var el=document.getElementById("resp-list");
-  try{var r=await fetch("/api/proxy/support/all-tickets");var d=await r.json();var tickets=d.tickets||[];
-  var responses=[];
-  tickets.forEach(function(t){if(t.last_message&&t.last_message.sender==="customer"){
-    responses.push({ticket_id:t.ticket_id,customer_id:t.customer_id,subject:t.subject,message:t.last_message.message,time:t.last_message.created_at,name:t.customer_name||t.customer_email||(t.customer_id||"").slice(0,8)})}});
-  responses.sort(function(a,b){return(b.time||"").localeCompare(a.time||"")});
-  if(!responses.length){el.innerHTML="<div style='font-size:11px;color:rgba(255,255,255,0.2);text-align:center;padding:20px'>No customer messages yet</div>";return}
-  el.innerHTML=responses.slice(0,20).map(function(r){
-    return "<div class='sq-resp' data-action='view-resp' data-tid='"+r.ticket_id+"' data-cid='"+r.customer_id+"'>"
-      +"<div class='sq-resp-head'>"+r.name+" &middot; "+r.subject+" &middot; "+(r.time||"").slice(0,16)+"</div>"
-      +"<div class='sq-resp-body'>"+(r.message||"").slice(0,120)+"</div></div>";
-  }).join("")}catch(e){el.innerHTML="<div style='color:#ff4b6e;text-align:center;padding:20px'>Error</div>"}
-}
-
-document.getElementById("resp-list").addEventListener("click",function(e){
-  var el=e.target.closest("[data-action='view-resp']");if(!el)return;
-  closeSqPanel();sqViewTicket(el.dataset.tid,el.dataset.cid);
-});
-
-// ── INIT ──
-sqLoadTickets();
-sqLoadBetaTests();
-setInterval(sqLoadTickets,15000);
-</script>
-"""
 
 
 
@@ -8314,631 +7769,33 @@ def proxy_activity_report():
         return jsonify({"error": f"proxy failed: {e}"}), 502
 
 
-_CUSTOMER_ACTIVITY_TEMPLATE = """
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{background:#0a0c14;color:rgba(255,255,255,0.88);font-family:'Inter',system-ui,sans-serif;font-size:14px;min-height:100vh}
-::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:99px}
-.ca-wrap{max-width:1200px;margin:0 auto;padding:20px 24px}
-.ca-h{font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.4);margin-bottom:14px}
-.ca-form{background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:16px;margin-bottom:18px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;align-items:end}
-.ca-form label{display:block;font-size:10px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px}
-.ca-form input,.ca-form select{width:100%;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:8px 10px;color:rgba(255,255,255,0.88);font-family:'JetBrains Mono',monospace;font-size:12px}
-.ca-form input:focus,.ca-form select:focus{outline:none;border-color:rgba(0,245,212,0.4)}
-.ca-form button{background:rgba(0,245,212,0.1);border:1px solid rgba(0,245,212,0.3);color:#00f5d4;border-radius:6px;padding:8px 16px;font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer}
-.ca-form button:hover{background:rgba(0,245,212,0.18)}
-.ca-presets{display:flex;gap:6px;flex-wrap:wrap;grid-column:1/-1}
-.ca-presets button{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);color:rgba(255,255,255,0.6);font-size:10px;padding:5px 10px;text-transform:none;letter-spacing:0}
-.ca-presets button:hover{background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.88)}
-.ca-customer-list{max-height:140px;overflow-y:auto;border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:6px;background:rgba(255,255,255,0.02)}
-.ca-customer-list label{display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:4px;cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:10px;color:rgba(255,255,255,0.6);text-transform:none;letter-spacing:0;margin:0}
-.ca-customer-list label:hover{background:rgba(255,255,255,0.04)}
-.ca-customer-list input[type=checkbox]{margin-right:4px;width:auto}
-.ca-customer-list .ca-bulk{padding:4px 6px;border-bottom:1px solid rgba(255,255,255,0.06);margin-bottom:4px;display:flex;gap:8px}
-.ca-customer-list .ca-bulk a{font-size:10px;color:rgba(0,245,212,0.7);text-decoration:none;cursor:pointer}
-.ca-customer-list .ca-bulk a:hover{color:#00f5d4}
-.ca-out{background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px;margin-bottom:14px}
-.ca-customer-block{margin-bottom:18px;padding:12px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.06);border-radius:8px}
-.ca-cust-h{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid rgba(255,255,255,0.06)}
-.ca-cust-name{font-size:14px;font-weight:600;color:rgba(255,255,255,0.95)}
-.ca-cust-cid{font-family:'JetBrains Mono',monospace;font-size:10px;color:rgba(255,255,255,0.3)}
-.ca-stat-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-bottom:10px}
-.ca-stat{padding:8px 10px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.06);border-radius:6px}
-.ca-stat-label{font-size:9px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:3px}
-.ca-stat-val{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700}
-.ca-pos{color:#00f5d4}.ca-neg{color:#ff4b6e}.ca-mut{color:rgba(255,255,255,0.5)}
-.ca-table{width:100%;border-collapse:collapse;font-size:11px;font-family:'JetBrains Mono',monospace;margin-top:6px}
-.ca-table th{text-align:left;padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.1);font-weight:600;color:rgba(255,255,255,0.4);font-size:10px;text-transform:uppercase;letter-spacing:0.06em}
-.ca-table td{padding:5px 8px;border-bottom:1px solid rgba(255,255,255,0.04);color:rgba(255,255,255,0.85)}
-.ca-table tr:hover td{background:rgba(255,255,255,0.02)}
-.ca-section-h{font-size:10px;font-weight:700;color:rgba(255,255,255,0.55);letter-spacing:0.08em;text-transform:uppercase;margin:14px 0 6px}
-.ca-empty{text-align:center;padding:30px;color:rgba(255,255,255,0.25);font-size:12px}
-.ca-cluster{padding:10px 12px;background:rgba(245,166,35,0.06);border:1px solid rgba(245,166,35,0.2);border-radius:6px;margin-bottom:6px}
-.ca-cluster-header{font-size:11px;font-weight:600;color:#f5a623;margin-bottom:4px}
-.ca-tools{display:flex;gap:8px;justify-content:flex-end;margin-bottom:8px}
-.ca-tools button{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);color:rgba(255,255,255,0.6);font-size:10px;padding:4px 10px;border-radius:4px;cursor:pointer;font-family:inherit;letter-spacing:0.04em}
-.ca-tools button:hover{background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.88)}
-</style>
-
-<div class="ca-wrap">
-  <div class="ca-h">Customer Activity Report</div>
-
-  <form class="ca-form" id="ca-form" onsubmit="return runCAReport(event)">
-    <div>
-      <label>Start date</label>
-      <input type="date" id="ca-start" required>
-    </div>
-    <div>
-      <label>End date</label>
-      <input type="date" id="ca-end" required>
-    </div>
-    <div style="grid-column:1/-1">
-      <label>Customers</label>
-      <div class="ca-customer-list" id="ca-customers">
-        <div class="ca-bulk">
-          <a onclick="caCustToggle(true)">all</a>
-          <a onclick="caCustToggle(false)">none</a>
-        </div>
-        <label><input type="checkbox" value="owner" checked> owner only (Patrick)</label>
-        <label><input type="checkbox" value="all"> ALL customers</label>
-        <div id="ca-customer-checkboxes"><div style="font-size:10px;color:rgba(255,255,255,0.3);padding:4px">loading customer list...</div></div>
-      </div>
-    </div>
-    <div class="ca-presets">
-      <button type="button" onclick="caPreset('today')">Today</button>
-      <button type="button" onclick="caPreset('yesterday')">Yesterday</button>
-      <button type="button" onclick="caPreset('this_week')">This week</button>
-      <button type="button" onclick="caPreset('last_week')">Last week</button>
-      <button type="button" onclick="caPreset('mtd')">MTD</button>
-      <button type="button" onclick="caPreset('since_baseline')">Since 2026-04-23</button>
-    </div>
-    <div style="grid-column:1/-1;display:flex;justify-content:flex-end">
-      <button type="submit">Run report</button>
-    </div>
-  </form>
-
-  <div id="ca-output">
-    <div class="ca-empty">Pick a date range + customers above and click "Run report".</div>
-  </div>
-</div>
-
-<script>
-const SECRET_TOKEN = '{{ secret_token }}';
-
-function ymd(d){
-  const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), dd=String(d.getDate()).padStart(2,'0');
-  return y+'-'+m+'-'+dd;
-}
-
-function caPreset(kind){
-  const today = new Date();
-  let s, e;
-  if (kind === 'today')         { s = today; e = today; }
-  else if (kind === 'yesterday'){ s = new Date(today); s.setDate(today.getDate()-1); e = s; }
-  else if (kind === 'this_week'){
-    s = new Date(today);
-    const dow = today.getDay() || 7; // Mon=1..Sun=7 → 7
-    s.setDate(today.getDate() - (dow-1));
-    e = today;
-  } else if (kind === 'last_week'){
-    e = new Date(today); const dow = today.getDay() || 7; e.setDate(today.getDate() - dow);
-    s = new Date(e); s.setDate(e.getDate() - 6);
-  } else if (kind === 'mtd'){
-    s = new Date(today.getFullYear(), today.getMonth(), 1); e = today;
-  } else if (kind === 'since_baseline'){
-    s = new Date('2026-04-23'); e = today;
-  }
-  document.getElementById('ca-start').value = ymd(s);
-  document.getElementById('ca-end').value   = ymd(e);
-}
-
-function caCustToggle(on){
-  document.querySelectorAll('#ca-customer-checkboxes input').forEach(cb=>cb.checked=on);
-}
-
-async function loadCustomerList(){
-  // Pull from existing billing endpoint to populate the customer multi-select.
-  try {
-    const r = await fetch('/api/proxy/billing/all-customers', {headers:{'X-Token':SECRET_TOKEN}});
-    if (!r.ok) throw new Error('billing fetch '+r.status);
-    const d = await r.json();
-    const custs = (d.customers || []).filter(c => c.id);
-    const el = document.getElementById('ca-customer-checkboxes');
-    if (!custs.length) { el.innerHTML = '<div style="font-size:10px;color:rgba(255,255,255,0.3);padding:4px">no customers found</div>'; return; }
-    el.innerHTML = custs.map(c => {
-      const name = c.display_name || c.email || c.id.slice(0,8);
-      return `<label><input type="checkbox" value="${c.id}"> ${name} <span style="color:rgba(255,255,255,0.3);margin-left:auto">${c.id.slice(0,8)}</span></label>`;
-    }).join('');
-  } catch(e) {
-    document.getElementById('ca-customer-checkboxes').innerHTML =
-      '<div style="font-size:10px;color:#ff4b6e;padding:4px">failed to load customer list ('+e+'). You can still use "owner" or "ALL".</div>';
-  }
-}
-
-function fmtDollar(n, sign){
-  if (n === null || n === undefined) return '—';
-  const abs = Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
-  if (sign) return (n >= 0 ? '+' : '-') + '$' + abs;
-  return '$' + abs;
-}
-
-function fmtPct(n){
-  if (n === null || n === undefined) return '—';
-  return (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
-}
-
-function classOf(n){ return n > 0 ? 'ca-pos' : (n < 0 ? 'ca-neg' : 'ca-mut'); }
-
-function renderCustomerBlock(cr){
-  const a = cr.activity, p = cr.positions;
-  const equity = (a.equity_start !== null && a.equity_end !== null)
-    ? `<div class="ca-stat"><div class="ca-stat-label">Equity</div><div class="ca-stat-val ${classOf(a.equity_change||0)}">${fmtDollar(a.equity_start)} → ${fmtDollar(a.equity_end)}</div><div style="font-size:10px;color:rgba(255,255,255,0.4);margin-top:2px">${fmtDollar(a.equity_change, true)} (${fmtPct(a.equity_change_pct)})</div></div>`
-    : `<div class="ca-stat"><div class="ca-stat-label">Equity</div><div class="ca-stat-val ca-mut">no snapshots</div></div>`;
-  const stats = `
-    ${equity}
-    <div class="ca-stat"><div class="ca-stat-label">Trades opened</div><div class="ca-stat-val">${a.opened_count}</div><div style="font-size:10px;color:rgba(255,255,255,0.4)">${fmtDollar(a.opened_volume)}</div></div>
-    <div class="ca-stat"><div class="ca-stat-label">Trades closed</div><div class="ca-stat-val">${a.closed_count}</div><div style="font-size:10px;color:rgba(255,255,255,0.4)">${a.wins}W / ${a.losses}L · ${a.win_rate_pct}%</div></div>
-    <div class="ca-stat"><div class="ca-stat-label">Realized P&amp;L</div><div class="ca-stat-val ${classOf(a.realized_pnl)}">${fmtDollar(a.realized_pnl, true)}</div></div>
-    <div class="ca-stat"><div class="ca-stat-label">Open at end</div><div class="ca-stat-val">${a.open_count}</div><div style="font-size:10px;color:rgba(255,255,255,0.4)">${fmtDollar(a.open_value)}</div></div>
-  `;
-  let closedTable = '';
-  if (p.closed && p.closed.length) {
-    const rows = p.closed.slice(0,30).map(t => `
-      <tr>
-        <td>${t.ticker}</td>
-        <td style="color:rgba(255,255,255,0.5)">${t.sector || '—'}</td>
-        <td style="text-align:right">${(t.shares||0).toFixed(2)}</td>
-        <td style="text-align:right">${fmtDollar(t.entry)}</td>
-        <td style="text-align:right">${fmtDollar(t.exit)}</td>
-        <td style="text-align:right" class="${classOf(t.pnl)}">${fmtDollar(t.pnl, true)}</td>
-        <td style="text-align:right" class="${classOf(t.pnl)}">${fmtPct(t.ret_pct)}</td>
-        <td style="text-align:right">${t.days_held !== null ? t.days_held.toFixed(1) + 'd' : '—'}</td>
-        <td style="color:rgba(255,255,255,0.5)">${t.exit_reason || '—'}</td>
-      </tr>
-    `).join('');
-    closedTable = `
-      <div class="ca-section-h">Closed trades (${p.closed.length})</div>
-      <table class="ca-table">
-        <thead><tr><th>Ticker</th><th>Sector</th><th style="text-align:right">Shares</th><th style="text-align:right">Entry</th><th style="text-align:right">Exit</th><th style="text-align:right">P&amp;L</th><th style="text-align:right">Return</th><th style="text-align:right">Held</th><th>Exit</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    `;
-  }
-  let sectorTable = '';
-  if (p.sectors && p.sectors.length) {
-    sectorTable = `
-      <div class="ca-section-h">Sectors traded</div>
-      <table class="ca-table">
-        <thead><tr><th>Sector</th><th style="text-align:right">Trades</th><th style="text-align:right">P&amp;L</th></tr></thead>
-        <tbody>${p.sectors.map(s => `
-          <tr><td>${s.sector}</td><td style="text-align:right">${s.trades}</td><td style="text-align:right" class="${classOf(s.pnl)}">${fmtDollar(s.pnl, true)}</td></tr>
-        `).join('')}</tbody>
-      </table>
-    `;
-  }
-  return `
-    <div class="ca-customer-block">
-      <div class="ca-cust-h">
-        <div class="ca-cust-name">${cr.display_name}</div>
-        <div class="ca-cust-cid">${cr.customer_id.slice(0,8)}</div>
-      </div>
-      <div class="ca-stat-row">${stats}</div>
-      ${closedTable}
-      ${sectorTable}
-    </div>
-  `;
-}
-
-function renderAggregate(agg){
-  if (!agg) return '';
-  const ft = agg.fleet_totals;
-  let clusterHtml = '';
-  if (agg.signal_clusters && agg.signal_clusters.length) {
-    clusterHtml = '<div class="ca-section-h">⚠ Signal clusters (≥3 customers traded)</div>' +
-      agg.signal_clusters.map(t => `
-        <div class="ca-cluster">
-          <div class="ca-cluster-header">${t.ticker} — ${t.customers} customers, ${t.trades} trades</div>
-          <div style="font-size:10px;color:rgba(255,255,255,0.5)">Net P&amp;L: <span class="${classOf(t.pnl)}">${fmtDollar(t.pnl, true)}</span></div>
-        </div>
-      `).join('');
-  }
-  let topTickers = '';
-  if (agg.top_tickers && agg.top_tickers.length) {
-    topTickers = `
-      <div class="ca-section-h">Top tickers across fleet</div>
-      <table class="ca-table">
-        <thead><tr><th>Ticker</th><th style="text-align:right">Customers</th><th style="text-align:right">Trades</th><th style="text-align:right">P&amp;L</th></tr></thead>
-        <tbody>${agg.top_tickers.slice(0,15).map(t => `
-          <tr><td>${t.ticker}</td><td style="text-align:right">${t.customers}</td><td style="text-align:right">${t.trades}</td><td style="text-align:right" class="${classOf(t.pnl)}">${fmtDollar(t.pnl, true)}</td></tr>
-        `).join('')}</tbody>
-      </table>
-    `;
-  }
-  let topSectors = '';
-  if (agg.top_sectors && agg.top_sectors.length) {
-    topSectors = `
-      <div class="ca-section-h">Top sectors across fleet</div>
-      <table class="ca-table">
-        <thead><tr><th>Sector</th><th style="text-align:right">Customers</th><th style="text-align:right">Trades</th><th style="text-align:right">P&amp;L</th></tr></thead>
-        <tbody>${agg.top_sectors.slice(0,10).map(s => `
-          <tr><td>${s.sector}</td><td style="text-align:right">${s.customers}</td><td style="text-align:right">${s.trades}</td><td style="text-align:right" class="${classOf(s.pnl)}">${fmtDollar(s.pnl, true)}</td></tr>
-        `).join('')}</tbody>
-      </table>
-    `;
-  }
-  return `
-    <div class="ca-customer-block" style="border-color:rgba(0,245,212,0.2);background:rgba(0,245,212,0.02)">
-      <div class="ca-cust-h"><div class="ca-cust-name" style="color:#00f5d4">Fleet aggregate</div></div>
-      <div class="ca-stat-row">
-        <div class="ca-stat"><div class="ca-stat-label">Active customers</div><div class="ca-stat-val">${ft.active_customers}</div></div>
-        <div class="ca-stat"><div class="ca-stat-label">Trades opened</div><div class="ca-stat-val">${ft.trades_opened}</div></div>
-        <div class="ca-stat"><div class="ca-stat-label">Trades closed</div><div class="ca-stat-val">${ft.trades_closed}</div></div>
-        <div class="ca-stat"><div class="ca-stat-label">Realized P&amp;L</div><div class="ca-stat-val ${classOf(ft.realized_pnl)}">${fmtDollar(ft.realized_pnl, true)}</div></div>
-      </div>
-      ${clusterHtml}
-      ${topTickers}
-      ${topSectors}
-    </div>
-  `;
-}
-
-async function runCAReport(ev){
-  ev.preventDefault();
-  const start = document.getElementById('ca-start').value;
-  const end   = document.getElementById('ca-end').value;
-  if (!start || !end) return false;
-  const checked = Array.from(document.querySelectorAll('#ca-customers input:checked')).map(cb=>cb.value);
-  const body = {start, end, customer: checked.length ? checked : ['all']};
-
-  const out = document.getElementById('ca-output');
-  out.innerHTML = '<div class="ca-empty">Running report...</div>';
-
-  try {
-    const r = await fetch('/api/proxy/activity-report', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json', 'X-Token': SECRET_TOKEN},
-      body: JSON.stringify(body),
-    });
-    const d = await r.json();
-    if (!r.ok || d.error) {
-      out.innerHTML = '<div class="ca-empty" style="color:#ff4b6e">' + (d.error || ('HTTP ' + r.status)) + '</div>';
-      return false;
-    }
-    let html = '<div class="ca-tools"><button onclick="caCopyJSON()">Copy JSON</button><button onclick="caDownloadCSV()">Download CSV</button></div>';
-    html += '<div style="font-size:10px;color:rgba(255,255,255,0.4);margin-bottom:10px;font-family:JetBrains Mono,monospace">' +
-            d.meta.start + ' → ' + d.meta.end + ' · ' + d.meta.customer_count + ' customers · generated ' + d.meta.generated_at + '</div>';
-    html += renderAggregate(d.aggregate);
-    html += (d.customers || []).map(renderCustomerBlock).join('');
-    out.innerHTML = html;
-    window._caLastReport = d;
-  } catch(e) {
-    out.innerHTML = '<div class="ca-empty" style="color:#ff4b6e">' + e + '</div>';
-  }
-  return false;
-}
-
-function caCopyJSON(){
-  if (!window._caLastReport) return;
-  navigator.clipboard.writeText(JSON.stringify(window._caLastReport, null, 2));
-}
-
-function caDownloadCSV(){
-  const r = window._caLastReport;
-  if (!r) return;
-  const rows = [['customer','ticker','sector','shares','entry','exit','pnl','ret_pct','days_held','exit_reason','opened_at','closed_at']];
-  (r.customers || []).forEach(cr => {
-    (cr.positions.closed || []).forEach(t => {
-      rows.push([cr.display_name, t.ticker, t.sector, t.shares, t.entry, t.exit, t.pnl, t.ret_pct, t.days_held, t.exit_reason, t.opened_at, t.closed_at]);
-    });
-  });
-  const csv = rows.map(r => r.map(c => '"' + String(c == null ? '' : c).replace(/"/g, '""') + '"').join(',')).join('\\n');
-  const blob = new Blob([csv], {type: 'text/csv'});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'activity-' + r.meta.start + '_' + r.meta.end + '.csv';
-  a.click();
-}
-
-// Default to today on first load
-caPreset('today');
-loadCustomerList();
-</script>
-"""
 
 
 @app.route("/customer-activity")
 def customer_activity_page():
+    """Customer activity report page.
+
+    Body extracted to templates/customers/activity.html (2026-05-05,
+    Phase 0 of /customers consolidation). Behavior unchanged."""
     if not _authorized():
         return redirect(url_for("login"))
     return (_subpage_header('Customer Activity')
-            + render_template_string(_CUSTOMER_ACTIVITY_TEMPLATE,
-                                     secret_token=SECRET_TOKEN))
-
-
-# ── PILL USAGE TELEMETRY (Phase G, 2026-04-27) ────────────────────────────────
-# Operator-facing rollup of which drawer/screener pills users actually
-# click on. Drives the "ship a generous pill set, prune by usage" plan.
-
-@app.route("/api/proxy/pill-usage")
-def proxy_pill_usage():
-    """Forward a pill-usage request to retail portal. Auth converted
-    from session-cookie (cmd portal) to Bearer SECRET_TOKEN."""
-    if not _authorized():
-        return jsonify({"error": "unauthorized"}), 401
-    import requests as _req
-    days = request.args.get("days", "7")
-    try:
-        r = _req.get(
-            f"{RETAIL_PORTAL_URL}/api/admin/pill-usage",
-            params={"days": days},
-            headers={"Authorization": f"Bearer {SECRET_TOKEN}"},
-            timeout=15,
-        )
-        try:
-            return jsonify(r.json()), r.status_code
-        except Exception:
-            return jsonify({"error": f"retail returned non-JSON ({r.status_code})",
-                            "body": r.text[:500]}), 502
-    except Exception as e:
-        return jsonify({"error": f"proxy failed: {e}"}), 502
-
-
-_PILL_USAGE_TEMPLATE = """
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{background:#0a0c14;color:rgba(255,255,255,0.88);font-family:'Inter',system-ui,sans-serif;font-size:14px;min-height:100vh}
-::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:99px}
-.pu-wrap{max-width:1100px;margin:0 auto;padding:20px 24px}
-.pu-h{font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.4);margin-bottom:14px}
-.pu-controls{display:flex;gap:8px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
-.pu-controls button{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);color:rgba(255,255,255,0.6);font-size:11px;padding:6px 14px;border-radius:6px;cursor:pointer;font-family:inherit;letter-spacing:0.04em;text-transform:uppercase}
-.pu-controls button:hover{background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.88)}
-.pu-controls button.active{background:rgba(0,245,212,0.10);border-color:rgba(0,245,212,0.3);color:#00f5d4}
-.pu-controls .pu-meta{font-size:11px;color:rgba(255,255,255,0.4);font-family:'JetBrains Mono',monospace;margin-left:auto}
-.pu-totals{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:18px}
-.pu-stat{padding:14px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;text-align:center}
-.pu-stat-val{font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:700;color:#00f5d4}
-.pu-stat-label{font-size:9px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.08em;margin-top:4px}
-.pu-section{background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px 16px;margin-bottom:14px}
-.pu-section-h{font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:rgba(255,255,255,0.55);margin-bottom:10px}
-.pu-table{width:100%;border-collapse:collapse;font-size:12px;font-family:'JetBrains Mono',monospace}
-.pu-table th{text-align:left;padding:6px 10px;border-bottom:1px solid rgba(255,255,255,0.1);font-weight:600;color:rgba(255,255,255,0.4);font-size:10px;text-transform:uppercase;letter-spacing:0.06em}
-.pu-table td{padding:7px 10px;border-bottom:1px solid rgba(255,255,255,0.04);color:rgba(255,255,255,0.85)}
-.pu-table tr:hover td{background:rgba(255,255,255,0.02)}
-.pu-table td.pu-num{text-align:right;color:#00f5d4;font-weight:700}
-.pu-table td.pu-num-mut{text-align:right;color:rgba(255,255,255,0.5)}
-.pu-pill-tag{display:inline-block;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700;letter-spacing:0.05em;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);color:rgba(255,255,255,0.7)}
-.pu-empty{text-align:center;padding:30px;color:rgba(255,255,255,0.25);font-size:12px}
-.pu-bar{display:inline-block;height:5px;background:linear-gradient(90deg,rgba(0,245,212,0.6),rgba(0,245,212,0.25));border-radius:99px;vertical-align:middle;margin-left:8px;min-width:4px}
-</style>
-
-<div class="pu-wrap">
-  <div class="pu-h">Pill Usage Telemetry</div>
-
-  <div class="pu-controls">
-    <button data-days="1"  onclick="loadPillUsage(this)">1d</button>
-    <button data-days="7"  onclick="loadPillUsage(this)" class="active">7d</button>
-    <button data-days="30" onclick="loadPillUsage(this)">30d</button>
-    <button data-days="90" onclick="loadPillUsage(this)">90d</button>
-    <span class="pu-meta" id="pu-meta">Loading…</span>
-  </div>
-
-  <div class="pu-totals" id="pu-totals"></div>
-
-  <div class="pu-section">
-    <div class="pu-section-h">By Pill Type · ranked by clicks</div>
-    <div id="pu-pills">Loading…</div>
-  </div>
-
-  <div class="pu-section">
-    <div class="pu-section-h">By Drawer / Surface</div>
-    <div id="pu-drawers"></div>
-  </div>
-
-  <div class="pu-section">
-    <div class="pu-section-h">By Customer · top 50</div>
-    <div id="pu-customers"></div>
-  </div>
-</div>
-
-<script>
-function _esc(s){var d=document.createElement('div');d.textContent=s||'';return d.innerHTML;}
-
-async function loadPillUsage(btn) {
-  const days = btn ? btn.getAttribute('data-days') : '7';
-  document.querySelectorAll('.pu-controls button').forEach(b => b.classList.remove('active'));
-  if (btn) btn.classList.add('active');
-  document.getElementById('pu-meta').textContent = 'Loading…';
-
-  try {
-    const r = await fetch('/api/proxy/pill-usage?days=' + encodeURIComponent(days));
-    const d = await r.json();
-    if (d.error) {
-      document.getElementById('pu-meta').textContent = 'Error: ' + d.error;
-      return;
-    }
-    const tot = d.total || {n:0, users:0, pill_types:0};
-    document.getElementById('pu-meta').textContent =
-      'Window: ' + d.days + 'd · ' + tot.n + ' clicks · ' + tot.users + ' users · ' + tot.pill_types + ' pill types';
-
-    document.getElementById('pu-totals').innerHTML =
-      '<div class="pu-stat"><div class="pu-stat-val">' + tot.n + '</div><div class="pu-stat-label">Clicks</div></div>'
-    + '<div class="pu-stat"><div class="pu-stat-val">' + tot.users + '</div><div class="pu-stat-label">Distinct users</div></div>'
-    + '<div class="pu-stat"><div class="pu-stat-val">' + tot.pill_types + '</div><div class="pu-stat-label">Distinct pill types</div></div>'
-    + '<div class="pu-stat"><div class="pu-stat-val">' + d.days + '</div><div class="pu-stat-label">Window (days)</div></div>';
-
-    // By pill type
-    const pills = d.by_pill_type || [];
-    if (!pills.length) {
-      document.getElementById('pu-pills').innerHTML = '<div class="pu-empty">No clicks yet in this window.</div>';
-    } else {
-      const maxClicks = pills[0].clicks || 1;
-      let html = '<table class="pu-table"><thead><tr>'
-        + '<th>Type</th><th>Label</th>'
-        + '<th style="text-align:right">Clicks</th>'
-        + '<th style="text-align:right">Users</th>'
-        + '<th style="text-align:right">Tickers</th>'
-        + '<th style="width:25%"></th></tr></thead><tbody>';
-      pills.forEach(p => {
-        const w = Math.round(80 * p.clicks / maxClicks);
-        html += '<tr>'
-          + '<td><span class="pu-pill-tag">' + _esc(p.pill_type) + '</span></td>'
-          + '<td>' + _esc(p.pill_label || '—') + '</td>'
-          + '<td class="pu-num">' + p.clicks + '</td>'
-          + '<td class="pu-num-mut">' + p.distinct_users + '</td>'
-          + '<td class="pu-num-mut">' + p.distinct_tickers + '</td>'
-          + '<td><span class="pu-bar" style="width:' + w + '%"></span></td>'
-          + '</tr>';
-      });
-      html += '</tbody></table>';
-      document.getElementById('pu-pills').innerHTML = html;
-    }
-
-    // By drawer
-    const drawers = d.by_drawer || [];
-    if (!drawers.length) {
-      document.getElementById('pu-drawers').innerHTML = '<div class="pu-empty">No drawer data yet.</div>';
-    } else {
-      let html = '<table class="pu-table"><thead><tr>'
-        + '<th>Surface</th>'
-        + '<th style="text-align:right">Clicks</th>'
-        + '<th style="text-align:right">Users</th></tr></thead><tbody>';
-      drawers.forEach(d => {
-        html += '<tr><td><span class="pu-pill-tag">' + _esc(d.drawer_kind) + '</span></td>'
-              + '<td class="pu-num">' + d.clicks + '</td>'
-              + '<td class="pu-num-mut">' + d.distinct_users + '</td></tr>';
-      });
-      html += '</tbody></table>';
-      document.getElementById('pu-drawers').innerHTML = html;
-    }
-
-    // By customer
-    const custs = d.by_customer || [];
-    if (!custs.length) {
-      document.getElementById('pu-customers').innerHTML = '<div class="pu-empty">No customer data yet.</div>';
-    } else {
-      let html = '<table class="pu-table"><thead><tr>'
-        + '<th>Customer ID</th>'
-        + '<th style="text-align:right">Clicks</th>'
-        + '<th style="text-align:right">Distinct pills</th></tr></thead><tbody>';
-      custs.forEach(c => {
-        html += '<tr><td>' + _esc((c.customer_id || '').slice(0, 36)) + '</td>'
-              + '<td class="pu-num">' + c.clicks + '</td>'
-              + '<td class="pu-num-mut">' + c.distinct_pills + '</td></tr>';
-      });
-      html += '</tbody></table>';
-      document.getElementById('pu-customers').innerHTML = html;
-    }
-  } catch (e) {
-    document.getElementById('pu-meta').textContent = 'Failed: ' + e.message;
-  }
-}
-
-loadPillUsage();
-</script>
-"""
-
-
-@app.route("/pill-usage")
-def pill_usage_page():
-    if not _authorized():
-        return redirect(url_for("login"))
-    return _subpage_header('Pill Usage') + _PILL_USAGE_TEMPLATE
+            + render_template('customers/activity.html',
+                              secret_token=SECRET_TOKEN))
 
 
 # ── CUSTOMER BILLING PAGE ─────────────────────────────────────────────────────
 
 @app.route("/customer-billing")
 def customer_billing_page():
+    """Customer billing page.
+
+    Body extracted to templates/customers/billing.html (2026-05-05,
+    Phase 0 of /customers consolidation). Behavior unchanged."""
     if not _authorized():
         return redirect(url_for("login"))
-    return _subpage_header('Customer Billing') + """
-<style>*{box-sizing:border-box;margin:0;padding:0}body{background:#0a0c14;color:rgba(255,255,255,0.88);font-family:'Inter',system-ui,sans-serif;font-size:14px;min-height:100vh}::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:99px}</style>
-<div style="max-width:1000px;margin:0 auto;padding:20px 24px">
-  <div style="font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.4);margin-bottom:14px">All Customer Payment Status</div>
+    return _subpage_header('Customer Billing') + render_template('customers/billing.html')
 
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:20px">
-    <div style="background:rgba(0,245,212,0.04);border:1px solid rgba(0,245,212,0.12);border-radius:8px;padding:14px;text-align:center">
-      <div style="font-size:20px;font-weight:700;color:#00f5d4">—</div>
-      <div style="font-size:9px;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.06em;margin-top:4px">Active</div>
-    </div>
-    <div style="background:rgba(245,166,35,0.04);border:1px solid rgba(245,166,35,0.12);border-radius:8px;padding:14px;text-align:center">
-      <div style="font-size:20px;font-weight:700;color:#f5a623">—</div>
-      <div style="font-size:9px;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.06em;margin-top:4px">Past Due</div>
-    </div>
-    <div style="background:rgba(255,75,110,0.04);border:1px solid rgba(255,75,110,0.12);border-radius:8px;padding:14px;text-align:center">
-      <div style="font-size:20px;font-weight:700;color:#ff4b6e">—</div>
-      <div style="font-size:9px;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.06em;margin-top:4px">Cancelled</div>
-    </div>
-    <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:14px;text-align:center">
-      <div style="font-size:20px;font-weight:700;color:rgba(255,255,255,0.5)">—</div>
-      <div style="font-size:9px;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.06em;margin-top:4px">MRR</div>
-    </div>
-  </div>
-
-  <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:20px">
-    <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:12px">Customer List</div>
-    <div id="cb-list"><div style="text-align:center;padding:30px 0;color:rgba(255,255,255,0.2);font-size:12px">Loading...</div></div>
-  </div>
-</div>
-<script>
-async function loadCustBilling() {
-  try {
-    var r = await fetch('/api/proxy/billing/all-customers');
-    var d = await r.json();
-    // Summary cards
-    var s = d.summary || {};
-    var cards = document.querySelectorAll('[style*="text-align:center"] > div:first-child');
-    // Update customer list
-    var el = document.getElementById('cb-list');
-    var custs = d.customers || [];
-    if (!custs.length) { el.innerHTML = '<div style="text-align:center;padding:20px;color:rgba(255,255,255,0.2)">No customers</div>'; return; }
-    var stColors = {active:'#00f5d4',trialing:'#7b61ff',past_due:'#f5a623',cancelled:'#ff4b6e',inactive:'rgba(255,255,255,0.35)'};
-    el.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:12px">'
-      + '<tr style="border-bottom:1px solid rgba(255,255,255,0.08);font-size:10px;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.06em">'
-      + '<th style="padding:8px;text-align:left">Customer</th>'
-      + '<th style="padding:8px;text-align:left">Email</th>'
-      + '<th style="padding:8px;text-align:center">Status</th>'
-      + '<th style="padding:8px;text-align:center">Tier</th>'
-      + '<th style="padding:8px;text-align:center">Alpaca</th>'
-      + '<th style="padding:8px;text-align:center">Trading</th>'
-      + '<th style="padding:8px;text-align:right">Since</th></tr>'
-      + custs.map(function(c) {
-        var st = c.subscription_status || 'inactive';
-        var col = stColors[st] || stColors.inactive;
-        return '<tr style="border-bottom:1px solid rgba(255,255,255,0.05)">'
-          + '<td style="padding:8px">' + (c.name||'—') + '</td>'
-          + '<td style="padding:8px;color:rgba(255,255,255,0.5);font-size:11px">' + (c.email||'—') + '</td>'
-          + '<td style="padding:8px;text-align:center"><span style="font-size:9px;font-weight:700;padding:2px 8px;border-radius:99px;background:' + col + '20;color:' + col + '">' + st + '</span></td>'
-          + '<td style="padding:8px;text-align:center;font-size:11px;color:rgba(255,255,255,0.5)">' + (c.pricing_tier||'standard') + '</td>'
-          + '<td style="padding:8px;text-align:center">' + (c.has_alpaca?'<span style="color:#00f5d4">\u2713</span>':'<span style="color:rgba(255,255,255,0.2)">\u2014</span>') + '</td>'
-          + '<td style="padding:8px;text-align:center"><span style="font-size:9px;font-weight:700;padding:2px 8px;border-radius:99px;cursor:pointer;' + ((c.trading_mode||'PAPER')==='LIVE' ? 'background:rgba(0,245,212,0.15);color:#00f5d4;border:1px solid rgba(0,245,212,0.3)' : 'background:rgba(255,255,255,0.05);color:rgba(255,255,255,0.4);border:1px solid rgba(255,255,255,0.1)') + '" onclick="toggleTradingMode(&#39;' + c.id + '&#39;,&#39;' + (c.trading_mode||'PAPER') + '&#39;,&#39;' + (c.name||'').replace(/'/g,'') + '&#39;)">' + (c.trading_mode||'PAPER') + '</span></td>'
-          + '<td style="padding:8px;text-align:right;font-size:10px;color:rgba(255,255,255,0.35)">' + (c.created_at||'').slice(0,10) + '</td></tr>';
-      }).join('')
-      + '</table>';
-  } catch(e) { document.getElementById('cb-list').innerHTML = '<div style="color:#ff4b6e;text-align:center;padding:20px">Error loading billing data</div>'; }
-}
-async function toggleTradingMode(id, current, name) {
-  var next = current === 'LIVE' ? 'PAPER' : 'LIVE';
-  var warning = next === 'LIVE'
-    ? 'Switch ' + name + ' to LIVE trading? Real money will be used.'
-    : 'Switch ' + name + ' back to PAPER trading?';
-  if (!confirm(warning)) return;
-  try {
-    var r = await fetch('/api/proxy/customer/' + id + '/trading-mode', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({mode: next})
-    });
-    var d = await r.json();
-    if (d.ok) { loadCustBilling(); }
-    else { alert(d.error || 'Failed'); }
-  } catch(e) { alert('Error: ' + e); }
-}
-loadCustBilling();
-</script>
-  </div>
-</div>
-"""
 
 
 

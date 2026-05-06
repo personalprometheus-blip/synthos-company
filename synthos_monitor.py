@@ -3708,13 +3708,13 @@ def api_queue():
         with _db_conn() as conn:
             if pi_id:
                 rows = conn.execute(
-                    "SELECT * FROM scoop_queue WHERE status=? AND pi_id=? "
+                    "SELECT * FROM scoop_queue WHERE LOWER(status)=LOWER(?) AND pi_id=? "
                     "ORDER BY priority ASC, queued_at ASC LIMIT ?",
                     (status, pi_id, limit),
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT * FROM scoop_queue WHERE status=? "
+                    "SELECT * FROM scoop_queue WHERE LOWER(status)=LOWER(?) "
                     "ORDER BY priority ASC, queued_at ASC LIMIT ?",
                     (status, limit),
                 ).fetchall()
@@ -3956,6 +3956,7 @@ td.mono{font-family:var(--mono);font-size:11px}
         <button class="tab-btn" onclick="setStatus('failed',this)">Failed</button>
         <button class="tab-btn" onclick="setStatus('sent',this)">Sent</button>
         <button class="tab-btn" onclick="setStatus('skipped',this)">Skipped</button>
+        <button class="tab-btn" onclick="setStatus('expired',this)">Expired</button>
       </div>
       <button class="refresh-btn ml-auto" onclick="refresh()">↻ Refresh</button>
     </div>

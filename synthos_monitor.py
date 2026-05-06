@@ -4875,6 +4875,39 @@ def proxy_market_activity():
         }), 502
 
 
+# ── Admin → customer messaging proxy (Activity Phase B, 2026-05-05) ──
+@app.route("/api/proxy/admin/message-customer", methods=["POST"])
+def api_proxy_message_customer():
+    """Cmd-portal admin sends a message to a customer. Forwards to pi5
+    portal's /api/admin/messages with X-Token service auth (same pattern
+    as scoop dispatch). Authorization: admin session or SECRET_TOKEN."""
+    if not _authorized():
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+    try:
+        import requests as _req
+        data = request.get_json(silent=True) or {}
+        cid     = (data.get("customer_id") or "").strip()
+        subject = (data.get("subject") or "").strip()
+        body    = (data.get("body") or "").strip()
+        if not (cid and subject and body):
+            return jsonify({"ok": False, "error": "customer_id, subject, body required"}), 400
+        r = _req.post(
+            f"{RETAIL_PORTAL_URL}/api/admin/messages",
+            json={
+                "customer_id": cid,
+                "subject":     subject,
+                "body":        body,
+                "sent_by":     "admin",
+            },
+            headers={"X-Token": SECRET_TOKEN},
+            timeout=15,
+        )
+        return jsonify(r.json()), r.status_code
+    except Exception as e:
+        print(f"[Monitor] message-customer proxy error: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 def _get_admin_session_cookie():
     """
     Get a valid admin session cookie from the retail portal.

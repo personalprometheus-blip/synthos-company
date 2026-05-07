@@ -179,6 +179,21 @@
   #timeline-wrap.active{ display:block; }
   #canvas-wrap.hidden-topology > svg{ display:none; }
   #canvas-wrap.hidden-topology::before{ display:none; }
+    #live-status-strip{ position:absolute; top:14px; left:14px; right:240px; background:rgba(13,17,32,0.85); border:1px solid rgba(255,255,255,0.13); border-radius:10px; padding:7px 14px; font-size:10.5px; font-family:'JetBrains Mono',monospace; backdrop-filter:blur(14px); z-index:6; display:flex; gap:18px; align-items:center; color:rgba(255,255,255,0.7); letter-spacing:0.02em; box-shadow:0 4px 24px rgba(0,0,0,0.4); }
+  #live-status-strip .live-tag{ color:#00f5d4; font-weight:700; letter-spacing:0.12em; font-size:9px; padding:2px 8px; border:1px solid rgba(0,245,212,0.3); border-radius:99px; background:rgba(0,245,212,0.06); }
+  #live-status-strip .live-tag::before{ content:'●'; margin-right:5px; animation:livePulse 2s ease-in-out infinite; }
+  @keyframes livePulse{ 0%,100%{opacity:1} 50%{opacity:0.4} }
+  #live-status-strip .ls-node{ display:flex; gap:6px; align-items:center }
+  #live-status-strip .ls-dot{ width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+  #live-status-strip .ls-dot.ok{ background:#4ade80; box-shadow:0 0 6px rgba(74,222,128,0.6) }
+  #live-status-strip .ls-dot.warn{ background:#ffb347 }
+  #live-status-strip .ls-dot.crit{ background:#ff4b6e }
+  #live-status-strip .ls-dot.off{ background:rgba(255,255,255,0.15) }
+  #live-status-strip .ls-name{ color:rgba(255,255,255,0.88); font-weight:600 }
+  #live-status-strip .ls-age{ color:rgba(255,255,255,0.4); font-size:9.5px }
+  #live-status-strip .ls-cpu{ color:rgba(255,255,255,0.55); font-size:9.5px }
+  #live-status-strip .ls-meta{ margin-left:auto; color:rgba(255,255,255,0.4); font-size:9px; font-style:italic }
+  #canvas-wrap.hidden-topology > #live-status-strip{ display:none; }
   #canvas-wrap.hidden-topology > #legend, #canvas-wrap.hidden-topology > #log, #canvas-wrap.hidden-topology > #hover-card{ display:none; }
   .timeline-title{ font-family:var(--mono); font-size:12px; color:var(--text); font-weight:700; letter-spacing:0.15em; text-transform:uppercase; margin-bottom:22px; display:flex; align-items:center; gap:12px; }
   .timeline-title::before{ content:''; width:3px; height:16px; background:var(--teal); border-radius:99px; box-shadow:0 0 10px var(--teal-glow); }
@@ -576,7 +591,7 @@
 <div style="background:rgba(255,179,71,0.08);border-bottom:1px solid rgba(255,179,71,0.3);padding:8px 16px;text-align:center;font-size:11px;font-family:'JetBrains Mono',monospace;color:#ffb347;letter-spacing:0.04em">
   &#9888; LAB &#x2014; system-architecture v2 work-in-progress &#x2014; may be incomplete, wrong, or change without notice
 </div>
-<div id="app">
+<div id="app" class="collapsed-left collapsed-right">
   <header>
     <div class="wordmark">SYNTHOS</div>
     <div class="header-sub">SYSTEM MAP · v3</div>
@@ -604,7 +619,7 @@
   </header>
 
   <aside id="actions">
-    <button class="collapse-btn" id="collapse-left" title="Collapse / expand">◂</button>
+    <button class="collapse-btn" id="collapse-left" title="Collapse / expand">▸</button>
     <button class="day-btn" id="btn-day">▶ PLAY 24-HOUR DAY</button>
     <h3>Trading</h3>
     <button class="action-btn" data-seq="daemon_run">🕘 Market Daemon Run (9:10 ET)</button>
@@ -645,6 +660,11 @@
   </aside>
 
   <main id="canvas-wrap">
+  <div id="live-status-strip">
+    <span class="live-tag">LIVE</span>
+    <div id="ls-nodes" style="display:flex; gap:18px; flex-wrap:wrap; align-items:center"></div>
+    <span class="ls-meta" id="ls-meta">connecting...</span>
+  </div>
     <svg id="svg" viewBox="0 0 1600 1120" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
       <defs>
         <filter id="glow-teal" x="-50%" y="-50%" width="200%" height="200%">
@@ -687,7 +707,7 @@
   </main>
 
   <aside id="detail">
-    <button class="collapse-btn" id="collapse-right" title="Collapse / expand">▸</button>
+    <button class="collapse-btn" id="collapse-right" title="Collapse / expand">◂</button>
     <h3>Select an element</h3>
     <div class="sub">Click any agent, DB, or external service — or hover for a quick card.</div>
     <div class="section">
@@ -3418,5 +3438,98 @@ function renderProvenance() {
 // Kick off the merge after initial render (defaults show first, then upgrade).
 loadArchitectureOverrides();
 </script>
+<script>
+/* ───────── Lab v2 — live status strip overlay ─────────
+   Maps the template's node IDs to the pi_id values reported by the
+   monitor's /api/metrics/current and shows real-time freshness +
+   CPU% per node. Refresh aligned with the metrics_history bucket. */
+(function(){
+  const NODE_MAP = {
+    'pi5':            { template_id: 'pi5',            api_id: 'synthos-pi-retail', label: 'pi5' },
+    'pi4b':           { template_id: 'pi4b',           api_id: 'pi4b-company',      label: 'pi4b' },
+    'pi2w_monitor':   { template_id: 'pi2w_monitor',   api_id: 'pi2w-monitor',      label: 'pi2w' },
+  };
+  const ORDER = ['pi5', 'pi4b', 'pi2w_monitor'];
+
+  function fmtAge(secs) {
+    if (secs == null || !isFinite(secs)) return '—';
+    if (secs < 60) return Math.floor(secs) + 's';
+    if (secs < 3600) return Math.floor(secs/60) + 'm';
+    if (secs < 86400) return Math.floor(secs/3600) + 'h';
+    return Math.floor(secs/86400) + 'd';
+  }
+
+  function statusFromAge(secs) {
+    if (secs == null || !isFinite(secs)) return 'off';
+    if (secs < 30)  return 'ok';
+    if (secs < 120) return 'warn';
+    return 'crit';
+  }
+
+  async function refresh() {
+    const meta = document.getElementById('ls-meta');
+    const wrap = document.getElementById('ls-nodes');
+    if (!wrap) return;
+    try {
+      const tok = new URLSearchParams(location.search).get('token') || '';
+      const r = await fetch('/api/metrics/current' + (tok ? ('?token=' + encodeURIComponent(tok)) : ''),
+                            { credentials: 'same-origin' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();
+      wrap.innerHTML = '';
+      let liveCount = 0;
+      const seenApiIds = new Set();
+      for (const key of ORDER) {
+        const m = NODE_MAP[key];
+        const node = data[m.api_id];
+        seenApiIds.add(m.api_id);
+        let ageSec = null;
+        if (node && node.last_seen) {
+          const t = new Date(node.last_seen).getTime();
+          if (isFinite(t)) ageSec = (Date.now() - t) / 1000;
+        }
+        const cls = node ? statusFromAge(ageSec) : 'off';
+        if (cls === 'ok') liveCount++;
+        const cpu = (node && node.cpu_percent != null) ? node.cpu_percent.toFixed(0) + '%' : '—';
+        const div = document.createElement('div');
+        div.className = 'ls-node';
+        div.innerHTML =
+          '<span class="ls-dot ' + cls + '"></span>' +
+          '<span class="ls-name">' + m.label + '</span>' +
+          '<span class="ls-age">' + (node ? fmtAge(ageSec) : 'offline') + '</span>' +
+          '<span class="ls-cpu">cpu ' + cpu + '</span>';
+        wrap.appendChild(div);
+      }
+      // Also flag any pi_id the API reports that the template doesn't know about.
+      const extras = Object.keys(data).filter(k => !seenApiIds.has(k));
+      for (const xid of extras) {
+        const node = data[xid];
+        let ageSec = null;
+        if (node && node.last_seen) {
+          const t = new Date(node.last_seen).getTime();
+          if (isFinite(t)) ageSec = (Date.now() - t) / 1000;
+        }
+        const div = document.createElement('div');
+        div.className = 'ls-node';
+        div.title = 'Heartbeating but not in the template — V2 will plot these dynamically';
+        div.innerHTML =
+          '<span class="ls-dot ' + statusFromAge(ageSec) + '"></span>' +
+          '<span class="ls-name" style="color:#ffb347">+' + xid + '</span>' +
+          '<span class="ls-age">' + fmtAge(ageSec) + '</span>';
+        wrap.appendChild(div);
+      }
+      meta.textContent = liveCount + ' live · refreshed ' + new Date().toLocaleTimeString();
+    } catch (e) {
+      meta.textContent = 'error: ' + e.message;
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    refresh();
+    setInterval(refresh, 30000);
+  });
+})();
+</script>
+
 </body>
 </html>

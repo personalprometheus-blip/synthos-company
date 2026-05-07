@@ -8913,6 +8913,37 @@ def api_metrics_history():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/manifests")
+def api_manifests():
+    """Return per-node manifest documents keyed by node_id.
+
+    Phase 2: reads only the local pi4b manifest from
+    /home/pi/synthos-company/manifest.json. Future phases will fetch
+    remote manifests (pi5 via /manifest.json on retail_portal, etc.)
+    and merge them into the same dict.
+
+    Manifests are the *enrichment* layer — node identity comes from
+    the heartbeat, descriptive content (role, agents, DBs, externals)
+    comes from each node's self-published manifest.
+    """
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    manifests = {}
+    local_path = "/home/pi/synthos-company/manifest.json"
+    if os.path.exists(local_path):
+        try:
+            with open(local_path, "r") as f:
+                m = json.load(f)
+            node_id = m.get("node_id")
+            if node_id:
+                manifests[node_id] = m
+        except Exception as e:
+            # Don't fail the whole endpoint if one manifest is malformed.
+            return jsonify({"error": f"local manifest parse failed: {e}",
+                            "manifests": manifests}), 200
+    return jsonify(manifests), 200
+
+
 @app.route("/auditor")
 def auditor_page():
     """System health dashboard — node metrics + agent liveness (Tiers 1-2)."""

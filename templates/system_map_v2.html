@@ -265,6 +265,20 @@
   .node-card-v2 .nc-metric .val.warn{ color:#ffb347; }
   .node-card-v2 .nc-metric .val.crit{ color:#ff4b6e; }
 
+  
+  .node-card-v2 .nc-role{ display:inline-block; font-family:'JetBrains Mono',monospace;
+                           font-size:9px; font-weight:700; padding:2px 8px; border-radius:99px;
+                           letter-spacing:0.08em; text-transform:uppercase;
+                           background:rgba(123,97,255,0.12); border:1px solid rgba(123,97,255,0.3);
+                           color:#7b61ff; margin-top:4px; }
+  .node-card-v2 .nc-role.company_ops{ background:rgba(0,245,212,0.10); border-color:rgba(0,245,212,0.3); color:#00f5d4; }
+  .node-card-v2 .nc-role.retail{ background:rgba(123,97,255,0.12); border-color:rgba(123,97,255,0.3); color:#7b61ff; }
+  .node-card-v2 .nc-role.sentinel{ background:rgba(255,179,71,0.10); border-color:rgba(255,179,71,0.3); color:#ffb347; }
+  .node-card-v2 .nc-hw{ font-family:'JetBrains Mono',monospace; font-size:9px;
+                         color:rgba(255,255,255,0.35); margin-top:6px; letter-spacing:0.04em; }
+  .node-card-v2 .nc-bottom .ok{ color:rgba(0,245,212,0.7); }
+  .node-card-v2 .nc-bottom .miss{ color:rgba(255,179,71,0.55); font-style:italic; }
+
   .node-card-v2 .nc-bottom{ margin-top:14px; padding-top:10px; border-top:1px dashed rgba(255,255,255,0.06);
                              font-family:'JetBrains Mono',monospace; font-size:9px;
                              color:rgba(255,255,255,0.25); display:flex; justify-content:space-between; }
@@ -3555,10 +3569,14 @@ function renderProvenance() {
     if (!wrap) return;
     try {
       const tok = new URLSearchParams(location.search).get('token') || '';
-      const r = await fetch('/api/metrics/current' + (tok ? ('?token=' + encodeURIComponent(tok)) : ''),
-                            { credentials: 'same-origin' });
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      const data = await r.json();
+      const qs = tok ? ('?token=' + encodeURIComponent(tok)) : '';
+      const [metricsRes, manifestsRes] = await Promise.all([
+        fetch('/api/metrics/current' + qs, { credentials: 'same-origin' }),
+        fetch('/api/manifests' + qs, { credentials: 'same-origin' }),
+      ]);
+      if (!metricsRes.ok) throw new Error('metrics HTTP ' + metricsRes.status);
+      const data = await metricsRes.json();
+      const manifests = manifestsRes.ok ? (await manifestsRes.json()) : {};
       wrap.innerHTML = '';
       let liveCount = 0;
       const seenApiIds = new Set();
@@ -3645,18 +3663,35 @@ function renderProvenance() {
   function pctClass(v, w, c) { return v == null ? '' : (v >= c ? 'crit' : (v >= w ? 'warn' : '')); }
 
   // ── Modular renderer for one node card ──────────────────────────
-  function renderNodeCardV2(pi_id, live) {
+  // Phase 2: takes a manifest object as a third arg. When present, the
+  // card decorates itself with role pill + label override + hardware
+  // tag and the bottom strip flips from "manifest: missing" to
+  // "manifest: v<X>". Cards without a manifest stay bare.
+  function renderNodeCardV2(pi_id, live, manifest) {
     const ageSec = live.last_seen ? (Date.now() - new Date(live.last_seen).getTime())/1000 : null;
     const status = statusFromAge(ageSec);
+    const displayLabel = (manifest && manifest.label) || live.label || '—';
+    const role = manifest && manifest.role;
+    const hw = manifest && manifest.hardware;
+    const manifestVer = manifest && manifest.manifest_version;
     const card = document.createElement('div');
     card.className = 'node-card-v2 entering';
     card.dataset.piId = pi_id;
+    const rolePill = role
+      ? ('<span class="nc-role ' + role + '">' + role.replace(/_/g,' ') + '</span>')
+      : '';
+    const hwTag = hw ? ('<div class="nc-hw">' + hw + '</div>') : '';
+    const manifestTag = manifest
+      ? ('<span class="ok">manifest: v' + (manifestVer || '?') + '</span>')
+      : ('<span class="miss">manifest: missing</span>');
     card.innerHTML =
       '<div class="nc-header">' +
         '<div class="nc-dot ' + status + '"></div>' +
-        '<div>' +
+        '<div style="flex:1; min-width:0">' +
           '<div class="nc-id">' + pi_id + '</div>' +
-          '<div class="nc-label">' + (live.label || '—') + '</div>' +
+          '<div class="nc-label">' + displayLabel + '</div>' +
+          rolePill +
+          hwTag +
         '</div>' +
         '<div class="nc-age">' +
           '<span class="nc-age-label">last heartbeat</span>' +
@@ -3671,14 +3706,14 @@ function renderProvenance() {
       '</div>' +
       '<div class="nc-bottom">' +
         '<span>identity from heartbeat</span>' +
-        '<span>manifest: not yet</span>' +
+        manifestTag +
       '</div>';
     requestAnimationFrame(() => card.classList.replace('entering', 'entered'));
     return card;
   }
 
-  function updateExistingCard(card, pi_id, live) {
-    const fresh = renderNodeCardV2(pi_id, live);
+  function updateExistingCard(card, pi_id, live, manifest) {
+    const fresh = renderNodeCardV2(pi_id, live, manifest);
     fresh.classList.remove('entering','entered');
     card.innerHTML = fresh.innerHTML;
     card.classList.add('pulse');
@@ -3714,14 +3749,15 @@ function renderProvenance() {
         }
       });
 
-      // Update or add cards for live nodes
+      // Update or add cards for live nodes (manifest may be undefined)
       for (const pi_id of livePiIds) {
         const live = data[pi_id];
+        const manifest = manifests[pi_id] || null;
         const existing = grid.querySelector('.node-card-v2[data-pi-id="' + pi_id + '"]');
         if (existing) {
-          updateExistingCard(existing, pi_id, live);
+          updateExistingCard(existing, pi_id, live, manifest);
         } else {
-          const card = renderNodeCardV2(pi_id, live);
+          const card = renderNodeCardV2(pi_id, live, manifest);
           grid.appendChild(card);
         }
       }

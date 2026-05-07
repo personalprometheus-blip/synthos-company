@@ -1,0 +1,9 @@
+{
+  "manifest_version": "1.0",
+  "node_id": "pi4b-company",
+  "label": "Company Operations Node",
+  "role": "company_ops",
+  "hardware": "Raspberry Pi 4B",
+  "deployed_at": "2026-04-15",
+  "updated_at": "2026-05-07T23:19:12Z"
+}

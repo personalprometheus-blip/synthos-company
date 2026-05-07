@@ -1632,6 +1632,7 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
         <a href="/maintenance" class="hmenu-item">Maintenance</a>
         <a href="/project-status" class="hmenu-item">Project Status</a>
         <a href="/system-architecture" class="hmenu-item">System Architecture</a>
+        <a href="/system-architecture-v2" class="hmenu-item">System Architecture (lab)</a>
         <a href="/audit" class="hmenu-item">Auditor</a>
         <a href="/auditor" class="hmenu-item">System Health</a>
         <a href="/admin/alerts" class="hmenu-item">Alerts Center</a>
@@ -4613,6 +4614,7 @@ def _subpage_header(page_name):
         '<a href="/maintenance">Maintenance</a>'
         '<a href="/project-status">Project Status</a>'
         '<a href="/system-architecture">System Architecture</a>'
+        '<a href="/system-architecture-v2">System Architecture (lab)</a>'
         '<a href="/audit">Auditor</a>'
         '<a href="/auditor">System Health</a>'
         '<a href="/admin/alerts">Alerts Center</a>'
@@ -5658,6 +5660,20 @@ setInterval(render, 60000);
 
 
 
+
+
+@app.route("/system-architecture-v2")
+def system_architecture_v2_page():
+    """LAB — cloned from /system-architecture for V2 design iteration.
+
+    Renders templates/system_map_v2.html. Same auth as production. Iterate
+    here freely — production /system-architecture stays untouched until
+    cutover.
+    """
+    if not _authorized():
+        return redirect(url_for("login"))
+    return render_template('system_map_v2.html',
+                           subpage_hdr=_subpage_header('System Architecture (v2 lab)'))
 
 
 @app.route("/system-architecture")

@@ -1632,6 +1632,7 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
         <a href="/maintenance" class="hmenu-item">Maintenance</a>
         <a href="/project-status" class="hmenu-item">Project Status</a>
         <a href="/system-architecture" class="hmenu-item">System Architecture</a>
+        <a href="/audit" class="hmenu-item">Auditor</a>
         <a href="/auditor" class="hmenu-item">System Health</a>
         <a href="/admin/alerts" class="hmenu-item">Alerts Center</a>
         <a href="/logs" class="hmenu-item">Logs</a>

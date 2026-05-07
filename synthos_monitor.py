@@ -41,6 +41,9 @@ from flask import Flask, request, jsonify, render_template, render_template_stri
 from dotenv import load_dotenv
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
+from tier3_endpoints import api_alerts, api_alert_detail, api_alert_resolve, api_alerts_bulk_resolve
+from operations_handler import api_queues_status, api_schedule_next_runs, api_system_controls
+from customer_handler import api_customers_active
 _script_dir = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(_script_dir, "company.env"))
 
@@ -544,6 +547,7 @@ def heartbeat():
             "operating_mode":    data.get("operating_mode", existing.get("operating_mode", "MANAGED")),
             "trading_mode":      data.get("trading_mode",   existing.get("trading_mode", "PAPER")),
             "kill_switch":       data.get("kill_switch",    existing.get("kill_switch", False)),
+            "policy_enforcement": data.get("policy_enforcement", existing.get("policy_enforcement", {"on":0,"off":0,"total":0,"err":0})),
             "last_errors":       data.get("last_errors",    existing.get("last_errors", [])),
             # Hardware metrics
             "cpu_percent":    data.get("cpu_percent",    existing.get("cpu_percent")),
@@ -624,6 +628,7 @@ def api_status():
                 "operating_mode":    data.get("operating_mode", "MANAGED"),
                 "trading_mode":      data.get("trading_mode", "PAPER"),
                 "kill_switch":       data.get("kill_switch", False),
+                "policy_enforcement": data.get("policy_enforcement", {"on":0,"off":0,"total":0,"err":0}),
                 "cpu_percent":    data.get("cpu_percent"),
                 "cpu_count":      data.get("cpu_count"),
                 "load_avg":       data.get("load_avg"),
@@ -888,6 +893,71 @@ def cmd_kill_switch():
         "value": active,
         "direct": direct_results,        # halt-v2 POST results per Pi
         "queued_for": targets,           # legacy queue, secondary
+    }), 200
+
+
+@app.route("/api/command/policy-enforcement", methods=["POST"])
+def cmd_policy_enforcement():
+    """Toggle Trader V1 POLICY_ENFORCEMENT_ACTIVE across all retail Pis.
+
+    Pattern matches /api/command/kill-switch: POSTs directly to each
+    retail Pi's /api/admin/policy-enforcement endpoint. Each Pi flips
+    the flag in every real customer's signals.db and returns counts.
+    Takes effect on the NEXT trader cycle per customer.
+
+    Body: {active: bool, admin_id?: str}
+    """
+    token = request.headers.get("X-Token", "")
+    if token != SECRET_TOKEN:
+        return jsonify({"error": "unauthorized"}), 401
+    data = request.get_json(silent=True) or {}
+    if "active" not in data:
+        return jsonify({"error": "active (bool) required"}), 400
+    active = bool(data.get("active"))
+    admin_id = (data.get("admin_id") or "monitor")[:64]
+
+    direct_results = []
+    try:
+        import requests as _req
+        with registry_lock:
+            _pis = dict(pi_registry)
+        for pi_id, pi in _pis.items():
+            pi_ip = pi.get("pi_ip") or pi.get("ip")
+            if not pi_ip or pi_id.startswith("pi4b") or pi_id.startswith("pi2w"):
+                continue
+            try:
+                r = _req.post(
+                    f"http://{pi_ip}:5001/api/admin/policy-enforcement",
+                    json={"active": active, "admin_id": admin_id},
+                    headers={"X-Token": SECRET_TOKEN},
+                    timeout=15,  # iterates all customer DBs on pi5 — give it room
+                )
+                body = {}
+                try:
+                    body = r.json()
+                except Exception:
+                    pass
+                direct_results.append({
+                    "pi_id": pi_id, "pi_ip": pi_ip,
+                    "status": r.status_code,
+                    "summary": body.get("summary"),
+                    "changed": body.get("changed"),
+                    "already": body.get("already"),
+                    "err":     body.get("err"),
+                })
+            except Exception as _e:
+                direct_results.append({
+                    "pi_id": pi_id, "pi_ip": pi_ip, "error": str(_e)[:120],
+                })
+    except Exception:
+        pass
+
+    print(f"[Override] policy_enforcement active={active} by={admin_id} results={direct_results}")
+    return jsonify({
+        "ok": True,
+        "command": "set_policy_enforcement",
+        "value": active,
+        "direct": direct_results,
     }), 200
 
 
@@ -1483,7 +1553,8 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
         <a href="/maintenance" class="hmenu-item">Maintenance</a>
         <a href="/project-status" class="hmenu-item">Project Status</a>
         <a href="/system-architecture" class="hmenu-item">System Architecture</a>
-        <a href="/audit" class="hmenu-item">Auditor</a>
+        <a href="/auditor" class="hmenu-item">System Health</a>
+        <a href="/admin/alerts" class="hmenu-item">Alerts Center</a>
         <a href="/logs" class="hmenu-item">Logs</a>
         <a href="/customers" class="hmenu-item">Customers <span id="appr-badge" style="display:none;background:var(--amber);color:#000;font-size:9px;font-weight:800;padding:1px 5px;border-radius:99px;margin-left:3px"></span></a>
         <a href="/company-finances" class="hmenu-item">Company Finances</a>
@@ -1716,6 +1787,14 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
             <button class="cmd-btn" id="cmd-mode-all" onclick="setAdmOverride('operating_mode','ALL')">All</button>
           </div>
           <div style="font-size:9px;color:var(--dim);margin-top:4px" id="adm-mode-sub">Customers choose</div>
+        </div>
+        <div class="cmd-section">
+          <div class="cmd-label">Policy Enforcement</div>
+          <div class="cmd-row">
+            <button class="cmd-btn" id="cmd-policy-enforce" onclick="confirmCmd('policy-enforcement',true,'ENFORCE Trader V1 policy on ALL customers? Trades that fail guardrails will be BLOCKED on next trader cycle.')">Enforce</button>
+            <button class="cmd-btn" id="cmd-policy-shadow" onclick="confirmCmd('policy-enforcement',false,'Switch ALL customers to SHADOW mode? Engine will log verdicts but stop blocking trades.')">Shadow</button>
+          </div>
+          <div style="font-size:9px;color:var(--dim);margin-top:4px" id="adm-policy-sub">— / — unknown</div>
         </div>
         <div class="cmd-section">
           <div class="cmd-label">Emergency</div>
@@ -2690,7 +2769,8 @@ function confirmCmd(type, value, msg) {
 
 async function sendGlobalCmd(type, value) {
   try {
-    const body = type === 'kill-switch' ? {active: value} : {mode: value};
+    const useActive = (type === 'kill-switch' || type === 'policy-enforcement');
+    const body = useActive ? {active: value} : {mode: value};
     const r = await fetch('/api/command/' + type, {
       method: 'POST',
       headers: {'X-Token': SECRET_TOKEN, 'Content-Type': 'application/json'},
@@ -2698,7 +2778,20 @@ async function sendGlobalCmd(type, value) {
     });
     if (r.ok) {
       const d = await r.json();
-      toast('\u2713 ' + type + ' \u2192 ' + value + ' queued for ' + (d.queued_for||[]).length + ' nodes', 'ok');
+      let label;
+      if (type === 'policy-enforcement') {
+        var changed = 0, already = 0, total = 0;
+        (d.direct||[]).forEach(function(x) {
+          changed += (x.changed||0);
+          already += (x.already||0);
+          if (x.summary && x.summary.total) total = Math.max(total, x.summary.total);
+        });
+        label = (value ? 'Enforce' : 'Shadow') + ' \u2014 ' +
+                changed + ' changed, ' + already + ' already, total ' + total;
+      } else {
+        label = type + ' \u2192 ' + value + ' queued for ' + (d.queued_for||[]).length + ' nodes';
+      }
+      toast('\u2713 ' + label, 'ok');
     } else {
       toast('Command failed: HTTP ' + r.status, 'err');
     }
@@ -2733,11 +2826,36 @@ function updateCommandState(pis) {
   cls('cmd-kill-on',    'active-pink',   anyKill);
   cls('cmd-kill-off',   'active-teal',   noKill && pis.length > 0);
 
+  // Policy enforcement aggregation across nodes
+  var peOn = 0, peOff = 0, peTotal = 0;
+  pis.forEach(function(p) {
+    var pe = p.policy_enforcement || {};
+    peOn    += (pe.on    || 0);
+    peOff   += (pe.off   || 0);
+    peTotal += (pe.total || 0);
+  });
+  var allEnforcing = peTotal > 0 && peOn  === peTotal;
+  var allShadow    = peTotal > 0 && peOff === peTotal;
+  cls('cmd-policy-enforce', 'active-teal',  allEnforcing);
+  cls('cmd-policy-shadow',  'active-amber', allShadow);
+
   // Subtitle text
   var gs = document.getElementById('adm-gate-sub');
   var ms = document.getElementById('adm-mode-sub');
+  var ps = document.getElementById('adm-policy-sub');
   if (gs) gs.textContent = tg === 'ALL' ? 'Customers choose' : 'Forced: ' + tg;
   if (ms) ms.textContent = om === 'ALL' ? 'Customers choose' : 'Forced: ' + om;
+  if (ps) {
+    if (peTotal === 0) {
+      ps.textContent = '— / — unknown';
+    } else if (allEnforcing) {
+      ps.textContent = peOn + '/' + peTotal + ' enforcing';
+    } else if (allShadow) {
+      ps.textContent = '0/' + peTotal + ' enforcing (all shadow)';
+    } else {
+      ps.textContent = peOn + '/' + peTotal + ' enforcing (mixed)';
+    }
+  }
 }
 
 // ── DELETE ──
@@ -2772,6 +2890,7 @@ async function confirmDelete() {
     if (t === 'trading_gate' || t === 'operating_mode') {
       await setAdmOverride(t, v);
     } else {
+      // kill-switch, policy-enforcement, etc.
       await sendGlobalCmd(t, v);
     }
     return;
@@ -8605,6 +8724,103 @@ def audit_page():
 
 
 # ── Boot ──────────────────────────────────────────────────────────────────────
+
+# ── NEW ENDPOINTS FOR AUDITOR V2 (Tiers 1-2) ──────────────────────────────────
+
+@app.route("/api/metrics/current")
+def api_metrics_current():
+    """Return real-time system metrics (CPU/RAM/disk/temp) for all nodes."""
+    metrics = {}
+    with registry_lock:
+        for pi_id, data in pi_registry.items():
+            metrics[pi_id] = {
+                "pi_id": pi_id,
+                "label": data.get("label", pi_id),
+                "last_seen": data.get("last_seen"),
+                "cpu_percent": data.get("cpu_percent"),
+                "ram_percent": data.get("ram_percent"),
+                "disk_percent": data.get("disk_percent"),
+                "cpu_temp": data.get("cpu_temp"),
+            }
+    return jsonify(metrics), 200
+
+
+@app.route("/api/agents/status")
+def api_agents_status():
+    """Return agent liveness status from MQTT observations."""
+    try:
+        conn = sqlite3.connect(_AUDITOR_DB_PATH, timeout=5)
+        conn.row_factory = sqlite3.Row
+        observations = conn.execute(
+            "SELECT topic, last_seen_ts FROM mqtt_observations "
+            "WHERE topic LIKE 'process/heartbeat/%' LIMIT 100"
+        ).fetchall()
+        conn.close()
+        now = time.time()
+        agents = {}
+        for obs in observations:
+            topic = obs['topic']
+            parts = topic.split('/')
+            if len(parts) >= 4:
+                node = parts[2]
+                agent_name = '/'.join(parts[3:])
+                age_sec = now - (obs['last_seen_ts'] or 0)
+                status = "healthy" if age_sec < 120 else ("stale" if age_sec < 300 else "down")
+                if node not in agents:
+                    agents[node] = []
+                agents[node].append({"name": agent_name, "age_seconds": age_sec, "status": status})
+        return jsonify({"agents": agents}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/auditor")
+def auditor_page():
+    """Serve the auditor v2 dashboard."""
+    return render_template("auditor.html")
+
+
+@app.route("/api/alerts", methods=["GET"])
+def route_api_alerts():
+    return api_alerts(request)
+
+@app.route("/api/alerts/<alert_id>", methods=["GET"])
+def route_api_alert_detail(alert_id):
+    alert_id = int(alert_id)
+    return api_alert_detail(request, alert_id)
+
+@app.route("/api/alerts/<alert_id>/resolve", methods=["POST"])
+def route_api_alert_resolve(alert_id):
+    alert_id = int(alert_id)
+    return api_alert_resolve(request, alert_id)
+
+@app.route("/api/alerts/bulk-resolve", methods=["POST"])
+def route_api_alerts_bulk_resolve():
+    return api_alerts_bulk_resolve(request)
+
+
+@app.route("/admin/alerts")
+def admin_alerts_page():
+    return render_template("admin_alerts.html")
+
+
+@app.route("/api/queues/status", methods=["GET"])
+def route_api_queues_status():
+    return api_queues_status(request)
+
+@app.route("/api/schedule/next-runs", methods=["GET"])
+def route_api_schedule_next_runs():
+    return api_schedule_next_runs(request)
+
+@app.route("/api/system/controls", methods=["GET"])
+def route_api_system_controls():
+    return api_system_controls(request)
+
+
+@app.route("/api/customers/active", methods=["GET"])
+def route_api_customers_active():
+    return api_customers_active(request)
+
 if __name__ == "__main__":
     init_db()
     trim_pi_events()
@@ -8708,3 +8924,4 @@ if __name__ == "__main__":
         print(f"[Synthos Monitor] COMPANY_URL not set — enqueue events will not be persisted")
     print(f"[Synthos Monitor] Tracking {len(pi_registry)} Pi(s) from persistent state")
     app.run(host="0.0.0.0", port=PORT)
+

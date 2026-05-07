@@ -205,9 +205,15 @@ const SEV_ORDER = { critical: 0, high: 1, medium: 2, low: 3 };
 let currentFilters = { severity: 'all', time_range: '24h', search: '' };
 let allAlerts = [];
 
-function fmtEpoch(epochSec) {
-  if (!epochSec) return '—';
-  const ageSec = (Date.now()/1000) - epochSec;
+function fmtEpoch(v) {
+  // detected_issues stores last_seen as ISO string in production; older
+  // schemas stored epoch ints. Accept both.
+  if (v == null || v === '') return '—';
+  let ms;
+  if (typeof v === 'number') ms = v * 1000;
+  else { const t = new Date(v).getTime(); ms = isFinite(t) ? t : NaN; }
+  if (!isFinite(ms)) return '—';
+  const ageSec = (Date.now() - ms) / 1000;
   if (ageSec < 60) return Math.floor(ageSec) + 's ago';
   if (ageSec < 3600) return Math.floor(ageSec/60) + 'm ago';
   if (ageSec < 86400) return Math.floor(ageSec/3600) + 'h ago';

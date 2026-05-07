@@ -492,6 +492,85 @@ def _authorized():
     return _session_authorized() or _cf_authorized() or _token_authorized()
 
 
+# ── Metrics history loop ──────────────────────────────────────────────────────
+_METRICS_BUCKET_SEC = 30
+_METRICS_RETENTION_SEC = 86400  # 24h
+
+def _metrics_history_init():
+    """Idempotent table creation in auditor.db."""
+    auditor_db = os.getenv("AUDITOR_DB_PATH", "/home/pi/synthos-company/data/auditor.db")
+    conn = sqlite3.connect(auditor_db, timeout=5)
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS metrics_history (
+                node_id   TEXT NOT NULL,
+                ts_bucket INTEGER NOT NULL,
+                cpu_pct   REAL,
+                ram_pct   REAL,
+                disk_pct  REAL,
+                temp_c    REAL,
+                load_1m   REAL,
+                PRIMARY KEY (node_id, ts_bucket)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_metrics_history_ts ON metrics_history(ts_bucket)")
+        conn.commit()
+    finally:
+        conn.close()
+
+def metrics_recorder():
+    """Snapshot pi_registry every 30s into auditor.db.metrics_history; prune > 24h.
+
+    One row per (node_id, 30s-bucket). INSERT OR REPLACE is idempotent within
+    the same bucket — if the loop runs twice in the same window (clock jitter),
+    the latest sample wins instead of duplicating.
+    """
+    try:
+        _metrics_history_init()
+    except Exception as e:
+        print(f"metrics_recorder init failed: {e}", file=sys.stderr)
+        return
+    auditor_db = os.getenv("AUDITOR_DB_PATH", "/home/pi/synthos-company/data/auditor.db")
+    while True:
+        try:
+            now = int(time.time())
+            bucket = (now // _METRICS_BUCKET_SEC) * _METRICS_BUCKET_SEC
+            with registry_lock:
+                snapshot = []
+                for pi_id, data in pi_registry.items():
+                    cpu = data.get("cpu_percent")
+                    if cpu is None:
+                        # No hardware metrics yet from this node — skip the bucket.
+                        continue
+                    load_avg = data.get("load_avg")
+                    load_1m = (load_avg[0] if isinstance(load_avg, (list, tuple)) and load_avg
+                               else load_avg if isinstance(load_avg, (int, float)) else None)
+                    snapshot.append((
+                        pi_id, bucket, cpu,
+                        data.get("ram_percent"),
+                        data.get("disk_percent"),
+                        data.get("cpu_temp"),
+                        load_1m,
+                    ))
+            if snapshot:
+                conn = sqlite3.connect(auditor_db, timeout=5)
+                try:
+                    conn.executemany(
+                        "INSERT OR REPLACE INTO metrics_history "
+                        "(node_id, ts_bucket, cpu_pct, ram_pct, disk_pct, temp_c, load_1m) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        snapshot,
+                    )
+                    conn.execute("DELETE FROM metrics_history WHERE ts_bucket < ?",
+                                 [now - _METRICS_RETENTION_SEC])
+                    conn.commit()
+                finally:
+                    conn.close()
+        except Exception as e:
+            print(f"metrics_recorder loop error: {e}", file=sys.stderr)
+        time.sleep(_METRICS_BUCKET_SEC)
+
+
 # ── Silence detection loop ────────────────────────────────────────────────────
 def silence_detector():
     while True:
@@ -8776,6 +8855,47 @@ def api_agents_status():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/metrics/history")
+def api_metrics_history():
+    """Return up to 24h of bucketed metrics for one node (or all nodes).
+
+    Query params:
+      node   — node_id to filter to. Required.
+      hours  — lookback window, 1..24. Default 24.
+    """
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    node = request.args.get("node", "").strip()
+    if not node:
+        return jsonify({"error": "node parameter required"}), 400
+    try:
+        hours = max(1, min(int(request.args.get("hours", "24")), 24))
+    except ValueError:
+        hours = 24
+    cutoff = int(time.time()) - hours * 3600
+    auditor_db = os.getenv("AUDITOR_DB_PATH", "/home/pi/synthos-company/data/auditor.db")
+    try:
+        conn = sqlite3.connect(auditor_db, timeout=5)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT ts_bucket, cpu_pct, ram_pct, disk_pct, temp_c, load_1m "
+            "FROM metrics_history WHERE node_id = ? AND ts_bucket >= ? "
+            "ORDER BY ts_bucket",
+            [node, cutoff],
+        ).fetchall()
+        conn.close()
+        samples = [dict(r) for r in rows]
+        return jsonify({
+            "node": node,
+            "hours": hours,
+            "bucket_seconds": _METRICS_BUCKET_SEC,
+            "sample_count": len(samples),
+            "samples": samples,
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/auditor")
 def auditor_page():
     """System health dashboard — node metrics + agent liveness (Tiers 1-2)."""
@@ -8852,6 +8972,8 @@ if __name__ == "__main__":
 
     t = threading.Thread(target=silence_detector, daemon=True)
     t.start()
+    mt = threading.Thread(target=metrics_recorder, daemon=True)
+    mt.start()
 
     # ── Self-heartbeat: monitor node reports its own metrics to itself ─────────
     def _self_heartbeat_loop():

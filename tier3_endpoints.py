@@ -6,7 +6,8 @@ import time
 import json
 from datetime import datetime, timedelta
 
-_AUDITOR_DB_PATH = "/home/pi/synthos-company/auditor.db"
+import os as _os_audit
+_AUDITOR_DB_PATH = _os_audit.getenv("AUDITOR_DB_PATH", "/home/pi/synthos-company/data/auditor.db")
 _RETENTION_DAYS = 7
 
 def _parse_query_params(request):

@@ -11,7 +11,8 @@ from datetime import datetime
 from flask import jsonify
 
 _COMPANY_DB_PATH = "/home/pi/synthos-company/data/company.db"
-_AUDITOR_DB_PATH = "/home/pi/synthos-company/auditor.db"
+import os as _os_audit
+_AUDITOR_DB_PATH = _os_audit.getenv("AUDITOR_DB_PATH", "/home/pi/synthos-company/data/auditor.db")
 _SYSTEM_ARCH_PATH = "/home/pi/synthos/synthos_build/data/system_architecture.json"
 _BACKUP_LOG_PATH = "/home/pi/synthos-company/logs/backup.log"
 

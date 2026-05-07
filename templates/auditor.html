@@ -65,6 +65,23 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 .error-bar{padding:12px 16px;font-size:11px;color:var(--pink);background:rgba(255,75,110,0.06);border:1px solid rgba(255,75,110,0.15);border-radius:8px;margin-bottom:16px}
 .loading{padding:24px;text-align:center;color:var(--muted);font-size:11px}
 .footer{max-width:1200px;margin:0 auto;padding:16px 24px;border-top:1px solid var(--border);text-align:right;font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:24px}
+
+.tab-row{display:flex;gap:6px;flex-wrap:wrap;padding:14px 16px;border-bottom:1px solid var(--border)}
+.tab{padding:6px 12px;border-radius:8px;border:1px solid var(--border);background:transparent;
+     color:var(--muted);font-size:11px;font-weight:600;cursor:pointer;font-family:var(--sans);transition:all 0.15s}
+.tab:hover{border-color:var(--border2);color:var(--text)}
+.tab.active{background:rgba(0,245,212,0.08);border-color:rgba(0,245,212,0.3);color:var(--teal)}
+.chart-wrap{padding:16px;height:340px;position:relative}
+.chart-wrap canvas{max-width:100%}
+.chart-meta{display:flex;justify-content:space-between;padding:0 16px 12px 16px;font-size:10px;color:var(--muted);font-family:var(--mono)}
+.live-row{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;padding:0 16px 14px 16px}
+@media(max-width:720px){.live-row{grid-template-columns:repeat(2,1fr)}}
+.live-cell{padding:8px 10px;border-radius:8px;background:var(--surface2);border:1px solid var(--border)}
+.live-lab{font-size:9px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--muted);margin-bottom:3px}
+.live-val{font-size:16px;font-weight:700;font-family:var(--mono)}
+.live-val.warn{color:var(--amber)}
+.live-val.crit{color:var(--pink)}
+
 </style>
 </head>
 <body>
@@ -107,6 +124,28 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
     </div>
     <div class="node-grid" id="node-grid">
       <div class="loading">Loading metrics...</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title">Metrics History (24h)</div>
+      <span class="panel-badge" id="history-meta">—</span>
+    </div>
+    <div class="tab-row" id="history-tabs">
+      <span style="font-size:10px;color:var(--muted);align-self:center">Loading nodes...</span>
+    </div>
+    <div class="live-row" id="history-live">
+      <div class="live-cell"><div class="live-lab">CPU</div><div class="live-val" id="lv-cpu">—</div></div>
+      <div class="live-cell"><div class="live-lab">RAM</div><div class="live-val" id="lv-ram">—</div></div>
+      <div class="live-cell"><div class="live-lab">Disk</div><div class="live-val" id="lv-disk">—</div></div>
+      <div class="live-cell"><div class="live-lab">Temp</div><div class="live-val" id="lv-temp">—</div></div>
+      <div class="live-cell"><div class="live-lab">Load 1m</div><div class="live-val" id="lv-load">—</div></div>
+    </div>
+    <div class="chart-wrap"><canvas id="metrics-history"></canvas></div>
+    <div class="chart-meta">
+      <span id="history-window">—</span>
+      <span id="history-tip">Click a legend item to toggle that line · auto-refresh 30s</span>
     </div>
   </div>
 
@@ -265,6 +304,202 @@ async function load() {
 
 load();
 setInterval(load, 60000);
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+(function(){
+  const COLORS = {
+    cpu_pct:  '#00f5d4',
+    ram_pct:  '#7b61ff',
+    disk_pct: '#ffb347',
+    temp_c:   '#ff4b6e',
+    load_1m:  'rgba(255,255,255,0.7)',
+  };
+  const LABELS = {
+    cpu_pct:  'CPU %',
+    ram_pct:  'RAM %',
+    disk_pct: 'Disk %',
+    temp_c:   'Temp °C',
+    load_1m:  'Load 1m',
+  };
+  const PCT_KEYS  = ['cpu_pct','ram_pct','disk_pct'];
+  const ABS_KEYS  = ['temp_c','load_1m'];
+
+  let chart = null;
+  let activeNode = null;
+  let knownNodes = [];
+
+  function fmtPct(v) { return v == null ? '—' : v.toFixed(1) + '%'; }
+  function fmtTemp(v){ return v == null ? '—' : v.toFixed(1) + '°C'; }
+  function fmtLoad(v){ return v == null ? '—' : v.toFixed(2); }
+  function pctClass(v, w, c) { return v == null ? '' : (v >= c ? 'crit' : (v >= w ? 'warn' : '')); }
+
+  function setLive(snapshot) {
+    const cpu = snapshot && snapshot.cpu_percent;
+    const ram = snapshot && snapshot.ram_percent;
+    const disk = snapshot && snapshot.disk_percent;
+    const temp = snapshot && snapshot.cpu_temp;
+    const load = snapshot && (Array.isArray(snapshot.load_avg) ? snapshot.load_avg[0] : snapshot.load_avg);
+    const cpuEl = document.getElementById('lv-cpu');
+    const ramEl = document.getElementById('lv-ram');
+    const diskEl = document.getElementById('lv-disk');
+    const tempEl = document.getElementById('lv-temp');
+    const loadEl = document.getElementById('lv-load');
+    cpuEl.textContent = fmtPct(cpu);  cpuEl.className = 'live-val ' + pctClass(cpu, 70, 90);
+    ramEl.textContent = fmtPct(ram);  ramEl.className = 'live-val ' + pctClass(ram, 75, 90);
+    diskEl.textContent = fmtPct(disk); diskEl.className = 'live-val ' + pctClass(disk, 75, 90);
+    tempEl.textContent = fmtTemp(temp); tempEl.className = 'live-val ' + pctClass(temp, 65, 80);
+    loadEl.textContent = fmtLoad(load); loadEl.className = 'live-val';
+  }
+
+  function renderTabs(nodes) {
+    const wrap = document.getElementById('history-tabs');
+    if (nodes.length === 0) {
+      wrap.innerHTML = '<span style="font-size:10px;color:var(--muted);align-self:center">No nodes reporting</span>';
+      return;
+    }
+    if (!activeNode || !nodes.includes(activeNode)) activeNode = nodes[0];
+    wrap.innerHTML = '';
+    for (const n of nodes) {
+      const btn = document.createElement('button');
+      btn.className = 'tab' + (n === activeNode ? ' active' : '');
+      btn.textContent = n;
+      btn.onclick = () => { activeNode = n; renderTabs(nodes); loadHistory(); };
+      wrap.appendChild(btn);
+    }
+  }
+
+  function buildDatasets(samples) {
+    const xs = samples.map(s => s.ts_bucket * 1000);
+    const datasets = [];
+    for (const k of PCT_KEYS) {
+      datasets.push({
+        label: LABELS[k],
+        data: samples.map((s,i) => ({x: xs[i], y: s[k]})),
+        borderColor: COLORS[k], backgroundColor: COLORS[k],
+        borderWidth: 1.5, pointRadius: 0, tension: 0.25,
+        yAxisID: 'yPct', spanGaps: true,
+      });
+    }
+    for (const k of ABS_KEYS) {
+      datasets.push({
+        label: LABELS[k],
+        data: samples.map((s,i) => ({x: xs[i], y: s[k]})),
+        borderColor: COLORS[k], backgroundColor: COLORS[k],
+        borderWidth: 1.5, pointRadius: 0, tension: 0.25,
+        yAxisID: 'yAbs', spanGaps: true,
+      });
+    }
+    return datasets;
+  }
+
+  function ensureChart() {
+    if (chart) return chart;
+    const ctx = document.getElementById('metrics-history').getContext('2d');
+    chart = new Chart(ctx, {
+      type: 'line',
+      data: { datasets: [] },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { labels: { color: 'rgba(255,255,255,0.7)', boxWidth: 12, font: { size: 10 } } },
+          tooltip: {
+            backgroundColor: '#111520', borderColor: 'rgba(255,255,255,0.13)', borderWidth: 1,
+            titleColor: '#fff', bodyColor: 'rgba(255,255,255,0.88)',
+            callbacks: {
+              title: items => items.length ? new Date(items[0].parsed.x).toLocaleTimeString() : '',
+              label: it => {
+                const v = it.parsed.y;
+                if (v == null) return it.dataset.label + ': —';
+                const pct = it.dataset.yAxisID === 'yPct';
+                return it.dataset.label + ': ' + (pct ? v.toFixed(1) + '%' : v.toFixed(2));
+              },
+            },
+          },
+        },
+        scales: {
+          x: {
+            type: 'linear',
+            ticks: {
+              color: 'rgba(255,255,255,0.4)', font: { size: 10 },
+              callback: v => {
+                const d = new Date(v);
+                return d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
+              },
+              maxTicksLimit: 8,
+            },
+            grid: { color: 'rgba(255,255,255,0.04)' },
+          },
+          yPct: {
+            type: 'linear', position: 'left',
+            min: 0, max: 100,
+            ticks: { color: 'rgba(255,255,255,0.4)', font: { size: 10 }, callback: v => v + '%' },
+            grid: { color: 'rgba(255,255,255,0.04)' },
+            title: { display: true, text: 'Percent', color: 'rgba(255,255,255,0.4)', font: { size: 10 } },
+          },
+          yAbs: {
+            type: 'linear', position: 'right',
+            ticks: { color: 'rgba(255,255,255,0.4)', font: { size: 10 } },
+            grid: { display: false },
+            title: { display: true, text: '°C / load', color: 'rgba(255,255,255,0.4)', font: { size: 10 } },
+          },
+        },
+      },
+    });
+    return chart;
+  }
+
+  async function loadNodes() {
+    const r = await fetch('/api/metrics/current');
+    if (!r.ok) throw new Error('metrics current HTTP ' + r.status);
+    const data = await r.json();
+    const nodes = Object.keys(data).sort();
+    if (JSON.stringify(nodes) !== JSON.stringify(knownNodes)) {
+      knownNodes = nodes;
+      renderTabs(nodes);
+    }
+    if (activeNode && data[activeNode]) setLive(data[activeNode]);
+  }
+
+  async function loadHistory() {
+    if (!activeNode) return;
+    try {
+      const r = await fetch('/api/metrics/history?node=' + encodeURIComponent(activeNode) + '&hours=24');
+      if (!r.ok) throw new Error('history HTTP ' + r.status);
+      const data = await r.json();
+      const samples = data.samples || [];
+      const c = ensureChart();
+      c.data.datasets = buildDatasets(samples);
+      c.update('none');
+      const meta = document.getElementById('history-meta');
+      meta.textContent = samples.length + ' buckets · ' + (data.bucket_seconds || 30) + 's each';
+      const windowEl = document.getElementById('history-window');
+      if (samples.length > 0) {
+        const first = new Date(samples[0].ts_bucket * 1000).toLocaleString();
+        const last = new Date(samples[samples.length-1].ts_bucket * 1000).toLocaleString();
+        windowEl.textContent = first + ' → ' + last;
+      } else {
+        windowEl.textContent = 'No data yet — sampler runs every 30s';
+      }
+    } catch (e) {
+      const tip = document.getElementById('history-tip');
+      tip.textContent = 'History error: ' + e.message;
+    }
+  }
+
+  async function tick() {
+    try { await loadNodes(); } catch(e) { /* silent — main load() shows banner */ }
+    await loadHistory();
+  }
+
+  // First run + auto-refresh aligned with bucket cadence.
+  document.addEventListener('DOMContentLoaded', () => {
+    tick();
+    setInterval(tick, 30000);
+  });
+})();
 </script>
 
 </body>

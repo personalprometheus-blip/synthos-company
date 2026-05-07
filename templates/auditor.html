@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Synthos — System Health</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#080b12;--surface:#0d1120;--surface2:#111827;
+  --border:rgba(255,255,255,0.07);--border2:rgba(255,255,255,0.12);
+  --text:rgba(255,255,255,0.88);--muted:rgba(255,255,255,0.35);--dim:rgba(255,255,255,0.15);
+  --teal:#00f5d4;--pink:#ff4b6e;--purple:#7b61ff;--amber:#ffb347;
+  --mono:'JetBrains Mono',monospace;--sans:'Inter',sans-serif;
+}
+html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px}
+::-webkit-scrollbar{width:4px}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:99px}
+.page{max-width:1200px;margin:0 auto;padding:24px}
+.title{font-size:22px;font-weight:700;letter-spacing:-0.3px;margin-bottom:4px}
+.title span{background:linear-gradient(90deg,var(--purple),var(--teal));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.subtitle{font-size:12px;color:var(--muted);margin-bottom:20px}
+
+.stats-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:20px}
+.stat-mini{padding:14px 16px;border-radius:12px;border:1px solid var(--border);background:var(--surface)}
+.sm-label{font-size:9px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+.sm-val{font-size:26px;font-weight:800;letter-spacing:-1px}
+.sm-val.ok{color:var(--teal)}
+.sm-val.warn{color:var(--amber)}
+.sm-val.crit{color:var(--pink)}
+.sm-sub{font-size:10px;color:var(--muted);margin-top:3px}
+
+.panel{border-radius:16px;border:1px solid var(--border);background:var(--surface);overflow:hidden;margin-bottom:16px}
+.panel-header{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
+.panel-title{font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);flex:1}
+.panel-badge{padding:2px 8px;border-radius:99px;font-size:9px;font-weight:700;border:1px solid var(--border);background:rgba(255,255,255,0.03);color:var(--muted)}
+
+.node-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;padding:14px 16px}
+.node-card{padding:14px;border-radius:12px;border:1px solid var(--border);background:var(--surface2)}
+.node-name{font-size:12px;font-weight:600;display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.node-name .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.dot.ok{background:#4ade80;box-shadow:0 0 8px rgba(74,222,128,0.4)}
+.dot.warn{background:var(--amber)}
+.dot.crit{background:var(--pink)}
+.node-label{font-size:10px;color:var(--muted);font-family:var(--mono);margin-bottom:8px}
+.metric-row{display:flex;justify-content:space-between;padding:4px 0;font-size:11px;border-bottom:1px solid var(--border)}
+.metric-row:last-child{border-bottom:none}
+.metric-label{color:var(--muted)}
+.metric-val{color:var(--text);font-family:var(--mono);font-weight:600}
+.metric-val.warn{color:var(--amber)}
+.metric-val.crit{color:var(--pink)}
+
+.agents-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;padding:14px 16px}
+.agents-group{border-radius:10px;border:1px solid var(--border);background:var(--surface2);overflow:hidden}
+.ag-header{padding:8px 12px;font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:6px}
+.ag-header .count{margin-left:auto;font-family:var(--mono)}
+.agent-row{padding:7px 12px;font-size:11px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border)}
+.agent-row:last-child{border-bottom:none}
+.agent-row .dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.agent-name{flex:1;color:var(--text);font-family:var(--mono);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.agent-age{font-family:var(--mono);font-size:9px;color:var(--muted)}
+
+.empty{padding:24px;text-align:center;color:var(--muted);font-size:11px}
+.error-bar{padding:12px 16px;font-size:11px;color:var(--pink);background:rgba(255,75,110,0.06);border:1px solid rgba(255,75,110,0.15);border-radius:8px;margin-bottom:16px}
+.loading{padding:24px;text-align:center;color:var(--muted);font-size:11px}
+.footer{max-width:1200px;margin:0 auto;padding:16px 24px;border-top:1px solid var(--border);text-align:right;font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:24px}
+</style>
+</head>
+<body>
+
+{{ subpage_hdr|safe }}
+
+<div class="page">
+  <div class="title">System Health <span>&#x2014; All Nodes</span></div>
+  <div class="subtitle">Real-time node metrics and agent liveness. Auto-refresh every 60s.</div>
+
+  <div id="err-bar" class="error-bar" style="display:none"></div>
+
+  <div class="stats-row">
+    <div class="stat-mini">
+      <div class="sm-label">Nodes Reporting</div>
+      <div class="sm-val ok" id="kpi-nodes">—</div>
+      <div class="sm-sub" id="kpi-nodes-sub">&nbsp;</div>
+    </div>
+    <div class="stat-mini">
+      <div class="sm-label">Agents Healthy</div>
+      <div class="sm-val ok" id="kpi-agents-ok">—</div>
+      <div class="sm-sub" id="kpi-agents-sub">&nbsp;</div>
+    </div>
+    <div class="stat-mini">
+      <div class="sm-label">Agents Stale</div>
+      <div class="sm-val warn" id="kpi-agents-stale">—</div>
+      <div class="sm-sub">&gt; 2m no heartbeat</div>
+    </div>
+    <div class="stat-mini">
+      <div class="sm-label">Agents Down</div>
+      <div class="sm-val crit" id="kpi-agents-down">—</div>
+      <div class="sm-sub">&gt; 5m no heartbeat</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title">Node Metrics</div>
+      <span class="panel-badge" id="metrics-updated">—</span>
+    </div>
+    <div class="node-grid" id="node-grid">
+      <div class="loading">Loading metrics...</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title">Agent Status</div>
+      <span class="panel-badge" id="agents-updated">—</span>
+    </div>
+    <div class="agents-grid" id="agents-grid">
+      <div class="loading">Loading agents...</div>
+    </div>
+  </div>
+</div>
+
+<div class="footer">
+  Last refresh: <span id="refresh-time">—</span> &nbsp;|&nbsp; Auto-refresh: 60s
+</div>
+
+<script>
+function fmtAge(seconds) {
+  if (seconds == null || isNaN(seconds)) return '—';
+  if (seconds < 60) return Math.floor(seconds) + 's';
+  if (seconds < 3600) return Math.floor(seconds/60) + 'm';
+  if (seconds < 86400) return Math.floor(seconds/3600) + 'h';
+  return Math.floor(seconds/86400) + 'd';
+}
+
+function fmtRfc(rfcDate) {
+  if (!rfcDate) return '—';
+  try {
+    const t = new Date(rfcDate);
+    const ageSec = (Date.now() - t.getTime()) / 1000;
+    return fmtAge(ageSec) + ' ago';
+  } catch (e) { return '—'; }
+}
+
+function metricClass(value, warnThresh, critThresh) {
+  if (value == null) return '';
+  if (value >= critThresh) return 'crit';
+  if (value >= warnThresh) return 'warn';
+  return '';
+}
+
+function renderNodes(metrics) {
+  const grid = document.getElementById('node-grid');
+  const nodeIds = Object.keys(metrics).sort();
+  if (nodeIds.length === 0) {
+    grid.innerHTML = '<div class="empty">No nodes reporting</div>';
+    document.getElementById('kpi-nodes').textContent = '0';
+    return;
+  }
+
+  document.getElementById('kpi-nodes').textContent = nodeIds.length;
+  document.getElementById('kpi-nodes-sub').textContent = nodeIds.join(', ');
+
+  grid.innerHTML = '';
+  for (const nodeId of nodeIds) {
+    const node = metrics[nodeId];
+    const cpu = node.cpu_percent;
+    const ram = node.ram_percent;
+    const disk = node.disk_percent;
+    const temp = node.cpu_temp;
+
+    const ageSec = node.last_seen ? (Date.now() - new Date(node.last_seen).getTime())/1000 : null;
+    const dotClass = (ageSec != null && ageSec < 120) ? 'ok' : (ageSec != null && ageSec < 600 ? 'warn' : 'crit');
+
+    const card = document.createElement('div');
+    card.className = 'node-card';
+    card.innerHTML =
+      '<div class="node-name"><span class="dot ' + dotClass + '"></span>' + nodeId + '</div>' +
+      '<div class="node-label">' + (node.label || nodeId) + ' · ' + fmtRfc(node.last_seen) + '</div>' +
+      '<div class="metric-row"><span class="metric-label">CPU</span>' +
+        '<span class="metric-val ' + metricClass(cpu, 70, 90) + '">' + (cpu != null ? cpu.toFixed(1) + '%' : '—') + '</span></div>' +
+      '<div class="metric-row"><span class="metric-label">RAM</span>' +
+        '<span class="metric-val ' + metricClass(ram, 75, 90) + '">' + (ram != null ? ram.toFixed(1) + '%' : '—') + '</span></div>' +
+      '<div class="metric-row"><span class="metric-label">Disk</span>' +
+        '<span class="metric-val ' + metricClass(disk, 75, 90) + '">' + (disk != null ? disk.toFixed(1) + '%' : '—') + '</span></div>' +
+      '<div class="metric-row"><span class="metric-label">Temp</span>' +
+        '<span class="metric-val ' + metricClass(temp, 65, 80) + '">' + (temp != null ? temp.toFixed(1) + '°C' : '—') + '</span></div>';
+    grid.appendChild(card);
+  }
+  document.getElementById('metrics-updated').textContent = nodeIds.length + ' nodes';
+}
+
+function renderAgents(payload) {
+  const agents = payload.agents || {};
+  const groupNames = Object.keys(agents).sort();
+  const grid = document.getElementById('agents-grid');
+
+  let totalHealthy = 0, totalStale = 0, totalDown = 0;
+
+  if (groupNames.length === 0) {
+    grid.innerHTML = '<div class="empty">No agents reporting heartbeats</div>';
+    document.getElementById('kpi-agents-ok').textContent = '0';
+    document.getElementById('kpi-agents-stale').textContent = '0';
+    document.getElementById('kpi-agents-down').textContent = '0';
+    return;
+  }
+
+  grid.innerHTML = '';
+  for (const groupName of groupNames) {
+    const list = (agents[groupName] || []).slice().sort((a,b) => (a.age_seconds||0) - (b.age_seconds||0));
+    const groupHealthy = list.filter(a => a.status === 'healthy').length;
+    const groupStale = list.filter(a => a.status === 'stale').length;
+    const groupDown = list.filter(a => a.status === 'down').length;
+    totalHealthy += groupHealthy;
+    totalStale += groupStale;
+    totalDown += groupDown;
+
+    const groupEl = document.createElement('div');
+    groupEl.className = 'agents-group';
+    let html = '<div class="ag-header">' + groupName +
+      '<span class="count">' + groupHealthy + '/' + list.length + '</span></div>';
+    for (const a of list) {
+      const dotCls = a.status === 'healthy' ? 'ok' : (a.status === 'stale' ? 'warn' : 'crit');
+      html += '<div class="agent-row">' +
+        '<span class="dot ' + dotCls + '"></span>' +
+        '<span class="agent-name">' + (a.name || '—') + '</span>' +
+        '<span class="agent-age">' + fmtAge(a.age_seconds) + '</span></div>';
+    }
+    groupEl.innerHTML = html;
+    grid.appendChild(groupEl);
+  }
+
+  document.getElementById('kpi-agents-ok').textContent = totalHealthy;
+  document.getElementById('kpi-agents-stale').textContent = totalStale;
+  document.getElementById('kpi-agents-down').textContent = totalDown;
+  document.getElementById('kpi-agents-sub').textContent = (totalHealthy + totalStale + totalDown) + ' total';
+  document.getElementById('agents-updated').textContent = groupNames.length + ' groups';
+}
+
+function showErr(msg) {
+  const bar = document.getElementById('err-bar');
+  bar.textContent = msg;
+  bar.style.display = 'block';
+  setTimeout(() => { bar.style.display = 'none'; }, 8000);
+}
+
+async function load() {
+  try {
+    const [mRes, aRes] = await Promise.all([
+      fetch('/api/metrics/current'),
+      fetch('/api/agents/status')
+    ]);
+    if (!mRes.ok) throw new Error('metrics: HTTP ' + mRes.status);
+    if (!aRes.ok) throw new Error('agents: HTTP ' + aRes.status);
+    const metrics = await mRes.json();
+    const agents = await aRes.json();
+    renderNodes(metrics);
+    renderAgents(agents);
+    document.getElementById('refresh-time').textContent = new Date().toLocaleTimeString();
+  } catch (e) {
+    showErr('Load failed: ' + e.message);
+  }
+}
+
+load();
+setInterval(load, 60000);
+</script>
+
+</body>
+</html>

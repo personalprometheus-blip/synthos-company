@@ -4534,6 +4534,8 @@ def _subpage_header(page_name):
         '<a href="/project-status">Project Status</a>'
         '<a href="/system-architecture">System Architecture</a>'
         '<a href="/audit">Auditor</a>'
+        '<a href="/auditor">System Health</a>'
+        '<a href="/admin/alerts">Alerts Center</a>'
         '<a href="/logs">Logs</a>'
         '<a href="/customers">Customers</a>'
         '<a href="/company-finances">Company Finances</a>'
@@ -8776,8 +8778,11 @@ def api_agents_status():
 
 @app.route("/auditor")
 def auditor_page():
-    """Serve the auditor v2 dashboard."""
-    return render_template("auditor.html")
+    """System health dashboard — node metrics + agent liveness (Tiers 1-2)."""
+    if not _authorized():
+        return redirect(url_for("login"))
+    return render_template("auditor.html",
+                           subpage_hdr=_subpage_header("System Health"))
 
 
 @app.route("/api/alerts", methods=["GET"])
@@ -8801,7 +8806,11 @@ def route_api_alerts_bulk_resolve():
 
 @app.route("/admin/alerts")
 def admin_alerts_page():
-    return render_template("admin_alerts.html")
+    """Alerts center — detected_issues + ops queue + customers (Tiers 3-5)."""
+    if not _authorized():
+        return redirect(url_for("login"))
+    return render_template("admin_alerts.html",
+                           subpage_hdr=_subpage_header("Alerts Center"))
 
 
 @app.route("/api/queues/status", methods=["GET"])

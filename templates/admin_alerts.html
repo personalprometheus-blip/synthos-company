@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Synthos — Alerts Center</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#080b12;--surface:#0d1120;--surface2:#111827;
+  --border:rgba(255,255,255,0.07);--border2:rgba(255,255,255,0.12);
+  --text:rgba(255,255,255,0.88);--muted:rgba(255,255,255,0.35);--dim:rgba(255,255,255,0.15);
+  --teal:#00f5d4;--pink:#ff4b6e;--purple:#7b61ff;--amber:#ffb347;
+  --mono:'JetBrains Mono',monospace;--sans:'Inter',sans-serif;
+}
+html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px}
+::-webkit-scrollbar{width:4px}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:99px}
+.page{max-width:1200px;margin:0 auto;padding:24px}
+.title{font-size:22px;font-weight:700;letter-spacing:-0.3px;margin-bottom:4px}
+.title span{background:linear-gradient(90deg,var(--purple),var(--teal));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.subtitle{font-size:12px;color:var(--muted);margin-bottom:20px}
+
+.stats-row{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:20px}
+@media(max-width:720px){.stats-row{grid-template-columns:repeat(2,1fr)}}
+.stat-mini{padding:14px 16px;border-radius:12px;border:1px solid var(--border);background:var(--surface)}
+.sm-label{font-size:9px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+.sm-val{font-size:26px;font-weight:800;letter-spacing:-1px}
+.sm-val.crit{color:var(--pink)}
+.sm-val.high{color:var(--amber)}
+.sm-val.med{color:var(--purple)}
+.sm-val.low{color:var(--muted)}
+
+.controls{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;align-items:center}
+.filter-grp{display:flex;gap:4px}
+.btn{padding:6px 12px;border-radius:8px;border:1px solid var(--border);background:transparent;
+     color:var(--muted);font-size:11px;font-weight:600;cursor:pointer;font-family:var(--sans);transition:all 0.15s}
+.btn:hover{border-color:var(--border2);color:var(--text)}
+.btn.active{background:rgba(0,245,212,0.08);border-color:rgba(0,245,212,0.3);color:var(--teal)}
+.search-input{flex:1;min-width:180px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);
+              background:var(--surface);color:var(--text);font-size:12px;font-family:var(--sans)}
+.search-input:focus{outline:none;border-color:rgba(0,245,212,0.3)}
+
+.panel{border-radius:16px;border:1px solid var(--border);background:var(--surface);overflow:hidden;margin-bottom:16px}
+.panel-header{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
+.panel-title{font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);flex:1}
+.panel-badge{padding:2px 8px;border-radius:99px;font-size:9px;font-weight:700;border:1px solid var(--border);background:rgba(255,255,255,0.03);color:var(--muted)}
+.panel-badge.has{background:rgba(255,75,110,0.12);border-color:rgba(255,75,110,0.25);color:var(--pink)}
+
+.alert-row{padding:11px 16px;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:flex-start}
+.alert-row:last-child{border-bottom:none}
+.alert-row.resolving{opacity:0.4}
+.sev-badge{flex-shrink:0;padding:2px 7px;border-radius:5px;font-size:9px;font-weight:800;
+           letter-spacing:0.06em;text-transform:uppercase;margin-top:1px;min-width:60px;text-align:center}
+.sev-critical{background:rgba(255,75,110,0.12);color:var(--pink);border:1px solid rgba(255,75,110,0.25)}
+.sev-high{background:rgba(255,179,71,0.12);color:var(--amber);border:1px solid rgba(255,179,71,0.25)}
+.sev-medium{background:rgba(123,97,255,0.12);color:var(--purple);border:1px solid rgba(123,97,255,0.25)}
+.sev-low{background:rgba(255,255,255,0.05);color:var(--muted);border:1px solid var(--border)}
+.alert-body{flex:1;min-width:0}
+.alert-pattern{font-size:13px;font-weight:500;color:var(--text);line-height:1.4;word-break:break-word}
+.alert-source{font-size:10px;font-family:var(--mono);color:var(--purple);margin-top:3px}
+.alert-context{font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5;word-break:break-word}
+.alert-meta{display:flex;gap:10px;margin-top:6px;font-size:9px;font-family:var(--mono);color:var(--dim)}
+.hit-count{color:var(--amber);font-weight:600}
+.resolve-btn{flex-shrink:0;align-self:flex-start;padding:4px 10px;border-radius:6px;
+             border:1px solid var(--border2);background:transparent;color:var(--muted);
+             font-family:var(--sans);font-size:10px;font-weight:600;letter-spacing:0.04em;
+             cursor:pointer;transition:all 0.15s}
+.resolve-btn:hover{background:rgba(0,245,212,0.06);border-color:rgba(0,245,212,0.3);color:var(--teal)}
+.resolve-btn:disabled{opacity:0.4;cursor:wait}
+
+.ops-grid{padding:14px 16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+.ops-block{padding:12px;border-radius:10px;border:1px solid var(--border);background:var(--surface2)}
+.ops-label{font-size:9px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+.ops-row{display:flex;justify-content:space-between;font-size:11px;padding:3px 0}
+.ops-row .v{font-family:var(--mono);color:var(--text);font-weight:600}
+.ops-row .v.warn{color:var(--amber)}
+.ops-row .v.crit{color:var(--pink)}
+
+.cust-table{width:100%;border-collapse:collapse;font-size:11px}
+.cust-table th{padding:8px 16px;text-align:left;font-size:9px;font-weight:700;letter-spacing:0.06em;
+               text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--border)}
+.cust-table td{padding:8px 16px;border-bottom:1px solid var(--border);color:var(--text)}
+.cust-table tr:last-child td{border-bottom:none}
+.cust-table .email{font-family:var(--mono);font-size:10px;color:var(--muted)}
+.cust-status{font-family:var(--mono);font-size:10px}
+.cust-status.online{color:var(--teal)}
+.cust-status.idle{color:var(--muted)}
+.cust-status.paused{color:var(--amber)}
+
+.empty{padding:24px;text-align:center;color:var(--muted);font-size:11px}
+.error-bar{padding:12px 16px;font-size:11px;color:var(--pink);background:rgba(255,75,110,0.06);border:1px solid rgba(255,75,110,0.15);border-radius:8px;margin-bottom:16px}
+.loading{padding:24px;text-align:center;color:var(--muted);font-size:11px}
+.footer{max-width:1200px;margin:0 auto;padding:16px 24px;border-top:1px solid var(--border);text-align:right;font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:24px}
+</style>
+</head>
+<body>
+
+{{ subpage_hdr|safe }}
+
+<div class="page">
+  <div class="title">Alerts Center <span>&#x2014; Operations</span></div>
+  <div class="subtitle">Detected issues, queue status, system controls, and active customers. Auto-refresh every 60s.</div>
+
+  <div id="err-bar" class="error-bar" style="display:none"></div>
+
+  <div class="stats-row">
+    <div class="stat-mini">
+      <div class="sm-label">Total Open</div>
+      <div class="sm-val" id="stat-total">—</div>
+    </div>
+    <div class="stat-mini">
+      <div class="sm-label">Critical</div>
+      <div class="sm-val crit" id="stat-critical">—</div>
+    </div>
+    <div class="stat-mini">
+      <div class="sm-label">High</div>
+      <div class="sm-val high" id="stat-high">—</div>
+    </div>
+    <div class="stat-mini">
+      <div class="sm-label">Medium</div>
+      <div class="sm-val med" id="stat-medium">—</div>
+    </div>
+    <div class="stat-mini">
+      <div class="sm-label">Low</div>
+      <div class="sm-val low" id="stat-low">—</div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <div class="filter-grp">
+      <button class="btn active" data-sev="all">All</button>
+      <button class="btn" data-sev="critical">Critical</button>
+      <button class="btn" data-sev="high">High</button>
+      <button class="btn" data-sev="medium">Medium</button>
+      <button class="btn" data-sev="low">Low</button>
+    </div>
+    <div class="filter-grp">
+      <button class="btn" data-time="1h">1h</button>
+      <button class="btn active" data-time="24h">24h</button>
+      <button class="btn" data-time="all">7d</button>
+    </div>
+    <input type="text" id="search-input" class="search-input" placeholder="Search pattern, file, context...">
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title">Detected Issues</div>
+      <span class="panel-badge" id="alerts-count">0</span>
+    </div>
+    <div id="alerts-list">
+      <div class="loading">Loading alerts...</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title">Operations &amp; Queue Status</div>
+    </div>
+    <div class="ops-grid">
+      <div class="ops-block">
+        <div class="ops-label">Email Queue (Scoop)</div>
+        <div class="ops-row"><span>Pending</span><span class="v" id="q-pending">—</span></div>
+        <div class="ops-row"><span>Sent today</span><span class="v" id="q-sent">—</span></div>
+        <div class="ops-row"><span>Failed</span><span class="v" id="q-failed">—</span></div>
+      </div>
+      <div class="ops-block">
+        <div class="ops-label">Backups</div>
+        <div class="ops-row"><span>Last</span><span class="v" id="b-last">—</span></div>
+        <div class="ops-row"><span>Status</span><span class="v" id="b-status">—</span></div>
+        <div class="ops-row"><span>Next</span><span class="v" id="b-next">—</span></div>
+      </div>
+      <div class="ops-block">
+        <div class="ops-label">System Controls</div>
+        <div class="ops-row"><span>Kill switch</span><span class="v" id="ctl-kill">—</span></div>
+        <div class="ops-row"><span>Trading mode</span><span class="v" id="ctl-trade">—</span></div>
+        <div class="ops-row"><span>Dispatch mode</span><span class="v" id="ctl-disp">—</span></div>
+        <div class="ops-row"><span>Operating mode</span><span class="v" id="ctl-op">—</span></div>
+      </div>
+      <div class="ops-block">
+        <div class="ops-label">Scheduled Runs</div>
+        <div id="schedule-list" style="font-size:10px;font-family:var(--mono);color:var(--muted);max-height:120px;overflow-y:auto">—</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title">Active Customers</div>
+      <span class="panel-badge" id="cust-count">0</span>
+    </div>
+    <div id="cust-table-wrap">
+      <div class="loading">Loading customers...</div>
+    </div>
+  </div>
+</div>
+
+<div class="footer">
+  Last refresh: <span id="refresh-time">—</span> &nbsp;|&nbsp; Auto-refresh: 60s
+</div>
+
+<script>
+const SEV_ORDER = { critical: 0, high: 1, medium: 2, low: 3 };
+let currentFilters = { severity: 'all', time_range: '24h', search: '' };
+let allAlerts = [];
+
+function fmtEpoch(epochSec) {
+  if (!epochSec) return '—';
+  const ageSec = (Date.now()/1000) - epochSec;
+  if (ageSec < 60) return Math.floor(ageSec) + 's ago';
+  if (ageSec < 3600) return Math.floor(ageSec/60) + 'm ago';
+  if (ageSec < 86400) return Math.floor(ageSec/3600) + 'h ago';
+  return Math.floor(ageSec/86400) + 'd ago';
+}
+
+function fmtIso(iso) {
+  if (!iso) return '—';
+  try {
+    const t = new Date(iso);
+    const ageSec = (Date.now() - t.getTime())/1000;
+    if (ageSec < 60) return Math.floor(ageSec) + 's ago';
+    if (ageSec < 3600) return Math.floor(ageSec/60) + 'm ago';
+    if (ageSec < 86400) return Math.floor(ageSec/3600) + 'h ago';
+    return Math.floor(ageSec/86400) + 'd ago';
+  } catch (e) { return '—'; }
+}
+
+function renderAlerts(alerts) {
+  const list = document.getElementById('alerts-list');
+  document.getElementById('alerts-count').textContent = alerts.length;
+
+  if (alerts.length === 0) {
+    list.innerHTML = '<div class="empty">No alerts match the current filters</div>';
+    return;
+  }
+
+  list.innerHTML = '';
+  for (const a of alerts) {
+    const row = document.createElement('div');
+    row.className = 'alert-row';
+    row.dataset.id = a.id;
+    const sev = (a.severity || 'low').toLowerCase();
+    const hits = (a.hit_count && a.hit_count > 1) ? '<span class="hit-count">' + a.hit_count + ' hits</span>' : '';
+    row.innerHTML =
+      '<span class="sev-badge sev-' + sev + '">' + sev + '</span>' +
+      '<div class="alert-body">' +
+        '<div class="alert-pattern">' + escapeHtml(a.pattern || 'unknown') + '</div>' +
+        (a.source_file ? '<div class="alert-source">' + escapeHtml(a.source_file) + '</div>' : '') +
+        (a.context ? '<div class="alert-context">' + escapeHtml(a.context) + '</div>' : '') +
+        '<div class="alert-meta">' + hits + ' <span>' + fmtEpoch(a.last_seen) + '</span></div>' +
+      '</div>' +
+      '<button class="resolve-btn">Resolve</button>';
+    const btn = row.querySelector('.resolve-btn');
+    btn.onclick = () => resolveAlert(a.id, row, btn);
+    list.appendChild(row);
+  }
+}
+
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  })[c]);
+}
+
+async function resolveAlert(id, row, btn) {
+  btn.disabled = true;
+  row.classList.add('resolving');
+  try {
+    const r = await fetch('/api/alerts/' + id + '/resolve', { method: 'POST' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    row.style.transition = 'opacity 0.2s';
+    row.style.opacity = '0';
+    setTimeout(loadAlerts, 250);
+  } catch (e) {
+    row.classList.remove('resolving');
+    btn.disabled = false;
+    showErr('Resolve failed: ' + e.message);
+  }
+}
+
+function applyFilters() {
+  let filtered = allAlerts;
+  if (currentFilters.severity !== 'all') {
+    filtered = filtered.filter(a => (a.severity || '').toLowerCase() === currentFilters.severity);
+  }
+  if (currentFilters.search) {
+    const q = currentFilters.search.toLowerCase();
+    filtered = filtered.filter(a =>
+      (a.pattern || '').toLowerCase().includes(q) ||
+      (a.source_file || '').toLowerCase().includes(q) ||
+      (a.context || '').toLowerCase().includes(q)
+    );
+  }
+  filtered.sort((a, b) => {
+    const sa = SEV_ORDER[(a.severity || 'low').toLowerCase()] ?? 99;
+    const sb = SEV_ORDER[(b.severity || 'low').toLowerCase()] ?? 99;
+    if (sa !== sb) return sa - sb;
+    return (b.last_seen || 0) - (a.last_seen || 0);
+  });
+  renderAlerts(filtered);
+}
+
+async function loadAlerts() {
+  try {
+    const params = new URLSearchParams({
+      time_range: currentFilters.time_range,
+      severity: 'all',
+      deduplicate: '1',
+      limit: '500'
+    });
+    const r = await fetch('/api/alerts?' + params.toString());
+    if (!r.ok) throw new Error('alerts HTTP ' + r.status);
+    const data = await r.json();
+    allAlerts = data.alerts || [];
+    const summary = data.summary || {};
+    document.getElementById('stat-total').textContent = summary.total ?? allAlerts.length;
+    document.getElementById('stat-critical').textContent = summary.critical ?? 0;
+    document.getElementById('stat-high').textContent = summary.high ?? 0;
+    document.getElementById('stat-medium').textContent = summary.medium ?? 0;
+    document.getElementById('stat-low').textContent = summary.low ?? 0;
+    applyFilters();
+  } catch (e) {
+    showErr('Alerts: ' + e.message);
+  }
+}
+
+async function loadOps() {
+  try {
+    const [qRes, cRes, sRes] = await Promise.all([
+      fetch('/api/queues/status'),
+      fetch('/api/system/controls'),
+      fetch('/api/schedule/next-runs')
+    ]);
+    if (qRes.ok) {
+      const q = await qRes.json();
+      const eq = q.email_queue || {};
+      document.getElementById('q-pending').textContent = eq.pending ?? '—';
+      document.getElementById('q-pending').className = 'v' + ((eq.pending || 0) > 50 ? ' warn' : '');
+      document.getElementById('q-sent').textContent = eq.sent_today ?? '—';
+      document.getElementById('q-failed').textContent = eq.failed ?? '—';
+      document.getElementById('q-failed').className = 'v' + ((eq.failed || 0) > 0 ? ' crit' : '');
+      const b = q.backups || {};
+      document.getElementById('b-last').textContent = b.last_at ? fmtIso(b.last_at) : '—';
+      document.getElementById('b-status').textContent = b.last_status || 'unknown';
+      document.getElementById('b-status').className = 'v' + (b.last_status === 'failed' ? ' crit' : '');
+      document.getElementById('b-next').textContent = b.next_scheduled || '—';
+    }
+    if (cRes.ok) {
+      const c = await cRes.json();
+      const killEl = document.getElementById('ctl-kill');
+      killEl.textContent = c.kill_switch ? 'ACTIVE' : 'off';
+      killEl.className = 'v' + (c.kill_switch ? ' crit' : '');
+      document.getElementById('ctl-trade').textContent = c.trading_mode || '—';
+      document.getElementById('ctl-disp').textContent = c.dispatch_mode || '—';
+      document.getElementById('ctl-op').textContent = c.operating_mode || '—';
+    }
+    if (sRes.ok) {
+      const s = await sRes.json();
+      const items = [];
+      for (const e of (s.enrichments || [])) {
+        items.push((e.scheduled_time || '?') + ' · ' + (e.agent || '?') + ' (' + (e.cadence || '?') + ')');
+      }
+      for (const b of (s.backups || [])) {
+        items.push((b.scheduled_time || '?') + ' · ' + (b.name || 'backup') + ' (' + (b.cadence || '?') + ')');
+      }
+      const listEl = document.getElementById('schedule-list');
+      listEl.innerHTML = items.length ? items.map(t => '<div>' + escapeHtml(t) + '</div>').join('') : '—';
+    }
+  } catch (e) {
+    showErr('Ops: ' + e.message);
+  }
+}
+
+async function loadCustomers() {
+  try {
+    const r = await fetch('/api/customers/active');
+    if (!r.ok) throw new Error('customers HTTP ' + r.status);
+    const data = await r.json();
+    const customers = data.customers || [];
+    document.getElementById('cust-count').textContent = customers.length;
+    const wrap = document.getElementById('cust-table-wrap');
+    if (customers.length === 0) {
+      wrap.innerHTML = '<div class="empty">No active customers</div>';
+      return;
+    }
+    let html = '<table class="cust-table"><thead><tr>' +
+      '<th>Name</th><th>Email</th><th>Status</th><th>Last activity</th></tr></thead><tbody>';
+    for (const c of customers) {
+      const statusCls = c.is_online ? 'online' : (c.status === 'paused' ? 'paused' : 'idle');
+      const statusLabel = c.is_online ? 'online' : (c.status === 'paused' ? 'paused' : 'idle');
+      html += '<tr>' +
+        '<td>' + escapeHtml(c.name || '—') + '</td>' +
+        '<td class="email">' + escapeHtml(c.email || '—') + '</td>' +
+        '<td><span class="cust-status ' + statusCls + '">' + statusLabel + '</span></td>' +
+        '<td class="email">' + escapeHtml(c.last_activity_str || '—') + '</td>' +
+        '</tr>';
+    }
+    html += '</tbody></table>';
+    wrap.innerHTML = html;
+  } catch (e) {
+    showErr('Customers: ' + e.message);
+  }
+}
+
+function showErr(msg) {
+  const bar = document.getElementById('err-bar');
+  bar.textContent = msg;
+  bar.style.display = 'block';
+  setTimeout(() => { bar.style.display = 'none'; }, 8000);
+}
+
+function loadAll() {
+  loadAlerts();
+  loadOps();
+  loadCustomers();
+  document.getElementById('refresh-time').textContent = new Date().toLocaleTimeString();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('.btn[data-sev]').forEach(btn => {
+    btn.onclick = () => {
+      document.querySelectorAll('.btn[data-sev]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentFilters.severity = btn.dataset.sev;
+      applyFilters();
+    };
+  });
+  document.querySelectorAll('.btn[data-time]').forEach(btn => {
+    btn.onclick = () => {
+      document.querySelectorAll('.btn[data-time]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentFilters.time_range = btn.dataset.time;
+      loadAlerts();
+    };
+  });
+  document.getElementById('search-input').addEventListener('input', e => {
+    currentFilters.search = e.target.value.trim();
+    applyFilters();
+  });
+  loadAll();
+  setInterval(loadAll, 60000);
+});
+</script>
+
+</body>
+</html>

@@ -4645,6 +4645,49 @@ def proxy_pending_signups():
         return jsonify({"error": str(e)}), 502
 
 
+# ── Trading Policy V1 — EOD report proxies (added 2026-05-07) ───────────
+# Proxies pi5's policy-eod-* endpoints so the auditor page on pi4b can
+# fetch reports without authenticating through Cloudflare. Same X-Token
+# pattern as other proxy endpoints in this section.
+
+@app.route("/api/proxy/policy-eod-list")
+def proxy_policy_eod_list():
+    """List available EOD report dates (newest first)."""
+    token = request.headers.get('X-Token', '')
+    if token != SECRET_TOKEN and not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    import requests as _req
+    try:
+        r = _req.get(
+            f"{RETAIL_PORTAL_URL}/api/policy-eod-list",
+            timeout=8,
+            cookies={'synthos_s': _get_admin_session_cookie()},
+        )
+        return jsonify(r.json()), r.status_code
+    except Exception as e:
+        return jsonify({"error": str(e)}), 502
+
+
+@app.route("/api/proxy/policy-eod-report")
+def proxy_policy_eod_report():
+    """Specific date's EOD report. ?date=YYYY-MM-DD."""
+    token = request.headers.get('X-Token', '')
+    if token != SECRET_TOKEN and not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    date = request.args.get('date', '')
+    import requests as _req
+    try:
+        r = _req.get(
+            f"{RETAIL_PORTAL_URL}/api/policy-eod-report",
+            params={'date': date},
+            timeout=10,
+            cookies={'synthos_s': _get_admin_session_cookie()},
+        )
+        return jsonify(r.json()), r.status_code
+    except Exception as e:
+        return jsonify({"error": str(e)}), 502
+
+
 @app.route("/api/proxy/approve-signup", methods=["POST"])
 def proxy_approve_signup():
     """Proxy signup approval to retail portal on pi5."""
@@ -6102,6 +6145,22 @@ def customers_page():
         return redirect(url_for("login"))
     return _subpage_header('Customers') + render_template(
         'customers.html',
+        secret_token=SECRET_TOKEN,
+    )
+
+
+# ── POLICY EOD PAGE (Trader V1 daily comparison) ─────────────────────────────
+
+@app.route("/policy-eod")
+def policy_eod_page():
+    """Trader V1 daily EOD comparison view. Information-dense per-customer
+    table, hourly verdict density (catches premarket edge cases), policy
+    blocks, opens/closes, and (once 2+ days) week comparison with charts.
+    Fed by pi5 reports via /api/proxy/policy-eod-{list,report}."""
+    if not _authorized():
+        return redirect(url_for("login"))
+    return _subpage_header('Policy EOD') + render_template(
+        'policy_eod.html',
         secret_token=SECRET_TOKEN,
     )
 

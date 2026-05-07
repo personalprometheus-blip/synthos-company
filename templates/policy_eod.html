@@ -1,0 +1,444 @@
+<!--
+  policy_eod.html — Trader V1 daily EOD report viewer
+  Loaded by /policy-eod on synthos_monitor (pi4b :5050).
+  Pulls JSON from pi5 cross-node via /api/proxy/policy-eod-{list,report}.
+  Information-dense; gracefully degrades when fewer than 7 days are available.
+-->
+<style>
+  body { background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 13px; }
+  .eod-page { max-width: 1500px; margin: 0 auto; padding: 16px 24px; }
+  .eod-header { display: flex; align-items: baseline; justify-content: space-between;
+                padding-bottom: 8px; border-bottom: 1px solid var(--border); margin-bottom: 14px; }
+  .eod-header h1 { font-size: 16px; font-weight: 600; letter-spacing: 0.05em; color: var(--teal); margin: 0; }
+  .eod-header .meta { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+  .date-picker { display: flex; gap: 8px; align-items: center; }
+  .date-picker select, .date-picker button {
+      background: var(--surface); color: var(--text); border: 1px solid var(--border2);
+      padding: 4px 10px; border-radius: 6px; font-size: 11px; font-family: var(--mono); cursor: pointer; }
+  .date-picker button:hover { border-color: var(--teal); color: var(--teal); }
+  .day-banner { padding: 8px 14px; border-radius: 8px; background: rgba(0,245,212,0.04);
+                border: 1px solid rgba(0,245,212,0.15); margin-bottom: 14px; font-size: 11px;
+                color: rgba(255,255,255,0.7); }
+  .day-banner.warn { background: rgba(255,179,71,0.04); border-color: rgba(255,179,71,0.2); }
+
+  /* tile grid */
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px,1fr)); gap: 8px; margin-bottom: 14px; }
+  .tile { background: var(--surface); border: 1px solid var(--border); padding: 10px 12px; border-radius: 8px;
+          position: relative; overflow: hidden; }
+  .tile::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+                  background: linear-gradient(90deg, transparent, var(--teal), transparent); }
+  .tile.fail::before { background: linear-gradient(90deg, transparent, var(--pink), transparent); }
+  .tile.amber::before { background: linear-gradient(90deg, transparent, var(--amber), transparent); }
+  .tile-label { font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+                color: var(--muted); margin-bottom: 4px; }
+  .tile-val { font-size: 22px; font-weight: 700; letter-spacing: -0.5px; color: var(--text); font-family: var(--mono); }
+  .tile.fail .tile-val { color: var(--pink); }
+  .tile.amber .tile-val { color: var(--amber); }
+  .tile-sub { font-size: 10px; color: var(--dim); margin-top: 2px; font-family: var(--mono); }
+
+  /* hourly density */
+  .hourly-row { display: grid; grid-template-columns: 80px repeat(24, 1fr); gap: 1px;
+                margin-bottom: 4px; align-items: center; }
+  .hourly-row .label { font-size: 10px; color: var(--muted); font-family: var(--mono); }
+  .hourly-cell { height: 22px; background: var(--surface); border-radius: 2px;
+                  font-size: 9px; display: flex; align-items: center; justify-content: center;
+                  color: rgba(255,255,255,0.6); font-family: var(--mono); }
+
+  /* sectional containers */
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+           padding: 12px 14px; margin-bottom: 12px; }
+  .panel h2 { font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+              color: var(--muted); margin: 0 0 10px 0; display: flex; align-items: center; gap: 8px; }
+  .panel h2::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+  /* tables */
+  table.dense { width: 100%; border-collapse: collapse; font-size: 11px; font-family: var(--mono); }
+  table.dense th { padding: 5px 8px; text-align: left; font-size: 9px; font-weight: 700;
+                   letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
+                   border-bottom: 1px solid var(--border); }
+  table.dense td { padding: 4px 8px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+  table.dense tr:hover td { background: rgba(0,245,212,0.04); }
+  .verdict-pass { color: var(--teal); }
+  .verdict-fail { color: var(--pink); font-weight: 600; }
+  .verdict-zero { color: var(--dim); }
+  .posture-NORMAL { color: var(--teal); }
+  .posture-CAUTIOUS { color: var(--amber); }
+  .posture-DEFENSIVE { color: var(--pink); }
+  .src-fallback { color: var(--amber); font-size: 9px; }
+  .src-primary { color: var(--teal); font-size: 9px; }
+
+  .empty-cell { color: var(--dim); }
+  .num-pos { color: var(--teal); }
+  .num-neg { color: var(--pink); }
+  .small-tbl { font-size: 10px; }
+
+  .blocks-list { font-family: var(--mono); font-size: 10px; max-height: 240px; overflow-y: auto; }
+  .blocks-list .row { padding: 3px 0; border-bottom: 1px dashed rgba(255,255,255,0.04); display: grid;
+                       grid-template-columns: 130px 60px 70px 100px 1fr; gap: 8px; }
+
+  /* week compare placeholder */
+  .week-skeleton { padding: 24px; text-align: center; color: var(--muted); font-size: 11px;
+                    border: 1px dashed var(--border2); border-radius: 8px; background: var(--surface); }
+  .week-skeleton b { color: var(--text); font-family: var(--mono); }
+
+  /* charts */
+  .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+                 padding: 10px 14px; }
+  .chart-card h3 { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+                    color: var(--muted); margin: 0 0 8px 0; }
+
+  .err { color: var(--pink); font-family: var(--mono); padding: 12px; }
+</style>
+
+<div class="eod-page">
+
+  <div class="eod-header">
+    <div>
+      <h1>POLICY EOD · DAILY COMPARISON</h1>
+      <div class="meta" id="header-meta">loading…</div>
+    </div>
+    <div class="date-picker">
+      <select id="date-select"></select>
+      <button onclick="loadEOD(document.getElementById('date-select').value)">↻ refresh</button>
+      <a href="/customers" style="font-size:11px;color:var(--muted);text-decoration:none;margin-left:12px">&larr; customers</a>
+    </div>
+  </div>
+
+  <div id="day-banner" class="day-banner"></div>
+
+  <!-- top tiles -->
+  <div id="tiles" class="tiles"></div>
+
+  <!-- per-customer detail -->
+  <div class="panel">
+    <h2>Per-customer · today</h2>
+    <table class="dense" id="customer-table">
+      <thead>
+        <tr>
+          <th>cid</th><th>posture</th><th>HG-1</th><th>HG-2</th><th>SG-6</th><th>SG-7</th>
+          <th>trader-side</th><th>opens</th><th>closes</th><th>open_now</th><th>notional</th><th>fails</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <!-- hourly density -->
+  <div class="panel" id="hourly-panel">
+    <h2>Verdict density · by hour (UTC) · catches premarket edges</h2>
+    <div id="hourly-grid"></div>
+  </div>
+
+  <!-- FAIL reasons + policy blocks -->
+  <div class="chart-grid">
+    <div class="panel">
+      <h2>FAIL reasons (fleet)</h2>
+      <table class="dense small-tbl" id="fail-table">
+        <thead><tr><th>reason</th><th>count</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="panel">
+      <h2>Policy blocks · enforcement_active=1</h2>
+      <div class="blocks-list" id="blocks-list"></div>
+    </div>
+  </div>
+
+  <!-- positions opens/closes -->
+  <div class="chart-grid">
+    <div class="panel">
+      <h2>Opens today</h2>
+      <table class="dense small-tbl" id="opens-table">
+        <thead><tr><th>cid</th><th>ticker</th><th>shares</th><th>entry</th><th>score</th><th>floor</th><th>pattern</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="panel">
+      <h2>Closes today</h2>
+      <table class="dense small-tbl" id="closes-table">
+        <thead><tr><th>cid</th><th>ticker</th><th>shares</th><th>entry</th><th>reason</th><th>pnl</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- week comparison -->
+  <div class="panel" id="week-panel">
+    <h2>Week comparison</h2>
+    <div id="week-content"></div>
+  </div>
+
+  <!-- charts (activate with 2+ days) -->
+  <div id="charts-section" style="display:none">
+    <div class="chart-grid">
+      <div class="chart-card">
+        <h3>Daily verdict count by guardrail</h3>
+        <canvas id="chart-daily-verdicts" height="180"></canvas>
+      </div>
+      <div class="chart-card">
+        <h3>FAILs per day</h3>
+        <canvas id="chart-daily-fails" height="180"></canvas>
+      </div>
+      <div class="chart-card">
+        <h3>Positions opened / closed</h3>
+        <canvas id="chart-daily-positions" height="180"></canvas>
+      </div>
+      <div class="chart-card">
+        <h3>Trader-side vs auditor-side ratio</h3>
+        <canvas id="chart-trader-ratio" height="180"></canvas>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+const TOKEN = document.cookie.split(';').map(c=>c.trim()).find(c=>c.startsWith('company_token='))?.split('=')[1] || '';
+const SECRET_TOKEN = '{{ secret_token }}';
+
+let availableDates = [];
+let cachedReports = {};   // date -> report json
+let chartObjs = {};
+
+async function fetchAvailable() {
+  const r = await fetch('/api/proxy/policy-eod-list', {headers:{'X-Token':SECRET_TOKEN}});
+  const j = await r.json();
+  return (j.dates || []);
+}
+async function fetchReport(date) {
+  if (cachedReports[date]) return cachedReports[date];
+  const r = await fetch(`/api/proxy/policy-eod-report?date=${date}`, {headers:{'X-Token':SECRET_TOKEN}});
+  const j = await r.json();
+  if (j.error) throw new Error(j.error);
+  cachedReports[date] = j;
+  return j;
+}
+
+function fmt(n, opts={}) {
+  if (n == null) return '—';
+  if (typeof n !== 'number') n = parseFloat(n) || 0;
+  if (opts.dollars) return '$' + n.toLocaleString('en-US', {maximumFractionDigits: 0});
+  if (opts.pct) return (n*100).toFixed(1) + '%';
+  return n.toLocaleString('en-US');
+}
+function vdColor(n) { return n > 0 ? 'verdict-pass' : 'verdict-zero'; }
+
+function renderTiles(rep) {
+  const f = rep.fleet;
+  const totalV = Object.values(f.verdicts_by_guardrail || {}).reduce((a,b)=>a+b,0);
+  const traderRatio = totalV > 0 ? (f.trader_side_verdicts / totalV) : 0;
+  const tiles = [
+    {label: 'verdicts', val: fmt(totalV), sub: `${f.trader_side_verdicts} trader / ${f.auditor_side_verdicts} auditor`},
+    {label: 'fails', val: fmt(f.fails_total), sub: `${(f.policy_blocks||[]).length} blocks`, cls: f.fails_total ? 'fail' : ''},
+    {label: 'trader-side %', val: fmt(traderRatio, {pct:true}), sub: 'enforcement firing rate'},
+    {label: 'opens / closes', val: `${f.positions_opened} / ${f.positions_closed}`, sub: `${f.rotation_skips || 0} rotation skips`},
+    {label: 'open now', val: fmt(f.current_open_count), sub: fmt(f.current_open_notional, {dollars:true}) + ' notional'},
+    {label: 'customers', val: fmt(rep.customers.length), sub: 'analyzed'},
+  ];
+  document.getElementById('tiles').innerHTML = tiles.map(t =>
+    `<div class="tile ${t.cls||''}"><div class="tile-label">${t.label}</div><div class="tile-val">${t.val}</div><div class="tile-sub">${t.sub}</div></div>`
+  ).join('');
+}
+
+function renderCustomerTable(rep) {
+  const tbody = document.querySelector('#customer-table tbody');
+  const rows = (rep.per_customer || []).map(c => {
+    if (c.error) return `<tr><td>${c.cid_short}</td><td colspan="11" class="err">${c.error}</td></tr>`;
+    const v = c.verdict_counts || {};
+    const cell = (g) => {
+      const pass = v[`${g}_PASS`] || 0;
+      const fail = v[`${g}_FAIL`] || 0;
+      if (pass + fail === 0) return `<td class="verdict-zero">—</td>`;
+      const failTxt = fail ? ` <span class="verdict-fail">${fail}</span>` : '';
+      return `<td><span class="verdict-pass">${pass}</span>${failTxt}</td>`;
+    };
+    const fails = Object.values(c.fails_by_reason || {}).reduce((a,b)=>a+b,0);
+    return `<tr>
+      <td>${c.cid_short}</td>
+      <td><span class="posture-${c.final_posture}">${c.final_posture||'?'}</span> <span class="src-${c.last_classification_source||'primary'}">${c.last_classification_source||''}</span></td>
+      ${cell('HG-1')}${cell('HG-2')}${cell('SG-6')}${cell('SG-7')}
+      <td>${fmt(c.trader_verdicts)}</td>
+      <td class="num-pos">${c.positions_opened_today||0}</td>
+      <td>${c.positions_closed_today||0}</td>
+      <td>${c.current_open_count||0}</td>
+      <td>${fmt(c.current_notional, {dollars:true})}</td>
+      <td class="${fails ? 'verdict-fail' : 'verdict-zero'}">${fails || '—'}</td>
+    </tr>`;
+  }).join('');
+  tbody.innerHTML = rows;
+}
+
+function renderHourly(rep) {
+  const f = rep.fleet;
+  const hours = Array.from({length:24}, (_,i) => String(i).padStart(2,'0'));
+  const data = f.verdicts_by_hour || {};
+  const max = Math.max(1, ...hours.map(h => (data[h]?.total || 0)));
+  const cells = hours.map(h => {
+    const d = data[h] || {total:0, fails:0, trader_side:0};
+    const intensity = d.total / max;
+    const bg = d.fails > 0
+      ? `rgba(255,75,110, ${0.15 + intensity*0.5})`
+      : `rgba(0,245,212, ${0.05 + intensity*0.4})`;
+    return `<div class="hourly-cell" style="background:${bg}" title="${h}:00 UTC | total=${d.total} fails=${d.fails} trader=${d.trader_side}">${d.total||''}</div>`;
+  }).join('');
+  document.getElementById('hourly-grid').innerHTML =
+    `<div class="hourly-row"><div class="label">Verdicts/h</div>${cells}</div>` +
+    `<div style="display:grid;grid-template-columns:80px repeat(24,1fr);gap:1px;font-size:9px;color:var(--muted);font-family:var(--mono);margin-top:2px;text-align:center">` +
+    `<div></div>${hours.map(h => `<div>${h}</div>`).join('')}</div>`;
+}
+
+function renderFailsAndBlocks(rep) {
+  const f = rep.fleet;
+  const fails = Object.entries(f.fail_reasons || {}).sort((a,b)=>b[1]-a[1]);
+  const failTbody = document.querySelector('#fail-table tbody');
+  failTbody.innerHTML = fails.length ? fails.map(([r,n]) =>
+    `<tr><td>${r}</td><td class="verdict-fail">${n}</td></tr>`).join('') :
+    `<tr><td colspan="2" class="empty-cell">no fails today</td></tr>`;
+
+  const blocks = (f.policy_blocks || []).slice(-30).reverse();
+  document.getElementById('blocks-list').innerHTML = blocks.length ? blocks.map(b =>
+    `<div class="row"><div>${b.at}</div><div>${b.guardrail}</div><div>${b.fail_mode||'-'}</div><div>${b.subject||'-'}</div><div>${b.reason}</div></div>`
+  ).join('') : `<div class="empty-cell" style="padding:8px">no policy blocks today</div>`;
+}
+
+function renderPositions(rep) {
+  const opens = [];
+  const closes = [];
+  (rep.per_customer || []).forEach(c => {
+    (c.opens_detail || []).forEach(o => opens.push({...o, cid: c.cid_short}));
+    (c.closes_detail || []).forEach(cl => closes.push({...cl, cid: c.cid_short}));
+  });
+  document.querySelector('#opens-table tbody').innerHTML = opens.length ? opens.map(o =>
+    `<tr><td>${o.cid}</td><td>${o.ticker}</td><td>${o.shares}</td><td>$${o.entry_price}</td><td>${o.score||'—'}</td><td>${o.max_loss_at_entry||'—'}</td><td>${o.pattern||'—'}</td></tr>`
+  ).join('') : `<tr><td colspan="7" class="empty-cell">no opens today</td></tr>`;
+  document.querySelector('#closes-table tbody').innerHTML = closes.length ? closes.map(c => {
+    const pnl = c.pnl != null ? parseFloat(c.pnl) : null;
+    const pnlCls = pnl == null ? '' : (pnl >= 0 ? 'num-pos' : 'num-neg');
+    const pnlStr = pnl == null ? '—' : (pnl >= 0 ? '+' : '') + fmt(pnl, {dollars:true});
+    return `<tr><td>${c.cid}</td><td>${c.ticker}</td><td>${c.shares}</td><td>$${c.entry_price}</td><td>${c.exit_reason||'?'}</td><td class="${pnlCls}">${pnlStr}</td></tr>`;
+  }).join('') : `<tr><td colspan="6" class="empty-cell">no closes today</td></tr>`;
+}
+
+function renderWeekCompare() {
+  const wkPanel = document.getElementById('week-content');
+  const chartsSection = document.getElementById('charts-section');
+  const N = availableDates.length;
+  const NEEDED = 7;
+  if (N < 2) {
+    wkPanel.innerHTML =
+      `<div class="week-skeleton"><b>Day ${N} of ${NEEDED}</b> &mdash; comparison view unlocks at Day 2.<br>
+       <span style="color:var(--dim)">Charts and week-over-week deltas activate as data accumulates.</span></div>`;
+    chartsSection.style.display = 'none';
+    return;
+  }
+  // Pull all reports we have (cached or via fetch); take last 7
+  const dates = availableDates.slice(0, Math.min(NEEDED, availableDates.length));
+  Promise.all(dates.map(d => fetchReport(d))).then(reps => {
+    // Render comparison table: rows = dates, cols = key metrics
+    const rows = reps.map(rep => {
+      const f = rep.fleet;
+      const totalV = Object.values(f.verdicts_by_guardrail || {}).reduce((a,b)=>a+b,0);
+      return {
+        date: rep.date,
+        verdicts: totalV,
+        trader_side: f.trader_side_verdicts,
+        fails: f.fails_total,
+        opens: f.positions_opened,
+        closes: f.positions_closed,
+        rotation_skips: f.rotation_skips,
+        open_count: f.current_open_count,
+        notional: f.current_open_notional,
+      };
+    });
+    let html = `<table class="dense" style="margin-bottom:14px"><thead><tr>
+      <th>date</th><th>verdicts</th><th>trader-side</th><th>fails</th>
+      <th>opens</th><th>closes</th><th>rotation skipped</th>
+      <th>open_now</th><th>notional</th></tr></thead><tbody>`;
+    rows.forEach(r => {
+      html += `<tr><td>${r.date}</td><td>${fmt(r.verdicts)}</td><td>${fmt(r.trader_side)}</td>` +
+              `<td class="${r.fails ? 'verdict-fail' : 'verdict-zero'}">${r.fails||'—'}</td>` +
+              `<td class="num-pos">${r.opens||0}</td><td>${r.closes||0}</td>` +
+              `<td>${r.rotation_skips||0}</td><td>${r.open_count}</td><td>${fmt(r.notional,{dollars:true})}</td></tr>`;
+    });
+    html += `</tbody></table>`;
+    if (N < NEEDED) {
+      html += `<div class="day-banner">Showing ${N} of ${NEEDED} days. Full week view at day 7.</div>`;
+    }
+    wkPanel.innerHTML = html;
+
+    // Charts (chronological order)
+    chartsSection.style.display = '';
+    const chrono = [...rows].reverse();
+    drawChart('chart-daily-verdicts', chrono.map(r=>r.date),
+              [{label:'total verdicts', data: chrono.map(r=>r.verdicts), borderColor:'#00f5d4'},
+               {label:'trader-side', data: chrono.map(r=>r.trader_side), borderColor:'#ffb347'}]);
+    drawChart('chart-daily-fails', chrono.map(r=>r.date),
+              [{label:'fails', data: chrono.map(r=>r.fails), borderColor:'#ff4b6e'}]);
+    drawChart('chart-daily-positions', chrono.map(r=>r.date),
+              [{label:'opens', data: chrono.map(r=>r.opens), borderColor:'#00f5d4'},
+               {label:'closes', data: chrono.map(r=>r.closes), borderColor:'#ff4b6e'}]);
+    drawChart('chart-trader-ratio', chrono.map(r=>r.date),
+              [{label:'trader-side / total', data: chrono.map(r=>r.verdicts ? r.trader_side/r.verdicts : 0), borderColor:'#7b61ff'}]);
+  });
+}
+
+function drawChart(canvasId, labels, datasets) {
+  const ctx = document.getElementById(canvasId);
+  if (!ctx) return;
+  if (chartObjs[canvasId]) chartObjs[canvasId].destroy();
+  chartObjs[canvasId] = new Chart(ctx, {
+    type: 'line',
+    data: { labels: labels, datasets: datasets.map(d => ({...d, fill: false, tension: 0.2, pointRadius: 3})) },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: 'rgba(255,255,255,0.6)', font: { size: 10 } } } },
+      scales: {
+        x: { ticks: { color: 'rgba(255,255,255,0.4)', font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+        y: { ticks: { color: 'rgba(255,255,255,0.4)', font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.04)' }, beginAtZero: true },
+      },
+    },
+  });
+}
+
+async function loadEOD(date) {
+  try {
+    const rep = await fetchReport(date);
+    document.getElementById('header-meta').textContent =
+      `${rep.date} · generated ${rep.generated_at.replace('T',' ').substring(0,19)}`;
+    const banner = document.getElementById('day-banner');
+    const N = availableDates.length;
+    const NEEDED = 7;
+    if (N < NEEDED) {
+      banner.className = 'day-banner';
+      banner.textContent = `Day ${N} of ${NEEDED} — week comparison view unlocks at day 7. Charts/graphs activate at day 2.`;
+    } else {
+      banner.className = 'day-banner';
+      banner.textContent = `${N} days of data available · 30-day retention · charts active`;
+    }
+    renderTiles(rep);
+    renderCustomerTable(rep);
+    renderHourly(rep);
+    renderFailsAndBlocks(rep);
+    renderPositions(rep);
+    renderWeekCompare();
+  } catch (e) {
+    document.getElementById('header-meta').innerHTML = `<span class="err">load failed: ${e.message}</span>`;
+  }
+}
+
+async function init() {
+  availableDates = await fetchAvailable();
+  if (availableDates.length === 0) {
+    document.getElementById('header-meta').innerHTML =
+      `<span class="err">no reports available — first report fires at 16:45 ET on next trading day</span>`;
+    return;
+  }
+  const sel = document.getElementById('date-select');
+  sel.innerHTML = availableDates.map(d => `<option value="${d}">${d}</option>`).join('');
+  sel.onchange = () => loadEOD(sel.value);
+  loadEOD(availableDates[0]);
+}
+init();
+</script>

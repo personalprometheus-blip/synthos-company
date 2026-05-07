@@ -194,6 +194,81 @@
   #live-status-strip .ls-cpu{ color:rgba(255,255,255,0.55); font-size:9.5px }
   #live-status-strip .ls-meta{ margin-left:auto; color:rgba(255,255,255,0.4); font-size:9px; font-style:italic }
   #canvas-wrap.hidden-topology > #live-status-strip{ display:none; }
+
+  /* ── V2 Phase 1: hard strip — hide SVG layout, hide morning's status strip ── */
+  #canvas-wrap > svg{ display:none !important; }
+  #canvas-wrap::before{ display:none !important; }
+  #live-status-strip{ display:none !important; }
+
+  /* Node card grid — the V2 topology */
+  #nodes-v2-grid{ position:absolute; inset:0; padding:32px 28px 24px; overflow-y:auto;
+                  display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr));
+                  gap:16px; align-content:start; z-index:3; }
+  #canvas-wrap.hidden-topology > #nodes-v2-grid{ display:none; }
+
+  #nodes-v2-grid .nv-banner{ grid-column:1/-1; display:flex; align-items:center; gap:14px;
+                              padding:10px 16px; background:rgba(13,17,32,0.85);
+                              border:1px solid rgba(255,255,255,0.13); border-radius:10px;
+                              font-family:'JetBrains Mono',monospace; font-size:11px;
+                              color:rgba(255,255,255,0.55); margin-bottom:4px; }
+  #nodes-v2-grid .nv-banner .nv-tag{ color:#00f5d4; font-weight:700; letter-spacing:0.12em;
+                                      font-size:9px; padding:2px 8px; border-radius:99px;
+                                      border:1px solid rgba(0,245,212,0.3);
+                                      background:rgba(0,245,212,0.06); }
+  #nodes-v2-grid .nv-banner .nv-tag::before{ content:'●'; margin-right:5px;
+                                              animation:livePulse 2s ease-in-out infinite; }
+  #nodes-v2-grid .nv-banner .nv-meta{ margin-left:auto; color:rgba(255,255,255,0.4); font-size:10px; }
+
+  #nodes-v2-grid .nv-empty{ grid-column:1/-1; padding:64px; text-align:center;
+                             color:rgba(255,255,255,0.4); font-family:'JetBrains Mono',monospace;
+                             font-size:12px; letter-spacing:0.04em; }
+
+  .node-card-v2{ background:rgba(13,17,32,0.85); border:1px solid rgba(255,255,255,0.13);
+                  border-radius:14px; padding:18px 20px; position:relative;
+                  transition:opacity 0.3s, box-shadow 0.6s, border-color 0.3s;
+                  backdrop-filter:blur(14px); }
+  .node-card-v2.entering{ opacity:0; transform:translateY(6px); }
+  .node-card-v2.entered{ opacity:1; transform:translateY(0); transition:all 0.4s; }
+  .node-card-v2.leaving{ opacity:0; transform:translateY(-4px); }
+
+  .node-card-v2.pulse{ animation:cardPulse 0.9s ease-out; }
+  @keyframes cardPulse{
+    0%   { box-shadow:0 0 0 0 rgba(0,245,212,0.4); border-color:rgba(0,245,212,0.5); }
+    100% { box-shadow:0 0 0 18px rgba(0,245,212,0); }
+  }
+
+  .node-card-v2 .nc-header{ display:flex; align-items:flex-start; gap:12px; margin-bottom:14px; }
+  .node-card-v2 .nc-dot{ width:12px; height:12px; border-radius:50%; flex-shrink:0; margin-top:5px; }
+  .node-card-v2 .nc-dot.ok{ background:#4ade80; box-shadow:0 0 12px rgba(74,222,128,0.55); }
+  .node-card-v2 .nc-dot.warn{ background:#ffb347; box-shadow:0 0 8px rgba(255,179,71,0.4); }
+  .node-card-v2 .nc-dot.crit{ background:#ff4b6e; box-shadow:0 0 8px rgba(255,75,110,0.4); }
+  .node-card-v2 .nc-dot.off{ background:rgba(255,255,255,0.15); }
+
+  .node-card-v2 .nc-id{ font-family:'JetBrains Mono',monospace; font-weight:700; font-size:14px;
+                         color:rgba(255,255,255,0.92); letter-spacing:0.04em; }
+  .node-card-v2 .nc-label{ font-family:'JetBrains Mono',monospace; font-size:10px;
+                            color:rgba(255,255,255,0.4); margin-top:2px; }
+  .node-card-v2 .nc-age{ margin-left:auto; font-family:'JetBrains Mono',monospace;
+                          font-size:10px; color:rgba(255,255,255,0.4); text-align:right;
+                          font-variant-numeric:tabular-nums; }
+  .node-card-v2 .nc-age .nc-age-label{ display:block; font-size:8px; color:rgba(255,255,255,0.3);
+                                        text-transform:uppercase; letter-spacing:0.08em; margin-bottom:1px; }
+
+  .node-card-v2 .nc-metrics{ display:grid; grid-template-columns:1fr 1fr; gap:10px 18px;
+                              padding-top:10px; border-top:1px solid rgba(255,255,255,0.07); }
+  .node-card-v2 .nc-metric{ display:flex; justify-content:space-between; align-items:baseline;
+                             font-size:11px; color:rgba(255,255,255,0.5); }
+  .node-card-v2 .nc-metric .lab{ font-family:'JetBrains Mono',monospace; font-size:9px;
+                                  text-transform:uppercase; letter-spacing:0.08em; }
+  .node-card-v2 .nc-metric .val{ font-family:'JetBrains Mono',monospace; font-weight:600;
+                                  color:rgba(255,255,255,0.88); font-variant-numeric:tabular-nums; }
+  .node-card-v2 .nc-metric .val.warn{ color:#ffb347; }
+  .node-card-v2 .nc-metric .val.crit{ color:#ff4b6e; }
+
+  .node-card-v2 .nc-bottom{ margin-top:14px; padding-top:10px; border-top:1px dashed rgba(255,255,255,0.06);
+                             font-family:'JetBrains Mono',monospace; font-size:9px;
+                             color:rgba(255,255,255,0.25); display:flex; justify-content:space-between; }
+
   #canvas-wrap.hidden-topology > #legend, #canvas-wrap.hidden-topology > #log, #canvas-wrap.hidden-topology > #hover-card{ display:none; }
   .timeline-title{ font-family:var(--mono); font-size:12px; color:var(--text); font-weight:700; letter-spacing:0.15em; text-transform:uppercase; margin-bottom:22px; display:flex; align-items:center; gap:12px; }
   .timeline-title::before{ content:''; width:3px; height:16px; background:var(--teal); border-radius:99px; box-shadow:0 0 10px var(--teal-glow); }
@@ -660,6 +735,14 @@
   </aside>
 
   <main id="canvas-wrap">
+  <div id="nodes-v2-grid">
+    <div class="nv-banner">
+      <span class="nv-tag">LIVE</span>
+      <span>Topology stripped to bare nodes — populated only when a heartbeat lands within 5 min.</span>
+      <span class="nv-meta" id="nv-banner-meta">connecting...</span>
+    </div>
+    <div class="nv-empty" id="nv-empty">Waiting for first heartbeat...</div>
+  </div>
   <div id="live-status-strip">
     <span class="live-tag">LIVE</span>
     <div id="ls-nodes" style="display:flex; gap:18px; flex-wrap:wrap; align-items:center"></div>
@@ -3436,7 +3519,7 @@ function renderProvenance() {
 }
 
 // Kick off the merge after initial render (defaults show first, then upgrade).
-loadArchitectureOverrides();
+// V2 Phase 1: JSON enrichment disabled. loadArchitectureOverrides();
 </script>
 <script>
 /* ───────── Lab v2 — live status strip overlay ─────────
@@ -3527,6 +3610,132 @@ loadArchitectureOverrides();
   document.addEventListener('DOMContentLoaded', () => {
     refresh();
     setInterval(refresh, 30000);
+  });
+})();
+</script>
+
+<script>
+/* ───────── V2 Phase 1 — node-card driver ─────────
+   The hard strip. Topology shows ONLY nodes that have heartbeated in the
+   last 5 minutes. No JSON, no template positions, no agents/DBs/externals
+   yet — those come back in later phases via per-node manifest documents.
+
+   Single render function: renderNodeCardV2(pi_id, live). When phase 2
+   adds manifest enrichment, it gets a second arg and a join layer. */
+(function(){
+  const STALE_SEC = 300;   // hide node card after 5min of silence
+  const WARN_SEC  = 60;    // dot turns warn after 1min
+  const CRIT_SEC  = 180;   // dot turns crit after 3min
+
+  function fmtAge(secs) {
+    if (secs == null || !isFinite(secs)) return '—';
+    if (secs < 60) return Math.floor(secs) + 's';
+    if (secs < 3600) return Math.floor(secs/60) + 'm';
+    if (secs < 86400) return Math.floor(secs/3600) + 'h';
+    return Math.floor(secs/86400) + 'd';
+  }
+  function statusFromAge(secs) {
+    if (secs == null) return 'off';
+    if (secs < WARN_SEC) return 'ok';
+    if (secs < CRIT_SEC) return 'warn';
+    return 'crit';
+  }
+  function fmtPct(v)  { return v == null ? '—' : v.toFixed(1) + '%'; }
+  function fmtTemp(v) { return v == null ? '—' : v.toFixed(1) + '°C'; }
+  function pctClass(v, w, c) { return v == null ? '' : (v >= c ? 'crit' : (v >= w ? 'warn' : '')); }
+
+  // ── Modular renderer for one node card ──────────────────────────
+  function renderNodeCardV2(pi_id, live) {
+    const ageSec = live.last_seen ? (Date.now() - new Date(live.last_seen).getTime())/1000 : null;
+    const status = statusFromAge(ageSec);
+    const card = document.createElement('div');
+    card.className = 'node-card-v2 entering';
+    card.dataset.piId = pi_id;
+    card.innerHTML =
+      '<div class="nc-header">' +
+        '<div class="nc-dot ' + status + '"></div>' +
+        '<div>' +
+          '<div class="nc-id">' + pi_id + '</div>' +
+          '<div class="nc-label">' + (live.label || '—') + '</div>' +
+        '</div>' +
+        '<div class="nc-age">' +
+          '<span class="nc-age-label">last heartbeat</span>' +
+          '<span class="nc-age-val">' + fmtAge(ageSec) + ' ago</span>' +
+        '</div>' +
+      '</div>' +
+      '<div class="nc-metrics">' +
+        '<div class="nc-metric"><span class="lab">CPU</span><span class="val ' + pctClass(live.cpu_percent, 70, 90) + '">' + fmtPct(live.cpu_percent) + '</span></div>' +
+        '<div class="nc-metric"><span class="lab">RAM</span><span class="val ' + pctClass(live.ram_percent, 75, 90) + '">' + fmtPct(live.ram_percent) + '</span></div>' +
+        '<div class="nc-metric"><span class="lab">Disk</span><span class="val ' + pctClass(live.disk_percent, 75, 90) + '">' + fmtPct(live.disk_percent) + '</span></div>' +
+        '<div class="nc-metric"><span class="lab">Temp</span><span class="val ' + pctClass(live.cpu_temp, 65, 80) + '">' + fmtTemp(live.cpu_temp) + '</span></div>' +
+      '</div>' +
+      '<div class="nc-bottom">' +
+        '<span>identity from heartbeat</span>' +
+        '<span>manifest: not yet</span>' +
+      '</div>';
+    requestAnimationFrame(() => card.classList.replace('entering', 'entered'));
+    return card;
+  }
+
+  function updateExistingCard(card, pi_id, live) {
+    const fresh = renderNodeCardV2(pi_id, live);
+    fresh.classList.remove('entering','entered');
+    card.innerHTML = fresh.innerHTML;
+    card.classList.add('pulse');
+    setTimeout(() => card.classList.remove('pulse'), 900);
+  }
+
+  async function tick() {
+    const grid = document.getElementById('nodes-v2-grid');
+    const empty = document.getElementById('nv-empty');
+    const meta = document.getElementById('nv-banner-meta');
+    if (!grid) return;
+    try {
+      const tok = new URLSearchParams(location.search).get('token') || '';
+      const r = await fetch('/api/metrics/current' + (tok ? ('?token=' + encodeURIComponent(tok)) : ''),
+                            { credentials: 'same-origin' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();
+
+      // Determine which pi_ids are live (heartbeat within 5 minutes)
+      const livePiIds = [];
+      for (const [pi_id, live] of Object.entries(data)) {
+        if (!live.last_seen) continue;
+        const ageSec = (Date.now() - new Date(live.last_seen).getTime())/1000;
+        if (ageSec < STALE_SEC) livePiIds.push(pi_id);
+      }
+      livePiIds.sort();
+
+      // Hide cards for nodes that went silent
+      grid.querySelectorAll('.node-card-v2').forEach(card => {
+        if (!livePiIds.includes(card.dataset.piId)) {
+          card.classList.add('leaving');
+          setTimeout(() => card.remove(), 300);
+        }
+      });
+
+      // Update or add cards for live nodes
+      for (const pi_id of livePiIds) {
+        const live = data[pi_id];
+        const existing = grid.querySelector('.node-card-v2[data-pi-id="' + pi_id + '"]');
+        if (existing) {
+          updateExistingCard(existing, pi_id, live);
+        } else {
+          const card = renderNodeCardV2(pi_id, live);
+          grid.appendChild(card);
+        }
+      }
+
+      if (empty) empty.style.display = livePiIds.length === 0 ? 'block' : 'none';
+      meta.textContent = livePiIds.length + ' live · refreshed ' + new Date().toLocaleTimeString();
+    } catch (e) {
+      meta.textContent = 'error: ' + e.message;
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    tick();
+    setInterval(tick, 30000);
   });
 })();
 </script>

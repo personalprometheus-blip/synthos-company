@@ -3947,12 +3947,28 @@ function sigcovRenderDrawer(scan) {
   const meta = document.getElementById('sigcov-drawer-meta');
   if (!body) return;
   if (meta) meta.textContent = scan.node_id + ' · ' + scan.active_tickers + ' active · ' + sigcovFmtAge(scan.scan_at);
-  const checks = (scan.checks || []).slice().sort((a, b) => (a.coverage_pct || 0) - (b.coverage_pct || 0));
-  if (checks.length === 0) {
+  const allChecks = (scan.checks || []).slice().sort((a, b) => (a.coverage_pct || 0) - (b.coverage_pct || 0));
+  // SIGCOV-FILTER — only show sources that aren\'t at 100%. We surface
+  // problems, not what\'s working. The hidden count is shown so the
+  // operator knows healthy sources are still being scanned.
+  const checks = allChecks.filter(c => !(c.coverage_pct === 100 && c.missing_count === 0));
+  const hiddenHealthy = allChecks.length - checks.length;
+  if (allChecks.length === 0) {
     body.innerHTML = '<div style="padding:20px;color:var(--muted)">No checks reported.</div>';
     return;
   }
   let html = '';
+  if (hiddenHealthy > 0) {
+    html += '<div style="padding:8px 12px; margin-bottom:10px; background:rgba(74,222,128,0.06); border:1px solid rgba(74,222,128,0.18); border-radius:6px; font-family:\'JetBrains Mono\',monospace; font-size:10px; color:rgba(74,222,128,0.85); display:flex; align-items:center; gap:8px;">';
+    html += '<span style="font-size:13px">✓</span>';
+    html += '<span>' + hiddenHealthy + ' source' + (hiddenHealthy === 1 ? '' : 's') + ' at 100% (hidden) &middot; ' + checks.length + ' with gaps below</span>';
+    html += '</div>';
+  }
+  if (checks.length === 0) {
+    html += '<div style="padding:30px 20px; text-align:center; color:rgba(74,222,128,0.7); font-family:\'JetBrains Mono\',monospace; font-size:11px"><span style="font-size:24px; display:block; margin-bottom:8px">✓</span>All sources at 100% coverage.</div>';
+    body.innerHTML = html;
+    return;
+  }
   for (const c of checks) {
     const pct = c.coverage_pct;
     const cls = sigcovBarClass(pct);

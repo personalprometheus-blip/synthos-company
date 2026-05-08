@@ -303,6 +303,38 @@
   .agent-box .ab-age{ font-family:'JetBrains Mono',monospace; font-size:9px;
                         color:rgba(255,255,255,0.4); }
   .agent-box.silent{ opacity:0.6; }
+  /* V2-PHASE-4-CSS — databases + externals sections */
+  .node-card-v2 .nc-databases{ margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.07); }
+  .node-card-v2 .nc-externals{ margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.07); }
+  .node-card-v2 .nc-section-header{ font-family:'JetBrains Mono',monospace; font-size:9px; font-weight:700;
+                                     text-transform:uppercase; letter-spacing:0.08em; color:rgba(255,255,255,0.4);
+                                     margin-bottom:8px; display:flex; gap:6px; align-items:center; }
+  .node-card-v2 .nc-section-header .sh-count{ color:rgba(255,255,255,0.6); font-weight:600; }
+  .db-box{ display:grid; grid-template-columns:auto 1fr; gap:10px; align-items:start; padding:6px 0; font-size:11px; }
+  .db-box .db-icon{ font-family:'JetBrains Mono',monospace; font-size:11px; color:#7b61ff;
+                     padding:2px 6px; border-radius:4px; background:rgba(123,97,255,0.10);
+                     border:1px solid rgba(123,97,255,0.2); flex-shrink:0; align-self:center; }
+  .db-box .db-name{ font-family:'JetBrains Mono',monospace; font-weight:600; color:rgba(255,255,255,0.88); font-size:11px; }
+  .db-box .db-purpose{ font-size:10px; color:rgba(255,255,255,0.45); margin-top:2px;
+                        line-height:1.45; }
+  .db-box .db-path{ font-family:'JetBrains Mono',monospace; font-size:9px; color:rgba(255,255,255,0.3);
+                     margin-top:3px; word-break:break-all; }
+  .ext-row{ display:flex; flex-wrap:wrap; gap:6px; margin-top:4px; }
+  .ext-pill{ display:inline-flex; align-items:center; gap:6px; padding:5px 10px; border-radius:99px;
+              font-size:10px; font-family:'JetBrains Mono',monospace; font-weight:600;
+              border:1px solid rgba(255,255,255,0.13); background:rgba(255,255,255,0.04);
+              color:rgba(255,255,255,0.75); cursor:default; }
+  .ext-pill:hover{ background:rgba(255,255,255,0.08); }
+  .ext-pill .ext-kind{ font-size:8px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase;
+                        padding:1px 5px; border-radius:3px; }
+  .ext-pill.vcs   .ext-kind{ background:rgba(74,222,128,0.15); color:#4ade80; }
+  .ext-pill.mail  .ext-kind{ background:rgba(255,179,71,0.15); color:#ffb347; }
+  .ext-pill.mqtt  .ext-kind{ background:rgba(0,245,212,0.15); color:#00f5d4; }
+  .ext-pill.api   .ext-kind{ background:rgba(123,97,255,0.15); color:#7b61ff; }
+  .ext-pill.auth  .ext-kind{ background:rgba(255,75,110,0.15); color:#ff4b6e; }
+  .ext-pill .ext-name{ color:rgba(255,255,255,0.88); }
+  .ext-pill[title]{ cursor:help; }
+
 
 
   .node-card-v2 .nc-bottom{ margin-top:14px; padding-top:10px; border-top:1px dashed rgba(255,255,255,0.06);
@@ -3746,6 +3778,56 @@ function renderProvenance() {
     );
   }
 
+  // V2-PHASE-4-RENDER — db + external components
+  function escapeHtml(s) {
+    if (s == null) return '';
+    return String(s).replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    })[c]);
+  }
+  function renderDbBoxHtml(db) {
+    return (
+      '<div class="db-box">' +
+        '<div class="db-icon">DB</div>' +
+        '<div>' +
+          '<div class="db-name">' + escapeHtml(db.name) + '</div>' +
+          '<div class="db-purpose">' + escapeHtml(db.purpose || '') + '</div>' +
+          (db.path ? '<div class="db-path">' + escapeHtml(db.path) + '</div>' : '') +
+        '</div>' +
+      '</div>'
+    );
+  }
+  function buildDbsSectionHtml(manifest) {
+    if (!manifest || !manifest.databases || manifest.databases.length === 0) return '';
+    const items = manifest.databases.map(renderDbBoxHtml).join('');
+    return (
+      '<div class="nc-databases">' +
+        '<div class="nc-section-header">Databases <span class="sh-count">(' + manifest.databases.length + ')</span></div>' +
+        items +
+      '</div>'
+    );
+  }
+  function renderExternalPillHtml(ext) {
+    const kind = (ext.kind || 'misc').toLowerCase();
+    const title = ext.purpose ? ' title="' + escapeHtml(ext.purpose) + '"' : '';
+    return (
+      '<span class="ext-pill ' + kind + '"' + title + '>' +
+        '<span class="ext-kind">' + escapeHtml(kind) + '</span>' +
+        '<span class="ext-name">' + escapeHtml(ext.name) + '</span>' +
+      '</span>'
+    );
+  }
+  function buildExternalsSectionHtml(manifest) {
+    if (!manifest || !manifest.externals || manifest.externals.length === 0) return '';
+    const items = manifest.externals.map(renderExternalPillHtml).join('');
+    return (
+      '<div class="nc-externals">' +
+        '<div class="nc-section-header">Externals <span class="sh-count">(' + manifest.externals.length + ')</span></div>' +
+        '<div class="ext-row">' + items + '</div>' +
+      '</div>'
+    );
+  }
+
   // ── Modular renderer for one node card ──────────────────────────
   // Phase 2: manifest enrichment (3rd arg).
   // Phase 3: groupAgents (4th arg) — array from /api/agents/status for
@@ -3789,6 +3871,8 @@ function renderProvenance() {
         '<div class="nc-metric"><span class="lab">Temp</span><span class="val ' + pctClass(live.cpu_temp, 65, 80) + '">' + fmtTemp(live.cpu_temp) + '</span></div>' +
       '</div>' +
       buildAgentsSectionHtml(manifest, groupAgents) +
+      buildDbsSectionHtml(manifest) +
+      buildExternalsSectionHtml(manifest) +
       '<div class="nc-bottom">' +
         '<span>identity from heartbeat</span>' +
         manifestTag +

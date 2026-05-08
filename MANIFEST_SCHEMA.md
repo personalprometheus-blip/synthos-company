@@ -28,12 +28,13 @@ contract is the floor below which no field can drop.
 |---------|------------|--------|
 | 1.0     | 2026-05-07 | Initial: identity-only (node_id, label, role, hardware, deployed_at) |
 | 1.1     | 2026-05-07 | Add `mqtt_group` (string) + `agents` (array)                          |
+| 1.2     | 2026-05-07 | Add `databases` (array) + `externals` (array)                         |
 
-## Schema (v1.1)
+## Schema (v1.2)
 
 ```json
 {
-  "manifest_version": "1.1",
+  "manifest_version": "1.2",
   "node_id": "pi4b-company",
   "label": "Company Operations Node",
   "role": "company_ops",
@@ -45,6 +46,20 @@ contract is the floor below which no field can drop.
       "name": "synthos_monitor",
       "purpose": "command portal HTTP server (:5050)",
       "cadence": "continuous"
+    }
+  ],
+  "databases": [
+    {
+      "name": "company.db",
+      "path": "/home/pi/synthos-company/data/company.db",
+      "purpose": "customer registry, scoop queue, audit trail"
+    }
+  ],
+  "externals": [
+    {
+      "name": "GitHub",
+      "kind": "vcs",
+      "purpose": "code repository + system_architecture.json source"
     }
   ],
   "updated_at": "2026-05-07T17:00:00Z"
@@ -64,6 +79,8 @@ contract is the floor below which no field can drop.
 | `mqtt_group`       | string  | optional | The `<node>` segment in the MQTT topic `process/heartbeat/<node>/<agent>` used by this node's publishers. The architecture page uses this to look up live agent freshness from `/api/agents/status`. Omit if the node has no agents publishing MQTT heartbeats. |
 | `agents`           | array   | optional | Agents this node owns. Each entry is `{name, purpose, cadence}`. The renderer joins each entry onto MQTT freshness via `mqtt_group` + `name`. |
 | `updated_at`       | string  | yes      | ISO timestamp the manifest was last written. The installer sets this when it writes the file. |
+| `databases`        | array   | optional | DBs hosted by this node. Each entry `{name, path, purpose}`. Renderer shows them inside the node card under a "Databases" section. Phase 4 schema. |
+| `externals`        | array   | optional | Outbound services this node depends on. Each entry `{name, kind, purpose}`. `kind` is a free-text classifier (e.g. `vcs`, `mail`, `mqtt`, `api`) used to pick a pill color. Phase 4 schema. |
 
 ### Agents array entries
 
@@ -72,6 +89,24 @@ contract is the floor below which no field can drop.
 | `name`     | string | yes      | **Must match the `<agent>` segment in the agent's MQTT heartbeat topic.** Join key for live status. |
 | `purpose`  | string | yes      | One-line human-readable description of what this agent does. |
 | `cadence`  | string | optional | Free-text schedule descriptor, e.g. `continuous`, `daily 04:00 ET`, `intraday 09:30/13:30/16:00`. |
+
+
+
+### Databases array entries (v1.2)
+
+| Field      | Type   | Required | Description |
+|------------|--------|----------|-------------|
+| `name`     | string | yes      | Filename or display name (e.g. `company.db`, `signals.db`). |
+| `path`     | string | yes      | Absolute filesystem path on the node. |
+| `purpose`  | string | yes      | One-line description of what the DB stores (tables / responsibility). |
+
+### Externals array entries (v1.2)
+
+| Field      | Type   | Required | Description |
+|------------|--------|----------|-------------|
+| `name`     | string | yes      | Display name of the external service. |
+| `kind`     | string | yes      | Free-text classifier. Suggested values: `vcs`, `mail`, `mqtt`, `api`, `db`, `auth`. Drives pill color. Unknown values render with a default neutral pill. |
+| `purpose`  | string | yes      | One-line description of why this node connects to it. |
 
 ## Installer integration notes
 
@@ -91,7 +126,6 @@ contract is the floor below which no field can drop.
 These are reserved for future phases — the installer should not write
 them yet, and the renderer does not yet read them:
 
-- `databases` (array) — Phase 4: each entry `{name, path, purpose, size_estimate_gb}`
-- `externals` (array) — Phase 4: outbound services, e.g. Alpaca, GitHub, SMTP
-- `data_flows` (array) — Phase 4+: declared edges between this node and others/externals
+- `data_flows` (array) — future: declared edges between this node and others/externals
 - `signed_at` / `signature` — future: optional manifest authenticity signing
+- `size_estimate_gb` (database field) — future: hint for capacity planning

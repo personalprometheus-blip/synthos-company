@@ -108,6 +108,40 @@ contract is the floor below which no field can drop.
 | `kind`     | string | yes      | Free-text classifier. Suggested values: `vcs`, `mail`, `mqtt`, `api`, `db`, `auth`. Drives pill color. Unknown values render with a default neutral pill. |
 | `purpose`  | string | yes      | One-line description of why this node connects to it. |
 
+
+## Peer discovery (Phase 5)
+
+Pi4b's `/api/manifests` reads its own manifest from disk and fetches
+remote-node manifests via SSH. Per-node access details live in
+`synthos-company/peer_nodes.json`:
+
+```json
+{
+  "synthos-pi-retail": {
+    "ssh_target": "SentinelRetail",
+    "manifest_path": "~/manifest.json"
+  }
+}
+```
+
+`ssh_target` is an SSH host alias defined in pi4b's `~/.ssh/config`.
+The universal installer adds one entry per new node to both pi4b's
+SSH config (with appropriate keys) and to `peer_nodes.json` —
+together they form the discovery channel that turns "plug a new Pi
+in" into a fully-decorated card on the architecture page.
+
+Manifests are cached for 5 minutes per peer. SSH timeout is 10s with
+`BatchMode=yes` so the endpoint never hangs on an unreachable peer.
+
+## Path is per-user `$HOME/manifest.json`
+
+The manifest file resolves to `~/manifest.json` on each node. On pi4b
+this is `/home/pi/manifest.json`; on pi5 it's
+`/home/pi516gb/manifest.json`. The convention is "in the deploying
+user's home directory" rather than a literal `/home/pi/` path — that
+way every node's installer can use `$HOME/manifest.json` without
+caring about the username.
+
 ## Installer integration notes
 
 - Each node's installer renders this file from a template that knows

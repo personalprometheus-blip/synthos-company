@@ -1,0 +1,7 @@
+{
+  "synthos-pi-retail": {
+    "ssh_target": "SentinelRetail",
+    "manifest_path": "~/manifest.json",
+    "_comment": "Pi5 retail node. Fetched via SSH host alias defined in pi4b's ~/.ssh/config."
+  }
+}

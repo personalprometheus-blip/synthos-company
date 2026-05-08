@@ -8913,35 +8913,96 @@ def api_metrics_history():
         return jsonify({"error": str(e)}), 500
 
 
+# V2-PHASE-5-MANIFESTS — peer-aware manifest discovery
+_PEER_MANIFEST_CACHE = {}   # node_id → (manifest_dict_or_None, fetched_at_epoch)
+_PEER_MANIFEST_TTL = 300    # 5 minutes
+_PEER_MANIFEST_CACHE_LOCK = threading.Lock()
+
+def _read_local_manifest():
+    """Return (node_id, manifest_dict) for this node, or (None, None)."""
+    local_path = "/home/pi/manifest.json"
+    if not os.path.exists(local_path):
+        return None, None
+    try:
+        with open(local_path, "r") as f:
+            m = json.load(f)
+        return m.get("node_id"), m
+    except Exception:
+        return None, None
+
+def _load_peer_config():
+    """Read peer_nodes.json — map node_id → {ssh_target, manifest_path}."""
+    path = "/home/pi/synthos-company/peer_nodes.json"
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path) as f:
+            cfg = json.load(f)
+        return {k: v for k, v in cfg.items() if isinstance(v, dict) and v.get("ssh_target")}
+    except Exception:
+        return {}
+
+def _fetch_peer_manifest(node_id, ssh_target, manifest_path="~/manifest.json"):
+    """SSH to peer and cat the manifest. Cached 5 minutes per node.
+
+    Cache stores a None result on failure so we don't hammer SSH on
+    every API call when a peer is down. Cache clears on successful
+    fetch the next time it expires.
+    """
+    import subprocess as _sp
+    now = time.time()
+    with _PEER_MANIFEST_CACHE_LOCK:
+        cached = _PEER_MANIFEST_CACHE.get(node_id)
+        if cached and (now - cached[1]) < _PEER_MANIFEST_TTL:
+            return cached[0]
+    try:
+        result = _sp.run(
+            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
+             "-o", "StrictHostKeyChecking=accept-new",
+             ssh_target, f"cat {manifest_path}"],
+            capture_output=True, timeout=10, text=True,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            data = json.loads(result.stdout)
+            with _PEER_MANIFEST_CACHE_LOCK:
+                _PEER_MANIFEST_CACHE[node_id] = (data, now)
+            return data
+        # Non-zero exit or empty stdout — cache None to throttle retries.
+    except Exception as e:
+        print(f"[peer manifest] {node_id} via {ssh_target}: {e}", file=sys.stderr)
+    with _PEER_MANIFEST_CACHE_LOCK:
+        _PEER_MANIFEST_CACHE[node_id] = (None, now)
+    return None
+
 @app.route("/api/manifests")
 def api_manifests():
     """Return per-node manifest documents keyed by node_id.
 
-    Phase 2: reads only the local pi4b manifest from
-    /home/pi/synthos-company/manifest.json. Future phases will fetch
-    remote manifests (pi5 via /manifest.json on retail_portal, etc.)
-    and merge them into the same dict.
+    - Local manifest read from /home/pi/manifest.json
+    - Peer manifests fetched via SSH using peer_nodes.json mapping
+      (node_id → ssh_target, manifest_path). Cached 5min per node.
 
-    Manifests are the *enrichment* layer — node identity comes from
-    the heartbeat, descriptive content (role, agents, DBs, externals)
-    comes from each node's self-published manifest.
+    Manifests are the enrichment layer; identity comes from heartbeat.
     """
     if not _authorized():
         return jsonify({"error": "unauthorized"}), 401
     manifests = {}
-    local_path = "/home/pi/manifest.json"
-    if os.path.exists(local_path):
-        try:
-            with open(local_path, "r") as f:
-                m = json.load(f)
-            node_id = m.get("node_id")
-            if node_id:
-                manifests[node_id] = m
-        except Exception as e:
-            # Don't fail the whole endpoint if one manifest is malformed.
-            return jsonify({"error": f"local manifest parse failed: {e}",
-                            "manifests": manifests}), 200
-    return jsonify(manifests), 200
+    fetch_log = {}
+
+    local_id, local_m = _read_local_manifest()
+    if local_id:
+        manifests[local_id] = local_m
+        fetch_log[local_id] = "local"
+
+    for node_id, peer in _load_peer_config().items():
+        m = _fetch_peer_manifest(node_id, peer["ssh_target"], peer.get("manifest_path", "~/manifest.json"))
+        if m:
+            manifests[node_id] = m
+            fetch_log[node_id] = f"ssh:{peer['ssh_target']}"
+        else:
+            fetch_log[node_id] = f"ssh:{peer['ssh_target']} (failed/cached_miss)"
+
+    return jsonify({"manifests": manifests, "_fetch_log": fetch_log}), 200
 
 
 @app.route("/auditor")

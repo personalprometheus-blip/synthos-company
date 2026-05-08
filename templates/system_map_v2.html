@@ -3635,7 +3635,9 @@ function renderProvenance() {
       ]);
       if (!metricsRes.ok) throw new Error('metrics HTTP ' + metricsRes.status);
       const data = await metricsRes.json();
-      const manifests = manifestsRes.ok ? (await manifestsRes.json()) : {};
+      // V2-PHASE-5-PARSE — endpoint now returns {manifests, _fetch_log}
+      const manifestsRaw = manifestsRes.ok ? (await manifestsRes.json()) : {};
+      const manifests = (manifestsRaw && manifestsRaw.manifests) || manifestsRaw || {};
       const agentsPayload = agentsRes.ok ? (await agentsRes.json()) : { agents: {} };
       const agentsByGroup = agentsPayload.agents || {};
       wrap.innerHTML = '';
@@ -3904,7 +3906,9 @@ function renderProvenance() {
       ]);
       if (!metricsRes.ok) throw new Error('metrics HTTP ' + metricsRes.status);
       const data = await metricsRes.json();
-      const manifests = manifestsRes.ok ? (await manifestsRes.json()) : {};
+      // V2-PHASE-5-PARSE — endpoint now returns {manifests, _fetch_log}
+      const manifestsRaw = manifestsRes.ok ? (await manifestsRes.json()) : {};
+      const manifests = (manifestsRaw && manifestsRaw.manifests) || manifestsRaw || {};
       const agentsPayload = agentsRes.ok ? (await agentsRes.json()) : { agents: {} };
       const agentsByGroup = agentsPayload.agents || {};
 

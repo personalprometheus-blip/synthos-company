@@ -209,6 +209,55 @@
   .bd-agent-gate-text{ fill:rgba(255,255,255,0.75); font-family:'JetBrains Mono',monospace; font-size:7px;
                         font-weight:700; text-anchor:middle; letter-spacing:0.06em; }
 
+  /* V2-PHASE-16-CSS — animations + tab integration */
+  /* Hide old V2-internal toggle now that Flow is a proper tab */
+  #blocks-view-toggle{ display:none !important; }
+  #bd-back-to-cards{ display:none !important; }
+
+  /* Edge MQTT flow animation — only on edges with .active class */
+  @keyframes bd-mqtt-flow{ from{ stroke-dashoffset:0; } to{ stroke-dashoffset:-16; } }
+  .bd-edge.kind-mqtt-pub.active,
+  .bd-edge.kind-mqtt-sub.active{
+    stroke-dasharray:4 4 !important;
+    animation:bd-mqtt-flow 1.4s linear infinite;
+    stroke-width:2.4 !important;
+    filter:drop-shadow(0 0 4px rgba(0,245,212,0.55));
+  }
+
+  /* HTTP heartbeat edges: gentle dot flow when source live */
+  @keyframes bd-http-flow{ from{ stroke-dashoffset:0; } to{ stroke-dashoffset:-12; } }
+  .bd-edge.kind-http-post.active{
+    stroke-dasharray:1 6 !important;
+    animation:bd-http-flow 2s linear infinite;
+    stroke-width:2 !important;
+  }
+
+  /* Daemon agents pulse subtly when MQTT-fresh */
+  @keyframes bd-agent-pulse{
+    0%,100%{ stroke-width:1; stroke-opacity:0.45; }
+    50%{ stroke-width:1.8; stroke-opacity:1; }
+  }
+  .bd-agent.live-fresh .bd-agent-rect{ animation:bd-agent-pulse 2.5s ease-in-out infinite; }
+  .bd-agent.live-fresh .bd-agent-dot{ filter:drop-shadow(0 0 5px rgba(74,222,128,0.7)); }
+
+  /* Node border beat on each fresh-tick render */
+  @keyframes bd-node-beat{
+    0%{ stroke-width:1.5; }
+    10%{ stroke-width:5; filter:drop-shadow(0 0 12px rgba(0,245,212,0.5)); }
+    100%{ stroke-width:1.5; }
+  }
+  .bd-node-rect.beat{ animation:bd-node-beat 0.8s ease-out; }
+  .bd-node-rect.is-hub.beat{ stroke-width:2.5; animation:bd-node-beat 0.9s ease-out; }
+
+  /* Subtle gate-firing placeholder — visible class hook for future live signal */
+  @keyframes bd-gate-fire{
+    0%{ fill-opacity:0.10; }
+    50%{ fill-opacity:0.7; stroke-width:1.5; }
+    100%{ fill-opacity:0.10; }
+  }
+  .bd-agent-gate-bg.firing{ animation:bd-gate-fire 0.9s ease-out; }
+
+
 
   /* ── V2 Phase 1: hard strip — hide SVG layout, hide morning's status strip ── */
   #canvas-wrap > svg{ display:none !important; }
@@ -1092,6 +1141,7 @@
     </div>
     <div class="tabs">
       <button class="tab active" data-view="topology">Topology</button>
+      <button class="tab" data-view="flow">Flow</button>
       <button class="tab" data-view="pipeline">Pipeline & Gates</button>
       <button class="tab" data-view="provenance">Data Provenance</button>
       <button class="tab" data-view="timeline">24h Timeline</button>
@@ -2239,6 +2289,12 @@ document.querySelectorAll('.tab').forEach(tab => {
       provw.classList.add('active');
       cw.classList.add('hidden-topology','hidden-provenance');
       renderProvenance();
+    } else if (view === 'flow') {
+      // V2 BLOCKS view — keep topology mode (no hidden-* class)
+      if (typeof window.__bd_setView === 'function') window.__bd_setView('blocks');
+    } else {
+      // Default: Topology — V2 cards
+      if (typeof window.__bd_setView === 'function') window.__bd_setView('cards');
     }
   });
 });
@@ -4554,6 +4610,8 @@ function renderProvenance() {
 
   // V2-PHASE-13A-JS — block diagram (hub-and-spoke) renderer
   let _BD_VIEW = 'cards';
+  // Expose setBlocksView on window before definitions complete
+  setTimeout(() => { if (typeof setBlocksView === 'function') window.__bd_setView = setBlocksView; }, 0);
   const BD_SVG_NS = 'http://www.w3.org/2000/svg';
   const HUB_W = 760, HUB_H = 420;
   const SPOKE_W = 420, SPOKE_H = 300;
@@ -4688,10 +4746,27 @@ function renderProvenance() {
 
   function bdNodeBox(pi_id, manifest, cx, cy, isHub) {
     const role = (manifest && manifest.role) || 'unknown';
-    let w, h;
-    if (isHub) { w = HUB_W; h = HUB_H; }
-    else if (role === 'sentinel') { w = SENTINEL_W; h = SENTINEL_H; }
-    else { w = SPOKE_W; h = SPOKE_H; }
+    const agents = (manifest && manifest.agents) || [];
+    const dbs = (manifest && manifest.databases) || [];
+    // Choose column count based on agent count and role
+    let cols;
+    if (isHub) cols = Math.min(5, Math.max(3, Math.ceil(Math.sqrt(agents.length * 1.6))));
+    else if (role === 'sentinel') cols = 1;
+    else cols = Math.min(3, Math.max(2, Math.ceil(Math.sqrt(agents.length * 1.2))));
+    if (agents.length === 0) cols = 1;
+    const rows = agents.length > 0 ? Math.ceil(agents.length / cols) : 0;
+    // Width fits N columns of agents + gaps + padding
+    const innerW = Math.max(cols * AGENT_W + Math.max(0, cols - 1) * AGENT_GAP, 200);
+    let w = innerW + 2 * NODE_PADDING;
+    // Height fits header + N rows of agents + DB row + padding
+    const agentsH = rows > 0 ? rows * AGENT_H + Math.max(0, rows - 1) * AGENT_GAP : 0;
+    const dbsH = dbs.length > 0 ? DB_H + NODE_PADDING : 0;
+    let h = NODE_HEADER_H + agentsH + dbsH + 2 * NODE_PADDING;
+    // Floors so tiny nodes still look like nodes
+    const floorW = isHub ? 480 : (role === 'sentinel' ? 220 : 280);
+    const floorH = isHub ? 320 : (role === 'sentinel' ? 110 : 180);
+    w = Math.max(w, floorW);
+    h = Math.max(h, floorH);
     return {
       pi_id, manifest, role, cx, cy,
       x: cx - w/2, y: cy - h/2, w, h, isHub,
@@ -4703,9 +4778,10 @@ function renderProvenance() {
     const live = (ctx.metrics || {})[pi_id];
     const status = bdNodeStatus(live);
     const g = bdSvg('g', { class: 'bd-node', 'data-pi-id': pi_id }, svg);
+    const beatCls = (status === 'ok') ? ' beat' : '';
     bdSvg('rect', {
       x, y, width: w, height: h, rx: 12,
-      class: 'bd-node-rect role-' + role + (isHub ? ' is-hub' : '') + ' live-' + status,
+      class: 'bd-node-rect role-' + role + (isHub ? ' is-hub' : '') + ' live-' + status + beatCls,
     }, g);
     // Header label
     bdSvg('text', { x: x + 18, y: y + 24, class: 'bd-node-label' }, g).textContent = pi_id;
@@ -4744,8 +4820,9 @@ function renderProvenance() {
         const aStatus = bdAgentStatus(agentLive);
         const aType = agentTypeFromCadence(a.cadence);
         const aClass = aStatus === 'silent' ? 'silent' : aType;
+        const liveFreshClass = aStatus === 'healthy' ? ' live-fresh' : '';
 
-        const ag = bdSvg('g', { class: 'bd-agent ' + aClass, 'data-pi-id': pi_id, 'data-agent-name': a.name }, g);
+        const ag = bdSvg('g', { class: 'bd-agent ' + aClass + liveFreshClass, 'data-pi-id': pi_id, 'data-agent-name': a.name }, g);
         bdSvg('rect', { x: ax, y: ay, width: AGENT_W, height: AGENT_H, class: 'bd-agent-rect' }, ag);
         bdSvg('text', { x: ax + 8, y: ay + 16, class: 'bd-agent-name' }, ag).textContent = a.name;
         if (a.cadence) {
@@ -4895,9 +4972,22 @@ function renderProvenance() {
           }
         }
         const kind = (f.kind || 'misc').toLowerCase();
+        // V2-PHASE-16 — mark mqtt + heartbeat edges as active when source has live signal
+        let activeCls = '';
+        if (kind === 'mqtt-pub' || kind === 'mqtt-sub') {
+          const srcGroup = (manifests[pid] || {}).mqtt_group;
+          const groupAgents = (srcGroup && (window.__v9_lastCtx || {}).agentsByGroup && (window.__v9_lastCtx).agentsByGroup[srcGroup]) || [];
+          if (groupAgents.some(a => a.status === 'healthy')) activeCls = ' active';
+        } else if (kind === 'http-post') {
+          const live = ((window.__v9_lastCtx || {}).metrics || {})[pid];
+          if (live && live.last_seen) {
+            const ageSec = (Date.now() - new Date(live.last_seen).getTime()) / 1000;
+            if (ageSec < 30) activeCls = ' active';
+          }
+        }
         const path = bdSvg('path', {
           d: bdEdgePath(srcPt, dstPt),
-          class: 'bd-edge kind-' + kind,
+          class: 'bd-edge kind-' + kind + activeCls,
           'data-from': pid,
           'data-to': f.to || '',
           'data-kind': kind,
@@ -5127,6 +5217,7 @@ function renderProvenance() {
 
   function setBlocksView(view) {
     _BD_VIEW = view;
+    window.__bd_setView = setBlocksView;   // bridge for tab handler
     const wrap = document.getElementById('blocks-wrap');
     const grid = document.getElementById('nodes-v2-grid');
     document.querySelectorAll('#blocks-view-toggle button').forEach(b => {

@@ -194,6 +194,21 @@
   #live-status-strip .ls-cpu{ color:rgba(255,255,255,0.55); font-size:9.5px }
   #live-status-strip .ls-meta{ margin-left:auto; color:rgba(255,255,255,0.4); font-size:9px; font-style:italic }
   #canvas-wrap.hidden-topology > #live-status-strip{ display:none; }
+  #canvas-wrap.hidden-topology > #blocks-wrap{ display:none !important; }
+  /* V2-PHASE-15-CSS — back button + gate pills */
+  #bd-back-to-cards{ position:absolute; top:32px; right:32px; padding:7px 14px; border-radius:8px;
+                      background:rgba(0,245,212,0.08); border:1px solid rgba(0,245,212,0.4);
+                      color:#00f5d4; font-family:'JetBrains Mono',monospace; font-size:11px;
+                      font-weight:600; cursor:pointer; z-index:6; backdrop-filter:blur(14px);
+                      transition:all 0.15s; letter-spacing:0.04em; }
+  #bd-back-to-cards:hover{ background:rgba(0,245,212,0.15); }
+  .bd-agent-gate{ pointer-events:none; }
+  .bd-agent-gate-bg{ fill:rgba(0,245,212,0.10); stroke:rgba(0,245,212,0.40); stroke-width:0.6; rx:2; }
+  .bd-agent-gate-bg.gate-fault{ fill:rgba(255,75,110,0.12); stroke:rgba(255,75,110,0.45); }
+  .bd-agent-gate-bg.gate-bias{ fill:rgba(255,179,71,0.10); stroke:rgba(255,179,71,0.45); }
+  .bd-agent-gate-text{ fill:rgba(255,255,255,0.75); font-family:'JetBrains Mono',monospace; font-size:7px;
+                        font-weight:700; text-anchor:middle; letter-spacing:0.06em; }
+
 
   /* ── V2 Phase 1: hard strip — hide SVG layout, hide morning's status strip ── */
   #canvas-wrap > svg{ display:none !important; }
@@ -1159,6 +1174,7 @@
       <button class="bdz-btn" data-bdz="in" title="Zoom in">+</button>
       <button class="bdz-btn" data-bdz="fit" title="Fit to view">⊡</button>
     </div>
+    <button id="bd-back-to-cards" title="Back to cards view">← BACK TO CARDS</button>
     <div class="bd-legend">
       <div class="lg-h">CHANNELS</div>
       <div class="lg-row"><span class="swatch" style="background:#00f5d4; height:2px"></span> mqtt</div>
@@ -4539,10 +4555,10 @@ function renderProvenance() {
   // V2-PHASE-13A-JS — block diagram (hub-and-spoke) renderer
   let _BD_VIEW = 'cards';
   const BD_SVG_NS = 'http://www.w3.org/2000/svg';
-  const HUB_W = 720, HUB_H = 360;
-  const SPOKE_W = 380, SPOKE_H = 260;
+  const HUB_W = 760, HUB_H = 420;
+  const SPOKE_W = 420, SPOKE_H = 300;
   const SENTINEL_W = 240, SENTINEL_H = 130;
-  const AGENT_W = 132, AGENT_H = 48, AGENT_GAP = 8;
+  const AGENT_W = 140, AGENT_H = 64, AGENT_GAP = 8;
   const DB_W = 100, DB_H = 44;
   const EXT_W = 120, EXT_H = 50;
   const NODE_HEADER_H = 50;
@@ -4733,13 +4749,43 @@ function renderProvenance() {
         bdSvg('rect', { x: ax, y: ay, width: AGENT_W, height: AGENT_H, class: 'bd-agent-rect' }, ag);
         bdSvg('text', { x: ax + 8, y: ay + 16, class: 'bd-agent-name' }, ag).textContent = a.name;
         if (a.cadence) {
-          bdSvg('text', { x: ax + 8, y: ay + 32, class: 'bd-agent-cad' }, ag).textContent = a.cadence;
+          bdSvg('text', { x: ax + 8, y: ay + 30, class: 'bd-agent-cad' }, ag).textContent = a.cadence;
         }
         // Agent live status dot
         const adotColor = aStatus === 'healthy' ? '#4ade80' :
                           aStatus === 'stale' ? '#ffb347' :
                           aStatus === 'down' ? '#ff4b6e' : 'rgba(255,255,255,0.18)';
         bdSvg('circle', { cx: ax + AGENT_W - 8, cy: ay + 8, r: 3, fill: adotColor, class: 'bd-agent-dot' }, ag);
+        // V2-PHASE-15 — render gate pills if declared
+        const gates = a.gates || [];
+        if (gates.length > 0) {
+          const gateY = ay + AGENT_H - 16;
+          const pillW = 18, pillH = 11, pillGap = 3;
+          const maxFit = Math.floor((AGENT_W - 12) / (pillW + pillGap));
+          const visible = gates.slice(0, maxFit);
+          visible.forEach((g, gi) => {
+            const gx = ax + 6 + gi * (pillW + pillGap);
+            const gid = (g.id || '').split('_')[0] || String(gi + 1);
+            const gateLabel = (g.label || '').toLowerCase();
+            const gateCls = gateLabel.indexOf('fault') >= 0 ? 'gate-fault' :
+                            gateLabel.indexOf('bias') >= 0 ? 'gate-bias' : '';
+            const gg = bdSvg('g', { class: 'bd-agent-gate' }, ag);
+            bdSvg('rect', { x: gx, y: gateY, width: pillW, height: pillH,
+                             class: 'bd-agent-gate-bg ' + gateCls }, gg);
+            const t = bdSvg('text', { x: gx + pillW/2, y: gateY + 8, class: 'bd-agent-gate-text' }, gg);
+            t.textContent = gid.length > 3 ? gid.substring(0,3) : gid;
+            const tooltipTitle = bdSvg('title', {}, gg);
+            tooltipTitle.textContent = (g.id || '') + ' · ' + (g.label || '') + (g.purpose ? ' — ' + g.purpose : '');
+          });
+          if (gates.length > maxFit) {
+            // Indicate truncation
+            const overflowX = ax + 6 + maxFit * (pillW + pillGap);
+            const ot = bdSvg('text', { x: overflowX, y: gateY + 8,
+                                        class: 'bd-agent-gate-text',
+                                        'text-anchor': 'start' }, ag);
+            ot.textContent = '+' + (gates.length - maxFit);
+          }
+        }
       });
     }
 
@@ -5236,6 +5282,15 @@ function renderProvenance() {
       h += '<div class="v9-empty">Not declared. Add to <code>agents[]</code> or stop the publisher.</div>';
     }
     h += '</div>';
+    // V2-PHASE-15 — show gates list when agent has any
+    if (declared && declared.gates && declared.gates.length > 0) {
+      h += '<div class="v9-section"><div class="v9-section-title">Gates (' + declared.gates.length + ')</div>';
+      h += '<div class="v9-kv">';
+      for (const g of declared.gates) {
+        h += v9KvRow(g.id || '?', (g.label || '') + (g.purpose ? ' — ' + g.purpose : ''));
+      }
+      h += '</div></div>';
+    }
     h += '<div class="v9-section"><div class="v9-section-title">MQTT</div><div class="v9-kv">';
     h += v9KvRow('group', groupName || '(no mqtt_group)', true);
     h += v9KvRow('topic', groupName ? ('process/heartbeat/' + groupName + '/' + agentName) : '—', true);
@@ -5618,6 +5673,8 @@ function renderProvenance() {
       });
     }
     // V2-PHASE-13A — blocks view toggle + reset button
+    const bdBackBtn = document.getElementById('bd-back-to-cards');
+    if (bdBackBtn) bdBackBtn.addEventListener('click', () => setBlocksView('cards'));
     document.querySelectorAll('#blocks-view-toggle button').forEach(btn => {
       btn.addEventListener('click', () => setBlocksView(btn.dataset.bdView));
     });

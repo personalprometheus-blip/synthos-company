@@ -30,12 +30,13 @@ contract is the floor below which no field can drop.
 | 1.1     | 2026-05-07 | Add `mqtt_group` (string) + `agents` (array)                          |
 | 1.2     | 2026-05-07 | Add `databases` (array) + `externals` (array)                         |
 | 1.3     | 2026-05-07 | Add `data_flows` (array) — declared outbound connections per node     |
+| 1.5     | 2026-05-07 | Add `gates` (array) on each agent — declared gate sequence            |
 
-## Schema (v1.3)
+## Schema (v1.5)
 
 ```json
 {
-  "manifest_version": "1.3",
+  "manifest_version": "1.5",
   "node_id": "pi4b-company",
   "label": "Company Operations Node",
   "role": "company_ops",
@@ -169,6 +170,22 @@ caring about the username.
 Each manifest declares only its **outbound** flows. The architecture page
 infers inbound flows for a node by scanning all manifests and finding
 `to` references back to it. So one declaration per side is enough.
+
+
+
+### Agent gates array entries (v1.5)
+
+Each agent that runs a sequence of internal logic gates can declare them
+as an array. The flow canvas renders these as small numbered pills inside
+the agent box (showing the gate id prefix); the detail panel shows the
+full label + purpose. Gates are static declaration only today — no live
+"firing" observation. Agents with no gates omit the field.
+
+| Field      | Type   | Required | Description |
+|------------|--------|----------|-------------|
+| `id`       | string | yes      | Stable gate identifier. Numbered prefix is conventional, e.g. `1_FAULT`, `2_BENCHMARK`, `3_REGIME`. The prefix before underscore is what the pill shows. |
+| `label`    | string | yes      | Short human-readable name shown in the detail panel. |
+| `purpose`  | string | optional | One-line description of what the gate checks or guards. |
 
 ## Installer integration notes
 

@@ -563,6 +563,20 @@
   .bd-legend .swatch{ width:18px; height:2px; flex-shrink:0; }
   .bd-legend .swatch.box{ width:14px; height:10px; border:1px solid; border-radius:2px; }
 
+  /* V2-PHASE-13A-DRAG-CSS */
+  .bd-node{ cursor:grab; }
+  .bd-node.dragging{ cursor:grabbing; }
+  .bd-node.dragging .bd-node-rect{ filter:drop-shadow(0 0 18px rgba(0,245,212,0.45)); }
+  #bd-reset-btn{ position:absolute; top:80px; left:36px; padding:5px 11px; border-radius:8px;
+                  border:1px solid rgba(255,255,255,0.13); background:rgba(13,17,32,0.85);
+                  color:rgba(255,255,255,0.55); font-family:'JetBrains Mono',monospace; font-size:10px;
+                  cursor:pointer; z-index:4; backdrop-filter:blur(14px); transition:all 0.15s; }
+  #bd-reset-btn:hover{ color:#00f5d4; border-color:rgba(0,245,212,0.4); }
+  #bd-drag-hint{ position:absolute; bottom:32px; left:32px; padding:8px 14px; border-radius:8px;
+                  background:rgba(13,17,32,0.85); border:1px solid rgba(255,255,255,0.13);
+                  color:rgba(255,255,255,0.5); font-family:'JetBrains Mono',monospace; font-size:9px;
+                  z-index:4; backdrop-filter:blur(14px); letter-spacing:0.06em; }
+
   /* Hide sub-blocks already handled in #app.collapsed-* */
 
 
@@ -1105,6 +1119,8 @@
   <div id="blocks-wrap">
     <svg id="blocks-svg" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet"></svg>
     <div id="bd-tooltip"></div>
+    <button id="bd-reset-btn" title="Reset block positions to auto-layout">↺ reset positions</button>
+    <div id="bd-drag-hint">drag any block to reposition · click to inspect</div>
     <div class="bd-legend">
       <div class="lg-h">CHANNELS</div>
       <div class="lg-row"><span class="swatch" style="background:#00f5d4; height:2px"></span> mqtt</div>
@@ -4310,6 +4326,23 @@ function renderProvenance() {
     }
   }
 
+  // V2-PHASE-13A-DRAG-JS — saved positions + drag state
+  let _BD_NODE_POSITIONS = bdLoadPositions();
+  let _BD_DRAG = null;
+  function bdLoadPositions() {
+    try { return JSON.parse(localStorage.getItem('bd_node_positions_v1') || '{}'); }
+    catch(e) { return {}; }
+  }
+  function bdSavePositions() {
+    try { localStorage.setItem('bd_node_positions_v1', JSON.stringify(_BD_NODE_POSITIONS)); }
+    catch(e) {}
+  }
+  function bdResetPositions() {
+    _BD_NODE_POSITIONS = {};
+    bdSavePositions();
+    if (window.__v9_lastCtx) renderBlockDiagram(window.__v9_lastCtx);
+  }
+
   // V2-PHASE-13A-JS — block diagram (hub-and-spoke) renderer
   let _BD_VIEW = 'cards';
   const BD_SVG_NS = 'http://www.w3.org/2000/svg';
@@ -4358,12 +4391,17 @@ function renderProvenance() {
 
     const cx = viewW / 2;
     const cy = viewH / 2;
+    const PADDING = 100;
 
     const nodes = {};
-    // Hub
-    nodes[hubId] = bdNodeBox(hubId, manifests[hubId], cx, cy, true);
+    // Hub at center (or saved position if user dragged it)
+    const hubSaved = _BD_NODE_POSITIONS[hubId];
+    const hubCx = hubSaved ? hubSaved.cx : cx;
+    const hubCy = hubSaved ? hubSaved.cy : cy;
+    nodes[hubId] = bdNodeBox(hubId, manifests[hubId], hubCx, hubCy, true);
+    const hubBox = nodes[hubId];
 
-    // Spokes — assign angular slots
+    // Spokes — assign angular slots, distance computed so blocks never overlap
     const spokeIds = ids.filter(id => id !== hubId);
     const spokeAngles = {
       'company_ops': 0,        // right
@@ -4374,9 +4412,24 @@ function renderProvenance() {
       let angle = spokeAngles[role];
       if (angle == null) angle = 30 + i * 60;   // fallback ring
       const rad = angle * Math.PI / 180;
-      const dist = (role === 'sentinel') ? 360 : 480;
-      const sx = cx + Math.cos(rad) * dist;
-      const sy = cy + Math.sin(rad) * dist;
+      // Determine spoke size to compute non-overlapping distance
+      const spokeW = role === 'sentinel' ? SENTINEL_W : SPOKE_W;
+      const spokeH = role === 'sentinel' ? SENTINEL_H : SPOKE_H;
+      // Distance from hub center to spoke center along the angle, where
+      // both block edges are at least PADDING apart. Use the larger of
+      // horizontal/vertical clearance based on the angle's component.
+      const hubHalfX = hubBox.w / 2, hubHalfY = hubBox.h / 2;
+      const spokeHalfX = spokeW / 2, spokeHalfY = spokeH / 2;
+      const cosA = Math.abs(Math.cos(rad)), sinA = Math.abs(Math.sin(rad));
+      const dx = (hubHalfX + spokeHalfX + PADDING);
+      const dy = (hubHalfY + spokeHalfY + PADDING);
+      const distX = cosA > 0.01 ? dx / cosA : Infinity;
+      const distY = sinA > 0.01 ? dy / sinA : Infinity;
+      const dist = Math.min(distX, distY);
+      // Saved position takes precedence
+      const saved = _BD_NODE_POSITIONS[id];
+      const sx = saved ? saved.cx : (hubCx + Math.cos(rad) * dist);
+      const sy = saved ? saved.cy : (hubCy + Math.sin(rad) * dist);
       nodes[id] = bdNodeBox(id, manifests[id], sx, sy, false);
     });
 
@@ -4649,31 +4702,81 @@ function renderProvenance() {
     // Externals
     for (const [name, ext] of Object.entries(layout.externals)) bdRenderExternal(svg, name, ext);
 
-    // Wire clicks via delegation
-    svg.addEventListener('click', (ev) => {
-      const agentEl = ev.target.closest('.bd-agent');
-      const dbEl = ev.target.closest('.bd-db');
-      const extEl = ev.target.closest('.bd-ext');
+    // V2-PHASE-13A-DRAG — drag + click delegated handlers
+    function svgPoint(ev) {
+      const pt = svg.createSVGPoint();
+      pt.x = ev.clientX; pt.y = ev.clientY;
+      const ctm = svg.getScreenCTM();
+      if (!ctm) return { x: ev.clientX, y: ev.clientY };
+      const inv = ctm.inverse();
+      const out = pt.matrixTransform(inv);
+      return { x: out.x, y: out.y };
+    }
+
+    svg.addEventListener('mousedown', (ev) => {
       const nodeEl = ev.target.closest('.bd-node');
+      const innerEl = ev.target.closest('.bd-agent, .bd-db, .bd-ext');
+      if (!nodeEl || innerEl) return;   // inner items click-only, don't start drag
+      const pid = nodeEl.dataset.piId;
+      const node = layout.nodes[pid];
+      if (!node) return;
+      const p = svgPoint(ev);
+      _BD_DRAG = { pi_id: pid, startX: p.x, startY: p.y, origCx: node.cx, origCy: node.cy, moved: false };
+      ev.preventDefault();
+    });
+
+    function onMove(ev) {
+      if (!_BD_DRAG) return;
+      const p = svgPoint(ev);
+      const dx = p.x - _BD_DRAG.startX;
+      const dy = p.y - _BD_DRAG.startY;
+      if (!_BD_DRAG.moved && (Math.abs(dx) + Math.abs(dy)) > 4) {
+        _BD_DRAG.moved = true;
+        const el = svg.querySelector('.bd-node[data-pi-id="' + _BD_DRAG.pi_id + '"]');
+        if (el) el.classList.add('dragging');
+      }
+      if (!_BD_DRAG.moved) return;
+      const newCx = _BD_DRAG.origCx + dx;
+      const newCy = _BD_DRAG.origCy + dy;
+      _BD_NODE_POSITIONS[_BD_DRAG.pi_id] = { cx: newCx, cy: newCy };
+      // Re-render the SVG with the new position
+      if (window.__v9_lastCtx) renderBlockDiagram(window.__v9_lastCtx);
+    }
+    function onUp(ev) {
+      if (!_BD_DRAG) return;
+      const wasMoved = _BD_DRAG.moved;
+      const pid = _BD_DRAG.pi_id;
+      _BD_DRAG = null;
+      if (wasMoved) {
+        bdSavePositions();
+        return;
+      }
+      // Click (no drag) — route through detail panel
+      const target = ev.target;
+      const agentEl = target.closest('.bd-agent');
+      const dbEl = target.closest('.bd-db');
+      const extEl = target.closest('.bd-ext');
+      const nodeEl = target.closest('.bd-node');
       if (agentEl) {
-        const pid = agentEl.dataset.piId, name = agentEl.dataset.agentName;
-        if (typeof v9Select === 'function') v9Select({ type: 'agent', pi_id: pid, name });
+        if (typeof v9Select === 'function') v9Select({ type: 'agent', pi_id: agentEl.dataset.piId, name: agentEl.dataset.agentName });
       } else if (dbEl) {
-        const pid = dbEl.dataset.piId, name = dbEl.dataset.dbName;
-        if (typeof v9Select === 'function') v9Select({ type: 'db', pi_id: pid, name });
+        if (typeof v9Select === 'function') v9Select({ type: 'db', pi_id: dbEl.dataset.piId, name: dbEl.dataset.dbName });
       } else if (extEl) {
         const name = extEl.dataset.extName;
-        // Find owner node (first manifest declaring this external)
         let owner = null;
-        for (const [pid, m] of Object.entries(manifests)) {
-          if ((m.externals || []).find(e => e.name === name)) { owner = pid; break; }
+        for (const [opid, m] of Object.entries(manifests)) {
+          if ((m.externals || []).find(e => e.name === name)) { owner = opid; break; }
         }
         if (owner && typeof v9Select === 'function') v9Select({ type: 'external', pi_id: owner, name });
       } else if (nodeEl) {
-        const pid = nodeEl.dataset.piId;
         if (typeof v9Select === 'function') v9Select({ type: 'node', pi_id: pid });
       }
-    }, { once: false });
+    }
+    // Use capturing on document so drag works even when cursor leaves the node
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    // Cleanup on next render — these listeners are appended each render but
+    // we keep them lightweight and idempotent (drag state guards everything).
   }
 
   function setBlocksView(view) {
@@ -5138,7 +5241,7 @@ function renderProvenance() {
       window.__v9_lastCtx = { metrics: data, manifests: manifests, agentsByGroup: agentsByGroup,
                               fetchLog: (manifestsRaw && manifestsRaw._fetch_log) || {}, drift: drift };
       if (_DETAIL_SELECTION) renderDetailPanel(_DETAIL_SELECTION, window.__v9_lastCtx);
-      if (_BD_VIEW === 'blocks') renderBlockDiagram(window.__v9_lastCtx);
+      if (_BD_VIEW === 'blocks' && !_BD_DRAG) renderBlockDiagram(window.__v9_lastCtx);
 
       // Determine which pi_ids are live (heartbeat within 5 minutes)
       const livePiIds = [];
@@ -5214,10 +5317,12 @@ function renderProvenance() {
         v9Select({ type: 'node', pi_id });
       });
     }
-    // V2-PHASE-13A — blocks view toggle
+    // V2-PHASE-13A — blocks view toggle + reset button
     document.querySelectorAll('#blocks-view-toggle button').forEach(btn => {
       btn.addEventListener('click', () => setBlocksView(btn.dataset.bdView));
     });
+    const bdResetBtn = document.getElementById('bd-reset-btn');
+    if (bdResetBtn) bdResetBtn.addEventListener('click', () => bdResetPositions());
 
     // V2-PHASE-11-JS — refresh button + ESC keybinding
     const refreshBtn = document.getElementById('nv-refresh-btn');

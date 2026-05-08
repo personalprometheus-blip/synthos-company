@@ -572,6 +572,25 @@
                   color:rgba(255,255,255,0.55); font-family:'JetBrains Mono',monospace; font-size:10px;
                   cursor:pointer; z-index:4; backdrop-filter:blur(14px); transition:all 0.15s; }
   #bd-reset-btn:hover{ color:#00f5d4; border-color:rgba(0,245,212,0.4); }
+  /* V2-PHASE-13A-ZOOM-CSS */
+  #blocks-wrap{ cursor:grab; }
+  #blocks-wrap.panning{ cursor:grabbing; }
+  #blocks-wrap.panning #blocks-svg{ cursor:grabbing; }
+  #bd-zoom-indicator{ position:absolute; bottom:32px; right:32px; display:flex; gap:0;
+                       background:rgba(13,17,32,0.85); border:1px solid rgba(255,255,255,0.13);
+                       border-radius:8px; backdrop-filter:blur(14px); z-index:5; overflow:hidden;
+                       font-family:'JetBrains Mono',monospace; font-size:10px; }
+  #bd-zoom-indicator .bdz-btn{ background:transparent; border:none; color:rgba(255,255,255,0.55);
+                                width:28px; height:28px; cursor:pointer; padding:0;
+                                font-size:14px; transition:all 0.15s; }
+  #bd-zoom-indicator .bdz-btn:hover{ background:rgba(0,245,212,0.08); color:#00f5d4; }
+  #bd-zoom-indicator .bdz-level{ display:flex; align-items:center; padding:0 10px;
+                                  color:rgba(255,255,255,0.7); border-left:1px solid rgba(255,255,255,0.07);
+                                  border-right:1px solid rgba(255,255,255,0.07); min-width:48px;
+                                  justify-content:center; }
+  /* Move the channel/agent legend to top-right so it does not collide with zoom indicator */
+  .bd-legend{ bottom:auto !important; top:80px; }
+
   #bd-drag-hint{ position:absolute; bottom:32px; left:32px; padding:8px 14px; border-radius:8px;
                   background:rgba(13,17,32,0.85); border:1px solid rgba(255,255,255,0.13);
                   color:rgba(255,255,255,0.5); font-family:'JetBrains Mono',monospace; font-size:9px;
@@ -1120,7 +1139,13 @@
     <svg id="blocks-svg" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet"></svg>
     <div id="bd-tooltip"></div>
     <button id="bd-reset-btn" title="Reset block positions to auto-layout">↺ reset positions</button>
-    <div id="bd-drag-hint">drag any block to reposition · click to inspect</div>
+    <div id="bd-drag-hint">drag block to move · drag empty canvas to pan · wheel to zoom · click to inspect</div>
+    <div id="bd-zoom-indicator">
+      <button class="bdz-btn" data-bdz="out" title="Zoom out">−</button>
+      <div class="bdz-level" id="bdz-level">100%</div>
+      <button class="bdz-btn" data-bdz="in" title="Zoom in">+</button>
+      <button class="bdz-btn" data-bdz="fit" title="Fit to view">⊡</button>
+    </div>
     <div class="bd-legend">
       <div class="lg-h">CHANNELS</div>
       <div class="lg-row"><span class="swatch" style="background:#00f5d4; height:2px"></span> mqtt</div>
@@ -4326,6 +4351,66 @@ function renderProvenance() {
     }
   }
 
+  // V2-PHASE-13A-ZOOM-JS — viewbox / zoom / pan
+  let _BD_VIEWBOX = bdLoadViewBox();   // {x,y,w,h} or null = use default
+  let _BD_PAN = null;                  // {startClientX, startClientY, origX, origY}
+  let _BD_HANDLERS_WIRED = false;
+  let _BD_BASE_W = 1400, _BD_BASE_H = 880;
+  const BD_ZOOM_MIN = 0.25, BD_ZOOM_MAX = 4.0;
+
+  function bdLoadViewBox() {
+    try {
+      const v = JSON.parse(localStorage.getItem('bd_viewbox_v1') || 'null');
+      if (v && typeof v.x === 'number' && typeof v.y === 'number' && v.w > 0 && v.h > 0) return v;
+    } catch(e) {}
+    return null;
+  }
+  function bdSaveViewBox() {
+    try { localStorage.setItem('bd_viewbox_v1', JSON.stringify(_BD_VIEWBOX)); } catch(e) {}
+  }
+  function bdZoomLevel() {
+    if (!_BD_VIEWBOX) return 1.0;
+    return _BD_BASE_W / _BD_VIEWBOX.w;
+  }
+  function bdUpdateZoomIndicator() {
+    const el = document.getElementById('bdz-level');
+    if (el) el.textContent = Math.round(bdZoomLevel() * 100) + '%';
+  }
+  function bdApplyViewBox(svg) {
+    if (!_BD_VIEWBOX) {
+      _BD_VIEWBOX = { x: 0, y: 0, w: _BD_BASE_W, h: _BD_BASE_H };
+    }
+    svg.setAttribute('viewBox', _BD_VIEWBOX.x + ' ' + _BD_VIEWBOX.y + ' ' + _BD_VIEWBOX.w + ' ' + _BD_VIEWBOX.h);
+    bdUpdateZoomIndicator();
+  }
+  function bdSvgPoint(svg, ev) {
+    const pt = svg.createSVGPoint();
+    pt.x = ev.clientX; pt.y = ev.clientY;
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return { x: ev.clientX, y: ev.clientY };
+    return pt.matrixTransform(ctm.inverse());
+  }
+  function bdZoomAt(svg, factor, ev) {
+    if (!_BD_VIEWBOX) _BD_VIEWBOX = { x: 0, y: 0, w: _BD_BASE_W, h: _BD_BASE_H };
+    const newW = _BD_VIEWBOX.w * factor;
+    const newH = _BD_VIEWBOX.h * factor;
+    const newZoom = _BD_BASE_W / newW;
+    if (newZoom < BD_ZOOM_MIN || newZoom > BD_ZOOM_MAX) return;
+    const pt = ev ? bdSvgPoint(svg, ev) : { x: _BD_VIEWBOX.x + _BD_VIEWBOX.w/2, y: _BD_VIEWBOX.y + _BD_VIEWBOX.h/2 };
+    // Adjust vbX/vbY so the point under cursor stays put after scale
+    _BD_VIEWBOX.x = pt.x - (pt.x - _BD_VIEWBOX.x) * factor;
+    _BD_VIEWBOX.y = pt.y - (pt.y - _BD_VIEWBOX.y) * factor;
+    _BD_VIEWBOX.w = newW;
+    _BD_VIEWBOX.h = newH;
+    bdApplyViewBox(svg);
+    bdSaveViewBox();
+  }
+  function bdFitView(svg) {
+    _BD_VIEWBOX = null;
+    bdSaveViewBox();
+    bdApplyViewBox(svg);
+  }
+
   // V2-PHASE-13A-DRAG-JS — saved positions + drag state
   let _BD_NODE_POSITIONS = bdLoadPositions();
   let _BD_DRAG = null;
@@ -4681,7 +4766,8 @@ function renderProvenance() {
     const wrap = document.getElementById('blocks-wrap');
     const W = Math.max(1200, wrap.clientWidth - 40);
     const H = 880;
-    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+    _BD_BASE_W = W; _BD_BASE_H = H;
+    bdApplyViewBox(svg);
 
     const manifests = ctx.manifests || {};
     if (Object.keys(manifests).length === 0) {
@@ -4702,81 +4788,122 @@ function renderProvenance() {
     // Externals
     for (const [name, ext] of Object.entries(layout.externals)) bdRenderExternal(svg, name, ext);
 
-    // V2-PHASE-13A-DRAG — drag + click delegated handlers
-    function svgPoint(ev) {
-      const pt = svg.createSVGPoint();
-      pt.x = ev.clientX; pt.y = ev.clientY;
-      const ctm = svg.getScreenCTM();
-      if (!ctm) return { x: ev.clientX, y: ev.clientY };
-      const inv = ctm.inverse();
-      const out = pt.matrixTransform(inv);
-      return { x: out.x, y: out.y };
-    }
+    // V2-PHASE-13A-INTERACT — drag, pan, zoom, click
+    if (!_BD_HANDLERS_WIRED) {
+      _BD_HANDLERS_WIRED = true;
+      const wrapEl = document.getElementById('blocks-wrap');
 
-    svg.addEventListener('mousedown', (ev) => {
-      const nodeEl = ev.target.closest('.bd-node');
-      const innerEl = ev.target.closest('.bd-agent, .bd-db, .bd-ext');
-      if (!nodeEl || innerEl) return;   // inner items click-only, don't start drag
-      const pid = nodeEl.dataset.piId;
-      const node = layout.nodes[pid];
-      if (!node) return;
-      const p = svgPoint(ev);
-      _BD_DRAG = { pi_id: pid, startX: p.x, startY: p.y, origCx: node.cx, origCy: node.cy, moved: false };
-      ev.preventDefault();
-    });
-
-    function onMove(ev) {
-      if (!_BD_DRAG) return;
-      const p = svgPoint(ev);
-      const dx = p.x - _BD_DRAG.startX;
-      const dy = p.y - _BD_DRAG.startY;
-      if (!_BD_DRAG.moved && (Math.abs(dx) + Math.abs(dy)) > 4) {
-        _BD_DRAG.moved = true;
-        const el = svg.querySelector('.bd-node[data-pi-id="' + _BD_DRAG.pi_id + '"]');
-        if (el) el.classList.add('dragging');
-      }
-      if (!_BD_DRAG.moved) return;
-      const newCx = _BD_DRAG.origCx + dx;
-      const newCy = _BD_DRAG.origCy + dy;
-      _BD_NODE_POSITIONS[_BD_DRAG.pi_id] = { cx: newCx, cy: newCy };
-      // Re-render the SVG with the new position
-      if (window.__v9_lastCtx) renderBlockDiagram(window.__v9_lastCtx);
-    }
-    function onUp(ev) {
-      if (!_BD_DRAG) return;
-      const wasMoved = _BD_DRAG.moved;
-      const pid = _BD_DRAG.pi_id;
-      _BD_DRAG = null;
-      if (wasMoved) {
-        bdSavePositions();
-        return;
-      }
-      // Click (no drag) — route through detail panel
-      const target = ev.target;
-      const agentEl = target.closest('.bd-agent');
-      const dbEl = target.closest('.bd-db');
-      const extEl = target.closest('.bd-ext');
-      const nodeEl = target.closest('.bd-node');
-      if (agentEl) {
-        if (typeof v9Select === 'function') v9Select({ type: 'agent', pi_id: agentEl.dataset.piId, name: agentEl.dataset.agentName });
-      } else if (dbEl) {
-        if (typeof v9Select === 'function') v9Select({ type: 'db', pi_id: dbEl.dataset.piId, name: dbEl.dataset.dbName });
-      } else if (extEl) {
-        const name = extEl.dataset.extName;
-        let owner = null;
-        for (const [opid, m] of Object.entries(manifests)) {
-          if ((m.externals || []).find(e => e.name === name)) { owner = opid; break; }
+      svg.addEventListener('mousedown', (ev) => {
+        const nodeEl = ev.target.closest('.bd-node');
+        const innerEl = ev.target.closest('.bd-agent, .bd-db, .bd-ext');
+        if (nodeEl && !innerEl) {
+          // Node drag (existing behavior)
+          const pid = nodeEl.dataset.piId;
+          const lay = window.__v9_bdLayout;
+          const node = lay && lay.nodes && lay.nodes[pid];
+          if (!node) return;
+          const p = bdSvgPoint(svg, ev);
+          _BD_DRAG = { pi_id: pid, startX: p.x, startY: p.y, origCx: node.cx, origCy: node.cy, moved: false };
+          ev.preventDefault();
+        } else if (!innerEl) {
+          // Pan: empty canvas
+          _BD_PAN = {
+            startClientX: ev.clientX, startClientY: ev.clientY,
+            origX: (_BD_VIEWBOX && _BD_VIEWBOX.x) || 0,
+            origY: (_BD_VIEWBOX && _BD_VIEWBOX.y) || 0,
+          };
+          if (wrapEl) wrapEl.classList.add('panning');
+          ev.preventDefault();
         }
-        if (owner && typeof v9Select === 'function') v9Select({ type: 'external', pi_id: owner, name });
-      } else if (nodeEl) {
-        if (typeof v9Select === 'function') v9Select({ type: 'node', pi_id: pid });
-      }
+        // Inner element clicks fall through to the click handler below
+      });
+
+      document.addEventListener('mousemove', (ev) => {
+        if (_BD_DRAG) {
+          const p = bdSvgPoint(svg, ev);
+          const dx = p.x - _BD_DRAG.startX;
+          const dy = p.y - _BD_DRAG.startY;
+          if (!_BD_DRAG.moved && (Math.abs(dx) + Math.abs(dy)) > 4) {
+            _BD_DRAG.moved = true;
+            const el = svg.querySelector('.bd-node[data-pi-id="' + _BD_DRAG.pi_id + '"]');
+            if (el) el.classList.add('dragging');
+          }
+          if (_BD_DRAG.moved) {
+            _BD_NODE_POSITIONS[_BD_DRAG.pi_id] = { cx: _BD_DRAG.origCx + dx, cy: _BD_DRAG.origCy + dy };
+            if (window.__v9_lastCtx) renderBlockDiagram(window.__v9_lastCtx);
+          }
+        } else if (_BD_PAN) {
+          const ctm = svg.getScreenCTM();
+          const scale = ctm ? ctm.a : 1;
+          const dx = (ev.clientX - _BD_PAN.startClientX) / scale;
+          const dy = (ev.clientY - _BD_PAN.startClientY) / scale;
+          if (!_BD_VIEWBOX) _BD_VIEWBOX = { x: 0, y: 0, w: _BD_BASE_W, h: _BD_BASE_H };
+          _BD_VIEWBOX.x = _BD_PAN.origX - dx;
+          _BD_VIEWBOX.y = _BD_PAN.origY - dy;
+          bdApplyViewBox(svg);
+        }
+      });
+
+      document.addEventListener('mouseup', (ev) => {
+        if (_BD_PAN) {
+          _BD_PAN = null;
+          if (wrapEl) wrapEl.classList.remove('panning');
+          bdSaveViewBox();
+          return;
+        }
+        if (_BD_DRAG) {
+          const wasMoved = _BD_DRAG.moved;
+          const pid = _BD_DRAG.pi_id;
+          _BD_DRAG = null;
+          if (wasMoved) {
+            bdSavePositions();
+            const el = svg.querySelector('.bd-node[data-pi-id="' + pid + '"]');
+            if (el) el.classList.remove('dragging');
+            return;
+          }
+          // No drag → route click to detail panel
+          const target = ev.target;
+          const agentEl = target.closest('.bd-agent');
+          const dbEl = target.closest('.bd-db');
+          const extEl = target.closest('.bd-ext');
+          const nodeEl = target.closest('.bd-node');
+          if (agentEl) {
+            if (typeof v9Select === 'function') v9Select({ type: 'agent', pi_id: agentEl.dataset.piId, name: agentEl.dataset.agentName });
+          } else if (dbEl) {
+            if (typeof v9Select === 'function') v9Select({ type: 'db', pi_id: dbEl.dataset.piId, name: dbEl.dataset.dbName });
+          } else if (extEl) {
+            const name = extEl.dataset.extName;
+            const ms = (window.__v9_lastCtx || {}).manifests || {};
+            let owner = null;
+            for (const [opid, m] of Object.entries(ms)) {
+              if ((m.externals || []).find(e => e.name === name)) { owner = opid; break; }
+            }
+            if (owner && typeof v9Select === 'function') v9Select({ type: 'external', pi_id: owner, name });
+          } else if (nodeEl) {
+            if (typeof v9Select === 'function') v9Select({ type: 'node', pi_id: pid });
+          }
+        }
+      });
+
+      // Wheel zoom
+      svg.addEventListener('wheel', (ev) => {
+        ev.preventDefault();
+        const factor = ev.deltaY > 0 ? 1.12 : 0.89;
+        bdZoomAt(svg, factor, ev);
+      }, { passive: false });
+
+      // Zoom indicator buttons
+      document.querySelectorAll('#bd-zoom-indicator .bdz-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const action = btn.dataset.bdz;
+          if (action === 'in') bdZoomAt(svg, 0.85);
+          else if (action === 'out') bdZoomAt(svg, 1.18);
+          else if (action === 'fit') bdFitView(svg);
+        });
+      });
     }
-    // Use capturing on document so drag works even when cursor leaves the node
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-    // Cleanup on next render — these listeners are appended each render but
-    // we keep them lightweight and idempotent (drag state guards everything).
+    // Stash layout on window so handlers can find current positions
+    window.__v9_bdLayout = layout;
   }
 
   function setBlocksView(view) {

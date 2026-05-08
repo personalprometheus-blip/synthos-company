@@ -218,6 +218,34 @@
   #nodes-v2-grid .nv-banner .nv-tag::before{ content:'●'; margin-right:5px;
                                               animation:livePulse 2s ease-in-out infinite; }
   #nodes-v2-grid .nv-banner .nv-meta{ margin-left:auto; color:rgba(255,255,255,0.4); font-size:10px; }
+  /* V2-PHASE-8-DRIFT — drift chip + panel */
+  #nodes-v2-grid .nv-drift{ padding:3px 10px; border-radius:99px; font-size:9px; font-weight:700;
+                             letter-spacing:0.06em; text-transform:uppercase; cursor:pointer;
+                             border:1px solid; transition:all 0.15s; user-select:none; }
+  #nodes-v2-grid .nv-drift.clean{ background:rgba(74,222,128,0.10); border-color:rgba(74,222,128,0.30); color:#4ade80; cursor:default; }
+  #nodes-v2-grid .nv-drift.has-drift{ background:rgba(255,179,71,0.12); border-color:rgba(255,179,71,0.35); color:#ffb347; }
+  #nodes-v2-grid .nv-drift.has-drift:hover{ background:rgba(255,179,71,0.20); }
+  #nodes-v2-grid .nv-drift-panel{ grid-column:1/-1; padding:14px 16px; border-radius:10px;
+                                   background:rgba(255,179,71,0.06); border:1px solid rgba(255,179,71,0.25);
+                                   font-family:'JetBrains Mono',monospace; font-size:11px;
+                                   color:rgba(255,255,255,0.7); margin-bottom:8px; display:none; }
+  #nodes-v2-grid .nv-drift-panel.open{ display:block; }
+  #nodes-v2-grid .nv-drift-panel h4{ font-size:9px; font-weight:700; text-transform:uppercase;
+                                      letter-spacing:0.08em; color:#ffb347; margin:0 0 8px 0; }
+  #nodes-v2-grid .nv-drift-panel ul{ margin:0; padding-left:18px; line-height:1.7; }
+  #nodes-v2-grid .nv-drift-panel li{ font-size:11px; color:rgba(255,255,255,0.85); }
+  #nodes-v2-grid .nv-drift-panel li code{ background:rgba(255,255,255,0.06); padding:1px 6px; border-radius:4px;
+                                            color:rgba(255,255,255,0.92); font-size:10px; }
+  #nodes-v2-grid .nv-drift-panel .drift-section{ margin-bottom:14px; }
+  #nodes-v2-grid .nv-drift-panel .drift-section:last-child{ margin-bottom:0; }
+  #nodes-v2-grid .nv-drift-panel .empty-row{ color:rgba(255,255,255,0.4); font-style:italic; padding-left:0; list-style:none; }
+
+  /* Inline marker on agent boxes that are undeclared */
+  .agent-box.undeclared{ background:rgba(255,179,71,0.06); border-left:2px solid rgba(255,179,71,0.45);
+                          padding-left:10px; margin-left:-10px; border-radius:0 4px 4px 0; }
+  .agent-box.undeclared .ab-name::after{ content:' (undeclared)'; color:#ffb347; font-weight:600;
+                                          font-size:9px; margin-left:4px; }
+
 
   #nodes-v2-grid .nv-empty{ grid-column:1/-1; padding:64px; text-align:center;
                              color:rgba(255,255,255,0.4); font-family:'JetBrains Mono',monospace;
@@ -811,8 +839,10 @@
     <div class="nv-banner">
       <span class="nv-tag">LIVE</span>
       <span>Topology stripped to bare nodes — populated only when a heartbeat lands within 5 min.</span>
+      <span id="nv-drift-chip" class="nv-drift clean" title="Click to view drift detail">drift: —</span>
       <span class="nv-meta" id="nv-banner-meta">connecting...</span>
     </div>
+    <div id="nv-drift-panel" class="nv-drift-panel"></div>
     <div class="nv-empty" id="nv-empty">Waiting for first heartbeat...</div>
   </div>
   <div id="live-status-strip">
@@ -3755,29 +3785,139 @@ function renderProvenance() {
   // Returns HTML for the agents section of a node card, or empty string
   // when the manifest declares no agents.
   function buildAgentsSectionHtml(manifest, groupAgents) {
-    if (!manifest || !manifest.agents || manifest.agents.length === 0) return '';
-    // Index live MQTT data by agent name
+    const declared = (manifest && manifest.agents) || [];
+    const groupName = manifest && manifest.mqtt_group;
+    const undeclared = (groupName && _UNDECLARED_BY_GROUP[groupName]) || new Set();
+
+    // Render declared agents (with their live MQTT freshness if any)
     const liveByName = {};
     for (const la of (groupAgents || [])) liveByName[la.name] = la;
-    const agentsHtml = manifest.agents.map(a => renderAgentBoxHtml(a, liveByName[a.name])).join('');
+    let agentsHtml = declared.map(a => renderAgentBoxHtml(a, liveByName[a.name])).join('');
+
+    // Append undeclared agents (publishing under this group but not in manifest)
+    let undeclaredHtml = '';
+    if (undeclared && undeclared.size) {
+      for (const la of (groupAgents || [])) {
+        if (undeclared.has(la.name)) {
+          undeclaredHtml += renderAgentBoxHtml({ name: la.name, purpose: '(undeclared — add to manifest)', cadence: '' }, la)
+                              .replace('agent-box', 'agent-box undeclared');
+        }
+      }
+    }
+
+    if (declared.length === 0 && !undeclaredHtml) return '';
+
     let healthy = 0, stale = 0, down = 0, silent = 0;
-    for (const a of manifest.agents) {
+    for (const a of declared) {
       const live = liveByName[a.name];
       if (!live) silent++;
       else if (live.status === 'healthy') healthy++;
       else if (live.status === 'stale') stale++;
       else down++;
     }
-    const summary = healthy + ' live · ' + (stale + down) + ' stale · ' + silent + ' silent';
+    const summary = healthy + ' live · ' + (stale + down) + ' stale · ' + silent + ' silent' +
+                     (undeclared.size ? ' · ' + undeclared.size + ' undeclared' : '');
+    const totalCount = declared.length + (undeclared ? undeclared.size : 0);
     return (
       '<div class="nc-agents">' +
         '<div class="nc-agents-header">' +
-          'Agents <span class="ah-count">(' + manifest.agents.length + ')</span>' +
+          'Agents <span class="ah-count">(' + totalCount + ')</span>' +
           '<span class="ah-meta">' + summary + '</span>' +
         '</div>' +
-        agentsHtml +
+        agentsHtml + undeclaredHtml +
       '</div>'
     );
+  }
+
+  // V2-PHASE-8-DRIFT-JS — drift computation + panel renderer
+  let _UNDECLARED_BY_GROUP = {};   // group → Set<agentName>, refreshed each tick
+
+  function computeDrift(manifests, agentsByGroup) {
+    const declaredByGroup = {};
+    const groupToNodeId = {};
+    for (const [nodeId, m] of Object.entries(manifests || {})) {
+      if (!m || !m.mqtt_group) continue;
+      const set = new Set();
+      for (const a of (m.agents || [])) set.add(a.name);
+      declaredByGroup[m.mqtt_group] = set;
+      groupToNodeId[m.mqtt_group] = nodeId;
+    }
+    const undeclaredGroups = [];
+    const undeclaredAgents = [];
+    for (const [group, agents] of Object.entries(agentsByGroup || {})) {
+      const declared = declaredByGroup[group];
+      if (!declared) {
+        undeclaredGroups.push({ group, agent_count: (agents || []).length });
+        continue;
+      }
+      for (const a of (agents || [])) {
+        if (!declared.has(a.name)) {
+          undeclaredAgents.push({ group, name: a.name, status: a.status, age_seconds: a.age_seconds });
+        }
+      }
+    }
+    return {
+      totalDrift: undeclaredGroups.length + undeclaredAgents.length,
+      undeclaredGroups, undeclaredAgents, groupToNodeId,
+    };
+  }
+
+  function renderDriftPanel(drift) {
+    const panel = document.getElementById('nv-drift-panel');
+    if (!panel) return;
+    if (drift.totalDrift === 0) {
+      panel.innerHTML =
+        '<div class="drift-section"><h4>No drift detected</h4>' +
+          '<ul><li class="empty-row">Every MQTT group is claimed, every publishing agent is declared.</li></ul></div>';
+      return;
+    }
+    let html = '';
+    html += '<div class="drift-section"><h4>Undeclared MQTT groups (' + drift.undeclaredGroups.length + ')</h4>';
+    if (drift.undeclaredGroups.length === 0) {
+      html += '<ul><li class="empty-row">none</li></ul>';
+    } else {
+      html += '<ul>';
+      for (const g of drift.undeclaredGroups) {
+        html += '<li><code>' + g.group + '</code> · ' + g.agent_count + ' agent(s) publishing — no manifest declares this group</li>';
+      }
+      html += '</ul>';
+    }
+    html += '</div><div class="drift-section"><h4>Undeclared agents in known groups (' + drift.undeclaredAgents.length + ')</h4>';
+    if (drift.undeclaredAgents.length === 0) {
+      html += '<ul><li class="empty-row">none</li></ul>';
+    } else {
+      html += '<ul>';
+      for (const a of drift.undeclaredAgents) {
+        const owner = drift.groupToNodeId[a.group];
+        html += '<li><code>' + a.name + '</code> publishing under <code>' + a.group + '</code>' +
+                (owner ? ' (manifest: ' + owner + ')' : '') +
+                ' — add to <code>agents[]</code> or remove the publisher</li>';
+      }
+      html += '</ul>';
+    }
+    html += '</div>';
+    panel.innerHTML = html;
+  }
+
+  function updateDriftChip(drift) {
+    const chip = document.getElementById('nv-drift-chip');
+    if (!chip) return;
+    if (drift.totalDrift === 0) {
+      chip.className = 'nv-drift clean';
+      chip.textContent = 'drift: 0';
+    } else {
+      chip.className = 'nv-drift has-drift';
+      chip.textContent = 'drift: ' + drift.totalDrift;
+    }
+  }
+
+  function buildUndeclaredAgentsSet(drift) {
+    const set = {};
+    for (const a of drift.undeclaredAgents) {
+      if (!set[a.group]) set[a.group] = new Set();
+      set[a.group].add(a.name);
+    }
+    return set;
   }
 
   // V2-PHASE-4-RENDER — db + external components
@@ -3912,6 +4052,12 @@ function renderProvenance() {
       const agentsPayload = agentsRes.ok ? (await agentsRes.json()) : { agents: {} };
       const agentsByGroup = agentsPayload.agents || {};
 
+      // V2-PHASE-8-TICK-HOOK — drift each cycle
+      const drift = computeDrift(manifests, agentsByGroup);
+      _UNDECLARED_BY_GROUP = buildUndeclaredAgentsSet(drift);
+      updateDriftChip(drift);
+      renderDriftPanel(drift);
+
       // Determine which pi_ids are live (heartbeat within 5 minutes)
       const livePiIds = [];
       for (const [pi_id, live] of Object.entries(data)) {
@@ -3952,6 +4098,14 @@ function renderProvenance() {
   }
 
   document.addEventListener('DOMContentLoaded', () => {
+    const chip = document.getElementById('nv-drift-chip');
+    const panel = document.getElementById('nv-drift-panel');
+    if (chip && panel) {
+      chip.addEventListener('click', () => {
+        if (chip.classList.contains('clean')) return;   // nothing to expand
+        panel.classList.toggle('open');
+      });
+    }
     tick();
     setInterval(tick, 30000);
   });

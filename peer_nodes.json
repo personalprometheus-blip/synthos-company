@@ -3,5 +3,10 @@
     "ssh_target": "SentinelRetail",
     "manifest_path": "~/manifest.json",
     "_comment": "Pi5 retail node. Fetched via SSH host alias defined in pi4b's ~/.ssh/config."
+  },
+  "pi2w-monitor": {
+    "ssh_target": "pi0-2monitor",
+    "manifest_path": "~/manifest.json",
+    "_comment": "Pi Zero 2W sentinel. Heartbeats only, no MQTT publishing yet."
   }
 }

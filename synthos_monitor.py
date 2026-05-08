@@ -873,6 +873,95 @@ def api_enqueue():
         print(f"[ENQUEUE] DB write failed: {e}")
         return jsonify({"ok": False, "error": f"DB write failed: {str(e)[:120]}"}), 500
 
+@app.route("/api/detected_issues/inject", methods=["POST"])
+def api_detected_issues_inject():
+    """
+    Receive a detected_issues row from a retail node — used when a
+    retail-side condition needs immediate visibility on the command
+    portal /admin/alerts page without waiting for the 5-min auditor
+    log scan. Auth: X-Token header (same SECRET_TOKEN used by
+    /api/enqueue and /api/heartbeat).
+
+    Required JSON fields:
+      source_file — opaque identifier for the alert source, e.g.
+                     "pi5:retail_portal.py:encryption_key_check"
+      severity    — "CRITICAL" | "WARNING" | "INFO"
+      pattern     — short stable dedup key, e.g. "ENCRYPTION_KEY_MISMATCH"
+
+    Optional:
+      context     — long-form body (rendered in the alert detail drawer)
+      dedup_hours — int, default 24. Window during which an unresolved
+                    row with the same (source_file, pattern) gets its
+                    hit_count incremented instead of a new row inserted.
+
+    Returns: {ok, id, deduped}.
+
+    Mirrors the dedup pattern used by company_auditor.py — same DB,
+    same table, same shape — so injected rows render identically to
+    log-scanned ones in admin_alerts.html.
+    """
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+
+    data = request.get_json(silent=True) or {}
+    source_file = str(data.get("source_file", "")).strip()
+    severity    = str(data.get("severity", "")).strip().upper()
+    pattern     = str(data.get("pattern", "")).strip()
+    context     = str(data.get("context", "") or "")
+    try:
+        dedup_hours = int(data.get("dedup_hours", 24))
+    except (ValueError, TypeError):
+        dedup_hours = 24
+
+    if not source_file or not severity or not pattern:
+        return jsonify({"error": "source_file, severity, pattern required"}), 400
+    if severity not in ("CRITICAL", "WARNING", "INFO"):
+        return jsonify({"error": "severity must be CRITICAL/WARNING/INFO"}), 400
+
+    # Use auditor.db (where detected_issues lives) — DO NOT use company.db.
+    auditor_db = os.getenv("AUDITOR_DB_PATH",
+                           "/home/pi/synthos-company/data/auditor.db")
+    now_iso = datetime.now(timezone.utc).isoformat()
+    cutoff_iso = (datetime.now(timezone.utc)
+                  - timedelta(hours=dedup_hours)).isoformat()
+
+    try:
+        conn = sqlite3.connect(auditor_db, timeout=10)
+        conn.row_factory = sqlite3.Row
+        try:
+            existing = conn.execute(
+                "SELECT id, hit_count FROM detected_issues "
+                "WHERE source_file=? AND pattern=? AND resolved=0 AND last_seen>=?",
+                (source_file, pattern, cutoff_iso),
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    "UPDATE detected_issues SET hit_count=?, last_seen=? WHERE id=?",
+                    (existing["hit_count"] + 1, now_iso, existing["id"]),
+                )
+                conn.commit()
+                row_id = existing["id"]
+                deduped = True
+            else:
+                cur = conn.execute(
+                    "INSERT INTO detected_issues "
+                    "(first_seen, last_seen, source_file, severity, "
+                    " pattern, context, hit_count, hit_count_at_last_alert) "
+                    "VALUES (?, ?, ?, ?, ?, ?, 1, 0)",
+                    (now_iso, now_iso, source_file, severity, pattern, context),
+                )
+                conn.commit()
+                row_id = cur.lastrowid
+                deduped = False
+        finally:
+            conn.close()
+        print(f"[INJECT] {severity} {pattern} from {source_file} "
+              f"id={row_id} deduped={deduped}")
+        return jsonify({"ok": True, "id": row_id, "deduped": deduped}), 200
+    except Exception as e:
+        print(f"[INJECT] DB write failed: {e}")
+        return jsonify({"ok": False, "error": f"DB write failed: {str(e)[:120]}"}), 500
+
 # ── Global Command Routes ────────────────────────────────────────────────────
 def _queue_command(cmd_type, value, targets="all"):
     """Queue a command for target Pis. Delivered on next heartbeat response."""

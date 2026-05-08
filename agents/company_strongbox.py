@@ -198,6 +198,30 @@ def _is_noise(rel_parts) -> bool:
     return False
 
 
+def _checkpoint_sqlite(db_path: Path) -> None:
+    """
+    Fold any WAL/SHM contents into the main DB file so a tar of the DB alone
+    captures a complete, consistent snapshot. No-op if DB isn't in WAL mode.
+
+    Safe under concurrent reads/writes — PRAGMA wal_checkpoint blocks briefly
+    but does not corrupt active connections.
+    """
+    if not db_path.exists():
+        return
+    try:
+        import sqlite3 as _sql
+        conn = _sql.connect(str(db_path), timeout=30.0)
+        try:
+            # TRUNCATE: checkpoint then truncate WAL to zero length. Most aggressive.
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            conn.commit()
+        finally:
+            conn.close()
+    except _sql.Error as e:
+        log.warning("[company] WAL checkpoint failed for %s: %s — backup may "
+                    "be missing recent uncommitted writes", db_path.name, e)
+
+
 def _exclude_backup_noise(tarinfo):
     """tarfile filter: skip recreatable artifacts."""
     parts = tarinfo.name.split("/")
@@ -219,6 +243,14 @@ def _company_stream_contents() -> tuple[list[dict], list[tuple[Path, str]]]:
     if not COMPANY_DB.exists():
         raise FileNotFoundError(f"company.db not found at {COMPANY_DB}")
 
+    # Checkpoint WAL DBs first so the main file captures all committed writes.
+    # Doing this BEFORE building the candidate list so subsequent stat+read
+    # see post-checkpoint sizes/content.
+    for db_name in ("company.db", "auditor.db", "monitor.db", "support.db"):
+        db_path = DATA_DIR / db_name
+        if db_path.exists():
+            _checkpoint_sqlite(db_path)
+
     candidates = [
         # (label, abs_src, arcname, type, perms, required, merge)
         ("data/company.db",  DATA_DIR / "company.db",  "data/company.db",  "file",      "0644", True,  "replace"),
@@ -226,6 +258,15 @@ def _company_stream_contents() -> tuple[list[dict], list[tuple[Path, str]]]:
         ("data/monitor.db",  DATA_DIR / "monitor.db",  "data/monitor.db",  "file",      "0644", False, "replace"),
         ("data/support.db",  DATA_DIR / "support.db",  "data/support.db",  "file",      "0644", False, "replace"),
         ("data/archives",    DATA_DIR / "archives",    "data/archives",    "directory", "0755", False, "merge"),
+        # Operator state files at synthos-company root — runtime-mutable, not in git
+        ("monitor_registry", SYNTHOS_HOME / ".monitor_registry.json", ".monitor_registry.json",
+                                                                       "file",      "0600", False, "replace"),
+        ("admin_overrides",  DATA_DIR / ".admin_overrides.json", "data/.admin_overrides.json",
+                                                                       "file",      "0600", False, "replace"),
+        ("patches_state",    DATA_DIR / ".patches_state.json", "data/.patches_state.json",
+                                                                       "file",      "0600", False, "replace"),
+        ("peer_nodes",       SYNTHOS_HOME / "peer_nodes.json", "peer_nodes.json",
+                                                                       "file",      "0644", False, "replace"),
         ("company.env",      SYNTHOS_HOME / "company.env", "company.env",  "file",      "0600", True,  "replace"),
         ("user",             USER_DIR,                 "user",             "directory", "0755", False, "merge"),
         ("config",           SYNTHOS_HOME / "config",  "config",           "directory", "0755", False, "merge"),

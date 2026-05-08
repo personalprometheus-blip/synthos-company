@@ -1475,6 +1475,42 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 .mute-btn:hover{opacity:1}
 .mute-btn.muted{opacity:1}
 /* GRAPH CARDS */
+/* SIGCOV-CSS — signal coverage hero card + slide-out drawer */
+.sigcov-card{ cursor:pointer; transition:all 0.18s; }
+.sigcov-card:hover{ border-color:rgba(0,245,212,0.35); }
+.sigcov-bar-wrap{ position:relative; height:28px; background:rgba(255,255,255,0.04); border-radius:6px; overflow:hidden; margin:6px 0 4px; border:1px solid rgba(255,255,255,0.07); }
+.sigcov-bar-fill{ position:absolute; left:0; top:0; bottom:0; width:0%; transition:width 0.7s ease-out, background 0.3s; box-shadow:inset 0 0 8px rgba(255,255,255,0.10); }
+.sigcov-bar-fill.green{ background:linear-gradient(90deg,#4ade80 0%,#00f5d4 100%); }
+.sigcov-bar-fill.amber{ background:linear-gradient(90deg,#f5a623 0%,#ffb347 100%); }
+.sigcov-bar-fill.red{ background:linear-gradient(90deg,#ff4b6e 0%,#ff0040 100%); }
+.sigcov-bar-pct{ position:absolute; right:10px; top:50%; transform:translateY(-50%); font-family:'JetBrains Mono',monospace; font-weight:700; font-size:13px; color:#fff; text-shadow:0 1px 3px rgba(0,0,0,0.5); }
+.sigcov-meta{ display:flex; justify-content:space-between; font-size:9px; color:var(--muted); margin-top:4px; font-family:'JetBrains Mono',monospace; }
+
+#sigcov-drawer{ position:fixed; top:0; right:0; bottom:0; width:480px; max-width:100vw; background:rgba(13,17,32,0.97); border-left:1px solid rgba(0,245,212,0.25); backdrop-filter:blur(16px); z-index:9999; transform:translateX(100%); transition:transform 0.32s ease-out; box-shadow:-12px 0 40px rgba(0,0,0,0.5); display:flex; flex-direction:column; }
+#sigcov-drawer.open{ transform:translateX(0); }
+#sigcov-drawer-header{ padding:18px 20px; border-bottom:1px solid rgba(255,255,255,0.07); display:flex; align-items:center; gap:10px; flex-shrink:0; }
+#sigcov-drawer-title{ font-size:15px; font-weight:700; color:#fff; flex:1; letter-spacing:0.04em; }
+#sigcov-drawer-close{ background:transparent; border:1px solid rgba(255,255,255,0.13); color:rgba(255,255,255,0.55); width:28px; height:28px; border-radius:6px; cursor:pointer; padding:0; font-size:16px; line-height:1; }
+#sigcov-drawer-close:hover{ color:#ff4b6e; border-color:rgba(255,75,110,0.4); }
+#sigcov-drawer-body{ flex:1; overflow-y:auto; padding:14px 20px; }
+.sigcov-source{ padding:14px 0; border-bottom:1px solid rgba(255,255,255,0.05); }
+.sigcov-source:last-child{ border-bottom:none; }
+.sigcov-source-head{ display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+.sigcov-source-name{ font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:700; color:#fff; }
+.sigcov-source-ext{ font-size:9px; color:var(--muted); padding:1px 6px; border-radius:99px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.07); }
+.sigcov-source-pct{ margin-left:auto; font-family:'JetBrains Mono',monospace; font-weight:700; font-size:12px; }
+.sigcov-source-pct.green{ color:#4ade80; }
+.sigcov-source-pct.amber{ color:#ffb347; }
+.sigcov-source-pct.red{ color:#ff4b6e; }
+.sigcov-source-purpose{ font-size:10px; color:rgba(255,255,255,0.45); margin-bottom:6px; line-height:1.4; }
+.sigcov-source-bar{ position:relative; height:6px; background:rgba(255,255,255,0.05); border-radius:3px; overflow:hidden; margin-bottom:6px; }
+.sigcov-source-bar-fill{ position:absolute; left:0; top:0; bottom:0; transition:width 0.6s; }
+.sigcov-source-bar-fill.green{ background:#4ade80; }
+.sigcov-source-bar-fill.amber{ background:#ffb347; }
+.sigcov-source-bar-fill.red{ background:#ff4b6e; }
+.sigcov-source-counts{ font-size:9px; color:var(--muted); font-family:'JetBrains Mono',monospace; }
+.sigcov-source-missing{ margin-top:6px; padding:6px 8px; background:rgba(255,75,110,0.05); border:1px solid rgba(255,75,110,0.15); border-radius:4px; font-family:'JetBrains Mono',monospace; font-size:9px; color:rgba(255,255,255,0.7); max-height:80px; overflow-y:auto; word-break:break-all; line-height:1.5; }
+.sigcov-source-missing strong{ color:#ff4b6e; font-weight:600; }
 .graph-card{border-radius:14px;border:1px solid var(--border);background:var(--surface);
             padding:16px 16px 10px;margin-bottom:14px}
 .graph-card-title{font-size:10px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;
@@ -1902,6 +1938,17 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
       <div class="graph-card">
         <div class="graph-card-title">Memory Usage %</div>
         <div class="graph-canvas-wrap"><canvas id="ram-chart"></canvas></div>
+      </div>
+      <div class="graph-card sigcov-card" id="sigcov-card" onclick="sigcovOpenDrawer()" title="Click for full breakdown">
+        <div class="graph-card-title">Signal Coverage</div>
+        <div class="sigcov-bar-wrap">
+          <div class="sigcov-bar-fill" id="sigcov-bar-fill"></div>
+          <div class="sigcov-bar-pct" id="sigcov-bar-pct">—</div>
+        </div>
+        <div class="sigcov-meta">
+          <span id="sigcov-meta-sources">no scan yet</span>
+          <span id="sigcov-meta-scan">—</span>
+        </div>
       </div>
     </div>
 
@@ -3819,6 +3866,133 @@ setInterval(fetchMktActivity, 60000);
 setInterval(fetchBehaviorBaseline, 60000);
 function toggleMenu(){const m=document.getElementById('hmenu');m.classList.toggle('open')}
 document.addEventListener('click',function(e){if(!document.getElementById('hbtn').contains(e.target)&&!document.getElementById('hmenu').contains(e.target)){document.getElementById('hmenu').classList.remove('open')}});
+</script>
+
+<div id="sigcov-drawer">
+  <div id="sigcov-drawer-header">
+    <div id="sigcov-drawer-title">Signal Coverage</div>
+    <span id="sigcov-drawer-meta" style="font-size:10px;color:var(--muted);font-family:'JetBrains Mono',monospace">—</span>
+    <button id="sigcov-drawer-close" onclick="sigcovCloseDrawer()" title="Close">&times;</button>
+  </div>
+  <div id="sigcov-drawer-body">
+    <div style="padding:20px;color:var(--muted);font-size:11px">Loading scan&hellip;</div>
+  </div>
+</div>
+
+<script>
+/* SIGCOV-JS — hero card + drawer */
+let _SIGCOV_LAST = null;
+
+function sigcovBarClass(pct) {
+  if (pct == null) return '';
+  if (pct >= 95) return 'green';
+  if (pct >= 80) return 'amber';
+  return 'red';
+}
+function sigcovEscape(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]);
+}
+function sigcovFmtAge(iso) {
+  if (!iso) return '—';
+  try {
+    const t = new Date(iso).getTime();
+    const ageSec = (Date.now() - t) / 1000;
+    if (ageSec < 60) return Math.floor(ageSec) + 's ago';
+    if (ageSec < 3600) return Math.floor(ageSec/60) + 'm ago';
+    if (ageSec < 86400) return Math.floor(ageSec/3600) + 'h ago';
+    return Math.floor(ageSec/86400) + 'd ago';
+  } catch (e) { return '—'; }
+}
+
+async function sigcovLoad() {
+  try {
+    const r = await fetch('/api/signal-coverage');
+    if (!r.ok) return;
+    const data = await r.json();
+    const nodes = data.nodes || {};
+    // Pick first node (only one for now; future: aggregate)
+    const ids = Object.keys(nodes);
+    if (ids.length === 0) {
+      const fill = document.getElementById('sigcov-bar-fill');
+      const pct = document.getElementById('sigcov-bar-pct');
+      const meta = document.getElementById('sigcov-meta-sources');
+      if (fill) fill.style.width = '0%';
+      if (pct) pct.textContent = '—';
+      if (meta) meta.textContent = 'no scans yet';
+      return;
+    }
+    const scan = nodes[ids[0]];
+    _SIGCOV_LAST = scan;
+    const overall = scan.overall_pct;
+    const fill = document.getElementById('sigcov-bar-fill');
+    const pctEl = document.getElementById('sigcov-bar-pct');
+    const metaSources = document.getElementById('sigcov-meta-sources');
+    const metaScan = document.getElementById('sigcov-meta-scan');
+    if (fill) {
+      fill.style.width = (overall != null ? overall : 0) + '%';
+      fill.className = 'sigcov-bar-fill ' + sigcovBarClass(overall);
+    }
+    if (pctEl) pctEl.textContent = overall != null ? overall.toFixed(1) + '%' : '—';
+    const checks = scan.checks || [];
+    const missingTotal = checks.reduce((a, c) => a + (c.missing_count || 0), 0);
+    if (metaSources) metaSources.textContent = checks.length + ' sources · ' + missingTotal + ' missing';
+    if (metaScan) metaScan.textContent = sigcovFmtAge(scan.scan_at);
+    sigcovRenderDrawer(scan);
+  } catch (e) { /* silent */ }
+}
+
+function sigcovRenderDrawer(scan) {
+  const body = document.getElementById('sigcov-drawer-body');
+  const meta = document.getElementById('sigcov-drawer-meta');
+  if (!body) return;
+  if (meta) meta.textContent = scan.node_id + ' · ' + scan.active_tickers + ' active · ' + sigcovFmtAge(scan.scan_at);
+  const checks = (scan.checks || []).slice().sort((a, b) => (a.coverage_pct || 0) - (b.coverage_pct || 0));
+  if (checks.length === 0) {
+    body.innerHTML = '<div style="padding:20px;color:var(--muted)">No checks reported.</div>';
+    return;
+  }
+  let html = '';
+  for (const c of checks) {
+    const pct = c.coverage_pct;
+    const cls = sigcovBarClass(pct);
+    const sample = (c.missing_sample || []);
+    html += '<div class="sigcov-source">';
+    html +=   '<div class="sigcov-source-head">';
+    html +=     '<span class="sigcov-source-name">' + sigcovEscape(c.name) + '</span>';
+    html +=     '<span class="sigcov-source-ext">' + sigcovEscape(c.external) + '</span>';
+    html +=     '<span class="sigcov-source-pct ' + cls + '">' + (pct != null ? pct.toFixed(1) + '%' : '—') + '</span>';
+    html +=   '</div>';
+    if (c.purpose) html += '<div class="sigcov-source-purpose">' + sigcovEscape(c.purpose) + '</div>';
+    html +=   '<div class="sigcov-source-bar">';
+    html +=     '<div class="sigcov-source-bar-fill ' + cls + '" style="width:' + (pct != null ? pct : 0) + '%"></div>';
+    html +=   '</div>';
+    html +=   '<div class="sigcov-source-counts">' + (c.field || '') + ' · ' + c.present + '/' + c.total + ' present · ' + c.missing_count + ' missing</div>';
+    if (sample.length > 0) {
+      html += '<div class="sigcov-source-missing"><strong>missing:</strong> ' + sample.map(sigcovEscape).join(', ');
+      if (c.missing_count > sample.length) html += ', <span style="color:var(--muted)">+' + (c.missing_count - sample.length) + ' more</span>';
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+  body.innerHTML = html;
+}
+
+function sigcovOpenDrawer() {
+  if (_SIGCOV_LAST) sigcovRenderDrawer(_SIGCOV_LAST);
+  document.getElementById('sigcov-drawer').classList.add('open');
+}
+function sigcovCloseDrawer() {
+  document.getElementById('sigcov-drawer').classList.remove('open');
+}
+
+document.addEventListener('keydown', function(ev) {
+  if (ev.key === 'Escape') sigcovCloseDrawer();
+});
+
+// Initial + 60s refresh
+sigcovLoad();
+setInterval(sigcovLoad, 60000);
 </script>
 </body>
 </html>"""

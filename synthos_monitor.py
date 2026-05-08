@@ -1502,6 +1502,10 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 .sigcov-source-pct.green{ color:#4ade80; }
 .sigcov-source-pct.amber{ color:#ffb347; }
 .sigcov-source-pct.red{ color:#ff4b6e; }
+.sigcov-updating-badge{ font-family:'JetBrains Mono',monospace; font-size:9px; font-weight:700; padding:2px 7px; border-radius:99px; background:rgba(0,245,212,0.12); color:#00f5d4; border:1px solid rgba(0,245,212,0.35); animation:sigcov-pulse 1.6s ease-in-out infinite; margin-left:6px; }
+@keyframes sigcov-pulse { 0%,100% { opacity:0.5; } 50% { opacity:1; box-shadow:0 0 6px rgba(0,245,212,0.4); } }
+.sigcov-owner-badge{ font-family:'JetBrains Mono',monospace; font-size:9px; padding:1px 6px; border-radius:99px; background:rgba(255,255,255,0.04); color:rgba(255,255,255,0.5); border:1px solid rgba(255,255,255,0.08); margin-left:6px; }
+.sigcov-owner-badge.sigcov-no-owner{ color:rgba(255,179,71,0.65); border-color:rgba(255,179,71,0.25); background:rgba(255,179,71,0.04); }
 .sigcov-source-purpose{ font-size:10px; color:rgba(255,255,255,0.45); margin-bottom:6px; line-height:1.4; }
 .sigcov-source-bar{ position:relative; height:6px; background:rgba(255,255,255,0.05); border-radius:3px; overflow:hidden; margin-bottom:6px; }
 .sigcov-source-bar-fill{ position:absolute; left:0; top:0; bottom:0; transition:width 0.6s; }
@@ -3959,13 +3963,13 @@ function sigcovRenderDrawer(scan) {
   }
   let html = '';
   if (hiddenHealthy > 0) {
-    html += '<div style="padding:8px 12px; margin-bottom:10px; background:rgba(74,222,128,0.06); border:1px solid rgba(74,222,128,0.18); border-radius:6px; font-family:\'JetBrains Mono\',monospace; font-size:10px; color:rgba(74,222,128,0.85); display:flex; align-items:center; gap:8px;">';
+    html += '<div style="padding:8px 12px; margin-bottom:10px; background:rgba(74,222,128,0.06); border:1px solid rgba(74,222,128,0.18); border-radius:6px; font-family:&apos;JetBrains Mono&apos;,monospace; font-size:10px; color:rgba(74,222,128,0.85); display:flex; align-items:center; gap:8px;">';
     html += '<span style="font-size:13px">✓</span>';
     html += '<span>' + hiddenHealthy + ' source' + (hiddenHealthy === 1 ? '' : 's') + ' at 100% (hidden) &middot; ' + checks.length + ' with gaps below</span>';
     html += '</div>';
   }
   if (checks.length === 0) {
-    html += '<div style="padding:30px 20px; text-align:center; color:rgba(74,222,128,0.7); font-family:\'JetBrains Mono\',monospace; font-size:11px"><span style="font-size:24px; display:block; margin-bottom:8px">✓</span>All sources at 100% coverage.</div>';
+    html += '<div style="padding:30px 20px; text-align:center; color:rgba(74,222,128,0.7); font-family:&apos;JetBrains Mono&apos;,monospace; font-size:11px"><span style="font-size:24px; display:block; margin-bottom:8px">✓</span>All sources at 100% coverage.</div>';
     body.innerHTML = html;
     return;
   }
@@ -3978,6 +3982,13 @@ function sigcovRenderDrawer(scan) {
     html +=     '<span class="sigcov-source-name">' + sigcovEscape(c.name) + '</span>';
     html +=     '<span class="sigcov-source-ext">' + sigcovEscape(c.external) + '</span>';
     html +=     '<span class="sigcov-source-pct ' + cls + '">' + (pct != null ? pct.toFixed(1) + '%' : '—') + '</span>';
+    if (c.is_updating) {
+      html += '<span class="sigcov-updating-badge" title="Owner agent is publishing fresh MQTT heartbeats">● updating</span>';
+    } else if (c.owner_agent) {
+      html += '<span class="sigcov-owner-badge" title="Owner: ' + sigcovEscape(c.owner_agent) + ' (no recent heartbeat)">' + sigcovEscape(c.owner_agent) + '</span>';
+    } else {
+      html += '<span class="sigcov-owner-badge sigcov-no-owner" title="No owner agent declared — likely an aspirational field with no writer">no owner</span>';
+    }
     html +=   '</div>';
     if (c.purpose) html += '<div class="sigcov-source-purpose">' + sigcovEscape(c.purpose) + '</div>';
     html +=   '<div class="sigcov-source-bar">';
@@ -9461,6 +9472,39 @@ def api_signal_coverage_report():
     return jsonify({"ok": True, "node_id": node_id, "scan_at": scan_iso}), 200
 
 
+def _signal_coverage_enrich(scan):
+    """Add is_updating flag to each check by joining MQTT freshness.
+    A check\'s owner_agent is considered "actively updating" when its
+    last MQTT publish was within 30 seconds.
+    """
+    if not scan or not scan.get("checks"):
+        return scan
+    # Build name → status map across all groups (agent name unique per node)
+    fresh_agents = set()   # names of agents heartbeating fresh (<30s)
+    try:
+        conn = sqlite3.connect(_AUDITOR_DB_PATH, timeout=5)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT topic, last_seen_ts FROM mqtt_observations "
+            "WHERE topic LIKE 'process/heartbeat/%'"
+        ).fetchall()
+        conn.close()
+        now = time.time()
+        for r in rows:
+            parts = r["topic"].split("/")
+            if len(parts) >= 4:
+                name = "/".join(parts[3:])
+                age = now - (r["last_seen_ts"] or 0)
+                if age < 30:
+                    fresh_agents.add(name)
+    except Exception:
+        pass
+    for c in scan["checks"]:
+        owner = c.get("owner_agent")
+        c["is_updating"] = bool(owner and owner in fresh_agents)
+    return scan
+
+
 @app.route("/api/signal-coverage", methods=["GET"])
 def api_signal_coverage_current():
     """Return the latest coverage scan(s) for the dashboard card.
@@ -9483,7 +9527,7 @@ def api_signal_coverage_current():
                 (node,),
             ).fetchone()
             payload = json.loads(row["payload"]) if row else None
-            return jsonify({"node": node, "scan": payload}), 200
+            return jsonify({"node": node, "scan": _signal_coverage_enrich(payload)}), 200
         # Default: latest per node
         rows = conn.execute(
             "SELECT node_id, MAX(scan_at) AS latest FROM signal_coverage GROUP BY node_id"
@@ -9495,7 +9539,7 @@ def api_signal_coverage_current():
                 (r["node_id"], r["latest"]),
             ).fetchone()
             if row:
-                out[r["node_id"]] = json.loads(row["payload"])
+                out[r["node_id"]] = _signal_coverage_enrich(json.loads(row["payload"]))
         return jsonify({"nodes": out, "scan_count": len(out)}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500

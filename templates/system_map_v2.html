@@ -246,6 +246,66 @@
   .agent-box.undeclared .ab-name::after{ content:' (undeclared)'; color:#ffb347; font-weight:600;
                                           font-size:9px; margin-left:4px; }
 
+  /* V2-PHASE-9-DETAIL — click-to-detail panel */
+  .node-card-v2{ cursor:pointer; }
+  .node-card-v2:hover{ border-color:rgba(0,245,212,0.25); }
+  .node-card-v2.selected{ border-color:rgba(0,245,212,0.55); box-shadow:0 0 0 1px rgba(0,245,212,0.25); }
+  .agent-box{ cursor:pointer; border-radius:4px; padding-left:4px; margin-left:-4px; transition:background 0.12s; }
+  .agent-box:hover{ background:rgba(255,255,255,0.04); }
+  .db-box{ cursor:pointer; border-radius:4px; padding-left:4px; margin-left:-4px; transition:background 0.12s; }
+  .db-box:hover{ background:rgba(255,255,255,0.04); }
+  .ext-pill{ cursor:pointer !important; }
+
+  /* Detail panel content (rendered into the existing #detail aside) */
+  #detail.v9-active > *:not(.collapse-btn){ display:block !important; }
+  .v9-detail{ font-family:'Inter',sans-serif; color:rgba(255,255,255,0.88); font-size:12px; padding:14px 0 0 0; }
+  .v9-detail .v9-close{ float:right; background:transparent; border:1px solid rgba(255,255,255,0.13);
+                          color:rgba(255,255,255,0.55); width:22px; height:22px; border-radius:6px;
+                          font-size:11px; font-family:inherit; cursor:pointer; padding:0;
+                          display:flex; align-items:center; justify-content:center; }
+  .v9-detail .v9-close:hover{ color:#ff4b6e; border-color:rgba(255,75,110,0.4); }
+  .v9-detail .v9-kind{ font-family:'JetBrains Mono',monospace; font-size:9px; font-weight:700;
+                        text-transform:uppercase; letter-spacing:0.1em; color:rgba(255,255,255,0.4);
+                        margin-bottom:6px; }
+  .v9-detail .v9-title{ font-size:18px; font-weight:700; margin-bottom:2px;
+                         font-family:'JetBrains Mono',monospace; letter-spacing:0.02em; }
+  .v9-detail .v9-subtitle{ font-size:11px; color:rgba(255,255,255,0.45); margin-bottom:14px; }
+  .v9-detail .v9-status-row{ display:flex; align-items:center; gap:8px; margin-bottom:14px;
+                              padding:8px 10px; border-radius:8px; background:rgba(255,255,255,0.03);
+                              border:1px solid rgba(255,255,255,0.07); }
+  .v9-detail .v9-dot{ width:9px; height:9px; border-radius:50%; flex-shrink:0; }
+  .v9-detail .v9-dot.ok{ background:#4ade80; box-shadow:0 0 8px rgba(74,222,128,0.5); }
+  .v9-detail .v9-dot.warn{ background:#ffb347; }
+  .v9-detail .v9-dot.crit{ background:#ff4b6e; }
+  .v9-detail .v9-dot.silent{ background:rgba(255,255,255,0.15); border:1px dashed rgba(255,255,255,0.3); }
+  .v9-detail .v9-status-label{ font-family:'JetBrains Mono',monospace; font-size:10px;
+                                color:rgba(255,255,255,0.65); text-transform:uppercase; letter-spacing:0.06em; }
+  .v9-detail .v9-section{ margin-bottom:14px; }
+  .v9-detail .v9-section-title{ font-family:'JetBrains Mono',monospace; font-size:9px;
+                                 font-weight:700; text-transform:uppercase; letter-spacing:0.08em;
+                                 color:rgba(255,255,255,0.4); margin-bottom:6px; }
+  .v9-detail .v9-kv{ display:grid; grid-template-columns:auto 1fr; gap:4px 12px; font-size:11px;
+                      line-height:1.6; }
+  .v9-detail .v9-kv .k{ color:rgba(255,255,255,0.45); font-family:'JetBrains Mono',monospace; font-size:10px; }
+  .v9-detail .v9-kv .v{ color:rgba(255,255,255,0.85); word-break:break-all; }
+  .v9-detail .v9-kv .v.mono{ font-family:'JetBrains Mono',monospace; font-size:11px; }
+  .v9-detail pre.v9-raw{ font-family:'JetBrains Mono',monospace; font-size:10px;
+                         background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.07);
+                         border-radius:6px; padding:10px; overflow:auto; max-height:240px;
+                         color:rgba(255,255,255,0.7); white-space:pre-wrap; word-break:break-all; }
+  .v9-detail .v9-raw-toggle{ background:transparent; border:1px solid rgba(255,255,255,0.13);
+                              color:rgba(255,255,255,0.55); padding:3px 8px; border-radius:4px;
+                              font-family:'JetBrains Mono',monospace; font-size:9px; cursor:pointer;
+                              margin-top:6px; }
+  .v9-detail .v9-raw-toggle:hover{ color:#00f5d4; border-color:rgba(0,245,212,0.3); }
+  .v9-detail .v9-empty{ color:rgba(255,255,255,0.4); font-style:italic; font-size:11px;
+                         padding:6px 0; }
+  .v9-detail .v9-back-link{ font-family:'JetBrains Mono',monospace; font-size:10px;
+                             color:rgba(0,245,212,0.7); cursor:pointer; margin-top:10px;
+                             display:inline-block; }
+  .v9-detail .v9-back-link:hover{ color:#00f5d4; }
+
+
 
   #nodes-v2-grid .nv-empty{ grid-column:1/-1; padding:64px; text-align:center;
                              color:rgba(255,255,255,0.4); font-family:'JetBrains Mono',monospace;
@@ -3829,6 +3889,160 @@ function renderProvenance() {
     );
   }
 
+  // V2-PHASE-9-DETAIL-JS — click-to-detail render router
+  let _DETAIL_SELECTION = null;
+
+  function fmtAgeAbs(secs) {
+    if (secs == null || !isFinite(secs)) return '—';
+    if (secs < 60) return Math.floor(secs) + 's ago';
+    if (secs < 3600) return Math.floor(secs/60) + 'm ago';
+    if (secs < 86400) return Math.floor(secs/3600) + 'h ago';
+    return Math.floor(secs/86400) + 'd ago';
+  }
+  function v9KvRow(k, v, mono) {
+    if (v == null || v === '') v = '—';
+    return '<div class="k">' + k + '</div><div class="v' + (mono ? ' mono' : '') + '">' + escapeHtml(String(v)) + '</div>';
+  }
+  function renderRawJson(obj) {
+    return '<pre class="v9-raw" style="display:none">' + escapeHtml(JSON.stringify(obj, null, 2)) + '</pre>' +
+           '<button class="v9-raw-toggle" onclick="this.previousElementSibling.style.display=this.previousElementSibling.style.display===\'none\'?\'block\':\'none\'">show / hide raw JSON</button>';
+  }
+  function renderNodeDetail(pi_id, ctx) {
+    const live = (ctx.metrics || {})[pi_id];
+    const manifest = (ctx.manifests || {})[pi_id];
+    const fetchSrc = (ctx.fetchLog || {})[pi_id] || 'unknown';
+    const ageSec = (live && live.last_seen) ? (Date.now() - new Date(live.last_seen).getTime())/1000 : null;
+    const status = ageSec == null ? 'silent' : (ageSec < 60 ? 'ok' : (ageSec < 180 ? 'warn' : 'crit'));
+    const label = (manifest && manifest.label) || (live && live.label) || pi_id;
+    let h = '<div class="v9-detail"><button class="v9-close" title="Close">×</button>';
+    h += '<div class="v9-kind">node</div><div class="v9-title">' + escapeHtml(pi_id) + '</div>';
+    h += '<div class="v9-subtitle">' + escapeHtml(label) + '</div>';
+    h += '<div class="v9-status-row"><span class="v9-dot ' + status + '"></span>' +
+         '<span class="v9-status-label">heartbeat ' + fmtAgeAbs(ageSec) + '</span></div>';
+    h += '<div class="v9-section"><div class="v9-section-title">Identity</div><div class="v9-kv">';
+    h += v9KvRow('node_id', pi_id, true);
+    h += v9KvRow('manifest source', fetchSrc, true);
+    h += v9KvRow('manifest version', manifest ? manifest.manifest_version : null);
+    h += v9KvRow('role', manifest ? manifest.role : null);
+    h += v9KvRow('hardware', manifest ? manifest.hardware : null);
+    h += v9KvRow('deployed at', manifest ? manifest.deployed_at : null);
+    h += v9KvRow('mqtt group', manifest ? manifest.mqtt_group : null, true);
+    h += '</div></div>';
+    if (live) {
+      h += '<div class="v9-section"><div class="v9-section-title">Hardware now</div><div class="v9-kv">';
+      h += v9KvRow('CPU', live.cpu_percent != null ? live.cpu_percent.toFixed(1) + '%' : null);
+      h += v9KvRow('RAM', live.ram_percent != null ? live.ram_percent.toFixed(1) + '%' : null);
+      h += v9KvRow('disk', live.disk_percent != null ? live.disk_percent.toFixed(1) + '%' : null);
+      h += v9KvRow('temp', live.cpu_temp != null ? live.cpu_temp.toFixed(1) + '°C' : null);
+      h += v9KvRow('last seen', live.last_seen);
+      h += '</div></div>';
+    }
+    if (manifest) {
+      h += '<div class="v9-section"><div class="v9-section-title">Declared in manifest</div><div class="v9-kv">';
+      h += v9KvRow('agents', (manifest.agents||[]).length);
+      h += v9KvRow('databases', (manifest.databases||[]).length);
+      h += v9KvRow('externals', (manifest.externals||[]).length);
+      h += '</div></div>';
+      h += '<div class="v9-section"><div class="v9-section-title">Raw manifest</div>' + renderRawJson(manifest) + '</div>';
+    } else {
+      h += '<div class="v9-section"><div class="v9-section-title">Manifest</div><div class="v9-empty">No manifest published.</div></div>';
+    }
+    h += '</div>';
+    return h;
+  }
+  function renderAgentDetail(pi_id, agentName, ctx) {
+    const manifest = (ctx.manifests || {})[pi_id];
+    const groupName = manifest && manifest.mqtt_group;
+    const declared = (manifest && manifest.agents || []).find(a => a.name === agentName);
+    const live = groupName ? ((ctx.agentsByGroup || {})[groupName] || []).find(a => a.name === agentName) : null;
+    const status = live ? live.status : 'silent';
+    const dotCls = status === 'healthy' ? 'ok' : (status === 'stale' ? 'warn' : (status === 'down' ? 'crit' : 'silent'));
+    let h = '<div class="v9-detail"><button class="v9-close" title="Close">×</button>';
+    h += '<div class="v9-kind">agent · ' + (declared ? 'declared' : 'undeclared') + '</div>';
+    h += '<div class="v9-title">' + escapeHtml(agentName) + '</div>';
+    h += '<div class="v9-subtitle">on <code>' + escapeHtml(pi_id) + '</code></div>';
+    h += '<div class="v9-status-row"><span class="v9-dot ' + dotCls + '"></span><span class="v9-status-label">' +
+         (live ? 'mqtt heartbeat ' + fmtAgeAbs(live.age_seconds) : 'no MQTT publish observed (silent)') + '</span></div>';
+    h += '<div class="v9-section"><div class="v9-section-title">Manifest entry</div>';
+    if (declared) {
+      h += '<div class="v9-kv">';
+      h += v9KvRow('name', declared.name, true);
+      h += v9KvRow('purpose', declared.purpose);
+      h += v9KvRow('cadence', declared.cadence);
+      h += '</div>';
+    } else {
+      h += '<div class="v9-empty">Not declared. Add to <code>agents[]</code> or stop the publisher.</div>';
+    }
+    h += '</div>';
+    h += '<div class="v9-section"><div class="v9-section-title">MQTT</div><div class="v9-kv">';
+    h += v9KvRow('group', groupName || '(no mqtt_group)', true);
+    h += v9KvRow('topic', groupName ? ('process/heartbeat/' + groupName + '/' + agentName) : '—', true);
+    h += v9KvRow('last status', live ? live.status : '(never observed)');
+    h += v9KvRow('age', live ? fmtAgeAbs(live.age_seconds) : '—');
+    h += '</div></div>';
+    h += '<div class="v9-back-link" onclick="window.__v9_select({type:\'node\',pi_id:\'' + pi_id + '\'})">← back to node</div></div>';
+    return h;
+  }
+  function renderDbDetail(pi_id, dbName, ctx) {
+    const manifest = (ctx.manifests || {})[pi_id];
+    const db = (manifest && manifest.databases || []).find(d => d.name === dbName);
+    let h = '<div class="v9-detail"><button class="v9-close" title="Close">×</button>';
+    h += '<div class="v9-kind">database</div>';
+    h += '<div class="v9-title">' + escapeHtml(dbName) + '</div>';
+    h += '<div class="v9-subtitle">on <code>' + escapeHtml(pi_id) + '</code></div>';
+    h += '<div class="v9-section"><div class="v9-section-title">Manifest entry</div>';
+    if (db) { h += '<div class="v9-kv">' + v9KvRow('name', db.name, true) + v9KvRow('path', db.path, true) + v9KvRow('purpose', db.purpose) + '</div>'; }
+    else h += '<div class="v9-empty">Not in manifest.</div>';
+    h += '</div><div class="v9-back-link" onclick="window.__v9_select({type:\'node\',pi_id:\'' + pi_id + '\'})">← back to node</div></div>';
+    return h;
+  }
+  function renderExternalDetail(pi_id, extName, ctx) {
+    const manifest = (ctx.manifests || {})[pi_id];
+    const ext = (manifest && manifest.externals || []).find(e => e.name === extName);
+    let h = '<div class="v9-detail"><button class="v9-close" title="Close">×</button>';
+    h += '<div class="v9-kind">external · ' + (ext && ext.kind || 'misc') + '</div>';
+    h += '<div class="v9-title">' + escapeHtml(extName) + '</div>';
+    h += '<div class="v9-subtitle">on <code>' + escapeHtml(pi_id) + '</code></div>';
+    h += '<div class="v9-section"><div class="v9-section-title">Manifest entry</div>';
+    if (ext) { h += '<div class="v9-kv">' + v9KvRow('name', ext.name) + v9KvRow('kind', ext.kind, true) + v9KvRow('purpose', ext.purpose) + '</div>'; }
+    else h += '<div class="v9-empty">Not in manifest.</div>';
+    h += '</div><div class="v9-back-link" onclick="window.__v9_select({type:\'node\',pi_id:\'' + pi_id + '\'})">← back to node</div></div>';
+    return h;
+  }
+  function renderDetailPanel(selection, ctx) {
+    const detail = document.getElementById('detail');
+    if (!detail) return;
+    const stale = detail.querySelector('.v9-detail');
+    if (stale) stale.remove();
+    document.querySelectorAll('.node-card-v2.selected').forEach(c => c.classList.remove('selected'));
+    if (!selection) { detail.classList.remove('v9-active'); return; }
+    let html;
+    if (selection.type === 'node') html = renderNodeDetail(selection.pi_id, ctx);
+    else if (selection.type === 'agent') html = renderAgentDetail(selection.pi_id, selection.name, ctx);
+    else if (selection.type === 'db') html = renderDbDetail(selection.pi_id, selection.name, ctx);
+    else if (selection.type === 'external') html = renderExternalDetail(selection.pi_id, selection.name, ctx);
+    else return;
+    detail.insertAdjacentHTML('beforeend', html);
+    detail.classList.add('v9-active');
+    const app = document.getElementById('app');
+    if (app && app.classList.contains('collapsed-right')) {
+      app.classList.remove('collapsed-right');
+      const btn = document.getElementById('collapse-right');
+      if (btn) btn.textContent = '▸';
+    }
+    if (selection.pi_id) {
+      const card = document.querySelector('.node-card-v2[data-pi-id="' + selection.pi_id + '"]');
+      if (card) card.classList.add('selected');
+    }
+    const closeBtn = detail.querySelector('.v9-close');
+    if (closeBtn) closeBtn.addEventListener('click', () => v9Select(null));
+  }
+  function v9Select(selection) {
+    _DETAIL_SELECTION = selection;
+    if (window.__v9_lastCtx) renderDetailPanel(_DETAIL_SELECTION, window.__v9_lastCtx);
+  }
+  window.__v9_select = v9Select;
+
   // V2-PHASE-8-DRIFT-JS — drift computation + panel renderer
   let _UNDECLARED_BY_GROUP = {};   // group → Set<agentName>, refreshed each tick
 
@@ -4058,6 +4272,11 @@ function renderProvenance() {
       updateDriftChip(drift);
       renderDriftPanel(drift);
 
+      // V2-PHASE-9 — stash ctx for the detail panel, re-render if open
+      window.__v9_lastCtx = { metrics: data, manifests: manifests, agentsByGroup: agentsByGroup,
+                              fetchLog: (manifestsRaw && manifestsRaw._fetch_log) || {}, drift: drift };
+      if (_DETAIL_SELECTION) renderDetailPanel(_DETAIL_SELECTION, window.__v9_lastCtx);
+
       // Determine which pi_ids are live (heartbeat within 5 minutes)
       const livePiIds = [];
       for (const [pi_id, live] of Object.entries(data)) {
@@ -4102,8 +4321,34 @@ function renderProvenance() {
     const panel = document.getElementById('nv-drift-panel');
     if (chip && panel) {
       chip.addEventListener('click', () => {
-        if (chip.classList.contains('clean')) return;   // nothing to expand
+        if (chip.classList.contains('clean')) return;
         panel.classList.toggle('open');
+      });
+    }
+    // V2-PHASE-9 — delegated click handler on the node grid
+    const grid = document.getElementById('nodes-v2-grid');
+    if (grid) {
+      grid.addEventListener('click', (ev) => {
+        // Find an inner clickable first; fall back to node card.
+        const agent = ev.target.closest('.agent-box');
+        const dbBox = ev.target.closest('.db-box');
+        const extPill = ev.target.closest('.ext-pill');
+        const card = ev.target.closest('.node-card-v2');
+        if (!card) return;
+        const pi_id = card.dataset.piId;
+        if (agent) {
+          const name = (agent.querySelector('.ab-name') || {}).textContent;
+          if (name) { v9Select({ type: 'agent', pi_id, name: name.replace(/\s*\(undeclared\)\s*$/, '') }); ev.stopPropagation(); return; }
+        }
+        if (dbBox) {
+          const name = (dbBox.querySelector('.db-name') || {}).textContent;
+          if (name) { v9Select({ type: 'db', pi_id, name }); ev.stopPropagation(); return; }
+        }
+        if (extPill) {
+          const name = (extPill.querySelector('.ext-name') || {}).textContent;
+          if (name) { v9Select({ type: 'external', pi_id, name }); ev.stopPropagation(); return; }
+        }
+        v9Select({ type: 'node', pi_id });
       });
     }
     tick();

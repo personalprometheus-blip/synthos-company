@@ -463,6 +463,69 @@
   .flow-row .fr-purpose{ font-size:10px; color:rgba(255,255,255,0.45); margin-top:2px; line-height:1.4;
                           grid-column:2/4; word-break:break-word; }
 
+  /* V2-PHASE-12B-CSS — view toggle + flow map */
+  #nv-view-toggle{ display:inline-flex; gap:0; border-radius:8px; overflow:hidden;
+                    border:1px solid rgba(255,255,255,0.13); }
+  #nv-view-toggle button{ background:transparent; border:none; color:rgba(255,255,255,0.55);
+                           padding:5px 12px; font-family:'JetBrains Mono',monospace; font-size:10px;
+                           font-weight:600; letter-spacing:0.06em; cursor:pointer; transition:all 0.15s; }
+  #nv-view-toggle button:hover{ background:rgba(255,255,255,0.04); color:rgba(255,255,255,0.85); }
+  #nv-view-toggle button.active{ background:rgba(0,245,212,0.10); color:#00f5d4; }
+
+  #flow-map-wrap{ position:absolute; inset:0; padding:90px 28px 24px; overflow:auto;
+                   z-index:3; display:none; }
+  #flow-map-wrap.active{ display:block; }
+  #flow-map-wrap.active ~ #nodes-v2-grid{ display:none; }
+  #flow-map-svg{ width:100%; min-height:600px; display:block; background:rgba(13,17,32,0.4);
+                  border:1px solid rgba(255,255,255,0.07); border-radius:12px; }
+
+  .fm-node-group{ cursor:pointer; }
+  .fm-node-group:hover .fm-node-circle{ stroke-width:2; filter:drop-shadow(0 0 8px rgba(0,245,212,0.5)); }
+  .fm-node-circle{ fill:rgba(13,17,32,0.85); stroke:rgba(255,255,255,0.18); stroke-width:1.5; transition:all 0.18s; }
+  .fm-node-circle.role-company_ops{ stroke:rgba(0,245,212,0.55); }
+  .fm-node-circle.role-retail{ stroke:rgba(123,97,255,0.55); }
+  .fm-node-circle.role-sentinel{ stroke:rgba(255,179,71,0.55); }
+  .fm-node-circle.live-ok{ stroke-width:2; }
+  .fm-node-circle.live-warn{ stroke:#ffb347; stroke-dasharray:3,3; }
+  .fm-node-circle.live-crit{ stroke:#ff4b6e; stroke-dasharray:3,3; }
+  .fm-node-circle.live-off{ stroke:rgba(255,255,255,0.12); stroke-dasharray:2,4; }
+  .fm-node-label{ fill:rgba(255,255,255,0.9); font-family:'JetBrains Mono',monospace; font-size:11px;
+                   font-weight:700; text-anchor:middle; pointer-events:none; }
+  .fm-node-sublabel{ fill:rgba(255,255,255,0.4); font-family:'JetBrains Mono',monospace;
+                      font-size:9px; text-anchor:middle; pointer-events:none; letter-spacing:0.06em;
+                      text-transform:uppercase; }
+  .fm-node-status-dot{ pointer-events:none; }
+
+  .fm-ext-rect{ fill:rgba(13,17,32,0.6); stroke:rgba(255,255,255,0.13); stroke-width:1;
+                 stroke-dasharray:4,3; rx:6; }
+  .fm-ext-label{ fill:rgba(255,255,255,0.65); font-family:'JetBrains Mono',monospace;
+                  font-size:10px; text-anchor:middle; pointer-events:none; }
+  .fm-ext-kind-pill{ fill:rgba(255,255,255,0.05); stroke:rgba(255,255,255,0.1); }
+
+  .fm-edge{ fill:none; stroke-width:1.5; opacity:0.75; transition:opacity 0.15s, stroke-width 0.15s; cursor:help; }
+  .fm-edge:hover{ opacity:1; stroke-width:2.5; }
+  .fm-edge.kind-mqtt-pub, .fm-edge.kind-mqtt-sub{ stroke:#00f5d4; }
+  .fm-edge.kind-http-post, .fm-edge.kind-http-fetch{ stroke:#7b61ff; }
+  .fm-edge.kind-api-call{ stroke:#ffb347; }
+  .fm-edge.kind-ssh-exec{ stroke:#ff4b6e; stroke-dasharray:5,3; }
+  .fm-edge.kind-git-fetch, .fm-edge.kind-git-push{ stroke:#4ade80; stroke-dasharray:5,3; }
+  .fm-edge.kind-mail-out{ stroke:#ffb347; stroke-dasharray:3,3; }
+  .fm-edge-arrow{ fill:currentColor; }
+
+  #fm-tooltip{ position:absolute; padding:6px 10px; border-radius:6px; background:rgba(13,17,32,0.95);
+                border:1px solid rgba(255,255,255,0.13); color:rgba(255,255,255,0.9);
+                font-family:'JetBrains Mono',monospace; font-size:10px; pointer-events:none; z-index:99;
+                display:none; max-width:280px; line-height:1.4; box-shadow:0 4px 24px rgba(0,0,0,0.5); }
+  #fm-tooltip.open{ display:block; }
+
+  .fm-legend{ position:absolute; top:80px; right:36px; background:rgba(13,17,32,0.85);
+               border:1px solid rgba(255,255,255,0.13); border-radius:10px; padding:10px 14px;
+               font-family:'JetBrains Mono',monospace; font-size:9px; color:rgba(255,255,255,0.7);
+               z-index:4; backdrop-filter:blur(14px); }
+  .fm-legend-row{ display:flex; align-items:center; gap:6px; margin:3px 0; }
+  .fm-legend-row .swatch{ width:18px; height:2px; }
+
+
 
 
 
@@ -936,10 +999,27 @@
   </aside>
 
   <main id="canvas-wrap">
+  <div id="flow-map-wrap">
+    <svg id="flow-map-svg" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet"></svg>
+    <div id="fm-tooltip"></div>
+    <div class="fm-legend">
+      <div style="font-weight:700; color:rgba(255,255,255,0.85); margin-bottom:5px; letter-spacing:0.08em">EDGE KINDS</div>
+      <div class="fm-legend-row"><span class="swatch" style="background:#00f5d4"></span> mqtt</div>
+      <div class="fm-legend-row"><span class="swatch" style="background:#7b61ff"></span> http</div>
+      <div class="fm-legend-row"><span class="swatch" style="background:#ffb347"></span> api</div>
+      <div class="fm-legend-row"><span class="swatch" style="background:#ff4b6e; background-image:linear-gradient(90deg,#ff4b6e 50%, transparent 50%); background-size:6px 100%"></span> ssh</div>
+      <div class="fm-legend-row"><span class="swatch" style="background:#4ade80; background-image:linear-gradient(90deg,#4ade80 50%, transparent 50%); background-size:6px 100%"></span> git</div>
+    </div>
+  </div>
   <div id="nodes-v2-grid">
     <div class="nv-banner">
       <span class="nv-tag">LIVE</span>
       <span>Topology stripped to bare nodes — populated only when a heartbeat lands within 5 min.</span>
+      <span id="nv-view-toggle">
+        <button data-view="cards" class="active" title="Card grid">CARDS</button>
+        <button data-view="map" title="Flow map (data_flows visualization)">FLOW MAP</button>
+      </span>
+      <button id="nv-refresh-btn" title="Refresh manifests (flush peer cache)">↻</button>
       <span id="nv-drift-chip" class="nv-drift clean" title="Click to view drift detail">drift: —</span>
       <span class="nv-meta" id="nv-banner-meta">connecting...</span>
     </div>
@@ -3930,6 +4010,198 @@ function renderProvenance() {
     );
   }
 
+  // V2-PHASE-12B-JS — view toggle + flow map renderer
+  let _CURRENT_VIEW = 'cards';
+  const ROLE_ORDER = { sentinel: 0, retail: 1, company_ops: 2 };
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+
+  function setView(view) {
+    _CURRENT_VIEW = view;
+    const grid = document.getElementById('nodes-v2-grid');
+    const map = document.getElementById('flow-map-wrap');
+    document.querySelectorAll('#nv-view-toggle button').forEach(b => {
+      b.classList.toggle('active', b.dataset.view === view);
+    });
+    if (view === 'map') {
+      if (map) map.classList.add('active');
+      if (grid) grid.style.display = 'none';
+      if (window.__v9_lastCtx) renderFlowMap(window.__v9_lastCtx);
+    } else {
+      if (map) map.classList.remove('active');
+      if (grid) grid.style.display = '';
+    }
+  }
+
+  function svgEl(name, attrs, parent) {
+    const el = document.createElementNS(SVG_NS, name);
+    if (attrs) for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+    if (parent) parent.appendChild(el);
+    return el;
+  }
+
+  function nodeStatusFromLive(live) {
+    if (!live || !live.last_seen) return 'off';
+    const ageSec = (Date.now() - new Date(live.last_seen).getTime()) / 1000;
+    if (ageSec < 60) return 'ok';
+    if (ageSec < 180) return 'warn';
+    if (ageSec < 600) return 'crit';
+    return 'off';
+  }
+
+  function renderFlowMap(ctx) {
+    const svg = document.getElementById('flow-map-svg');
+    if (!svg) return;
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+    const manifests = ctx.manifests || {};
+    const metrics = ctx.metrics || {};
+
+    // Compute viewport
+    const wrap = document.getElementById('flow-map-wrap');
+    const W = Math.max(800, wrap.clientWidth - 56);
+    const NODE_R = 38;
+    const ROW_INTERNAL_Y = 180;
+    const ROW_EXT_Y = 460;
+    const H = 600;
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+
+    // Sort internal nodes by role
+    const nodeIds = Object.keys(manifests).sort((a, b) => {
+      const ra = manifests[a] && manifests[a].role || 'zzz';
+      const rb = manifests[b] && manifests[b].role || 'zzz';
+      const oa = ROLE_ORDER[ra] != null ? ROLE_ORDER[ra] : 99;
+      const ob = ROLE_ORDER[rb] != null ? ROLE_ORDER[rb] : 99;
+      if (oa !== ob) return oa - ob;
+      return a.localeCompare(b);
+    });
+
+    // Position internal nodes evenly across width
+    const positions = {};   // pi_id → {x, y}
+    if (nodeIds.length === 1) {
+      positions[nodeIds[0]] = { x: W / 2, y: ROW_INTERNAL_Y };
+    } else if (nodeIds.length > 1) {
+      const margin = 120;
+      const step = (W - 2 * margin) / (nodeIds.length - 1);
+      nodeIds.forEach((id, i) => {
+        positions[id] = { x: margin + i * step, y: ROW_INTERNAL_Y };
+      });
+    }
+
+    // Collect externals (deduped by name across all manifests)
+    const externalsMap = {};   // name → {kind, purpose, sources:Set<pi_id>}
+    for (const [pid, m] of Object.entries(manifests)) {
+      for (const e of (m && m.externals) || []) {
+        if (!externalsMap[e.name]) externalsMap[e.name] = { kind: e.kind, purposes: [], sources: new Set() };
+        externalsMap[e.name].purposes.push(e.purpose);
+        externalsMap[e.name].sources.add(pid);
+      }
+    }
+    const extNames = Object.keys(externalsMap).sort();
+    const extPositions = {};
+    if (extNames.length > 0) {
+      const margin = 100;
+      const step = extNames.length > 1 ? (W - 2 * margin) / (extNames.length - 1) : 0;
+      extNames.forEach((n, i) => {
+        const x = extNames.length === 1 ? W / 2 : margin + i * step;
+        extPositions[n] = { x, y: ROW_EXT_Y };
+      });
+    }
+
+    // ─ Draw edges first (so nodes overlay them) ─
+    const edgesGroup = svgEl('g', { class: 'fm-edges' }, svg);
+    const tooltip = document.getElementById('fm-tooltip');
+    function showTip(text, x, y) {
+      tooltip.textContent = text;
+      tooltip.style.left = x + 'px';
+      tooltip.style.top = y + 'px';
+      tooltip.classList.add('open');
+    }
+    function hideTip() { tooltip.classList.remove('open'); }
+
+    const wrapRect = wrap.getBoundingClientRect();
+
+    for (const [pid, m] of Object.entries(manifests)) {
+      const flows = (m && m.data_flows) || [];
+      const src = positions[pid];
+      if (!src) continue;
+      for (const f of flows) {
+        let dst = null;
+        if (f.to && f.to.indexOf('external:') === 0) {
+          dst = extPositions[f.to.replace(/^external:/, '')];
+        } else if (f.to && positions[f.to]) {
+          dst = positions[f.to];
+        }
+        if (!dst) continue;
+
+        // Cubic curve from src to dst with mid-point control
+        const dx = dst.x - src.x;
+        const dy = dst.y - src.y;
+        const c1x = src.x + dx * 0.3;
+        const c1y = src.y + dy * 0.6;
+        const c2x = src.x + dx * 0.7;
+        const c2y = src.y + dy * 0.4;
+        const d = `M ${src.x} ${src.y} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${dst.x} ${dst.y}`;
+
+        const kind = (f.kind || 'misc').toLowerCase();
+        const path = svgEl('path', {
+          d, class: 'fm-edge kind-' + kind,
+          'data-purpose': f.purpose || '',
+          'data-kind': kind,
+          'data-from': pid,
+          'data-to': f.to || '',
+        }, edgesGroup);
+        path.addEventListener('mouseenter', (ev) => {
+          const txt = pid + ' → ' + f.to + '  [' + kind + ']\n' + (f.purpose || '');
+          showTip(txt, ev.clientX - wrapRect.left + 12, ev.clientY - wrapRect.top + 12);
+        });
+        path.addEventListener('mousemove', (ev) => {
+          tooltip.style.left = (ev.clientX - wrapRect.left + 12) + 'px';
+          tooltip.style.top = (ev.clientY - wrapRect.top + 12) + 'px';
+        });
+        path.addEventListener('mouseleave', hideTip);
+      }
+    }
+
+    // ─ Draw external rectangles ─
+    const extGroup = svgEl('g', { class: 'fm-externals' }, svg);
+    for (const name of extNames) {
+      const p = extPositions[name];
+      const ex = externalsMap[name];
+      const w = Math.max(80, name.length * 8);
+      svgEl('rect', { x: p.x - w/2, y: p.y - 16, width: w, height: 32, rx: 6,
+                       class: 'fm-ext-rect', 'data-ext': name }, extGroup);
+      svgEl('text', { x: p.x, y: p.y + 4, class: 'fm-ext-label' }, extGroup).textContent = name;
+    }
+
+    // ─ Draw internal nodes ─
+    const nodesGroup = svgEl('g', { class: 'fm-nodes' }, svg);
+    for (const pid of nodeIds) {
+      const p = positions[pid];
+      const m = manifests[pid];
+      const live = metrics[pid];
+      const status = nodeStatusFromLive(live);
+      const role = (m && m.role) || 'unknown';
+
+      const g = svgEl('g', { class: 'fm-node-group', 'data-pi-id': pid }, nodesGroup);
+      svgEl('circle', {
+        cx: p.x, cy: p.y, r: NODE_R,
+        class: 'fm-node-circle role-' + role + ' live-' + status,
+      }, g);
+      // Status dot (top-right of circle)
+      const dotColor = status === 'ok' ? '#4ade80' : status === 'warn' ? '#ffb347' : status === 'crit' ? '#ff4b6e' : 'rgba(255,255,255,0.18)';
+      svgEl('circle', {
+        cx: p.x + NODE_R - 8, cy: p.y - NODE_R + 8, r: 5,
+        fill: dotColor, class: 'fm-node-status-dot',
+      }, g);
+      svgEl('text', { x: p.x, y: p.y + 4, class: 'fm-node-label' }, g).textContent = pid;
+      svgEl('text', { x: p.x, y: p.y + 18, class: 'fm-node-sublabel' }, g).textContent = role.replace(/_/g, ' ');
+
+      g.addEventListener('click', () => {
+        if (typeof v9Select === 'function') v9Select({ type: 'node', pi_id: pid });
+      });
+    }
+  }
+
   // V2-PHASE-12A-JS — connections / data-flow helpers
   function renderFlowRowHtml(direction, flow, allManifests) {
     // direction: 'out' or 'in'
@@ -4375,6 +4647,8 @@ function renderProvenance() {
       window.__v9_lastCtx = { metrics: data, manifests: manifests, agentsByGroup: agentsByGroup,
                               fetchLog: (manifestsRaw && manifestsRaw._fetch_log) || {}, drift: drift };
       if (_DETAIL_SELECTION) renderDetailPanel(_DETAIL_SELECTION, window.__v9_lastCtx);
+      // V2-PHASE-12B — re-render flow map if active
+      if (_CURRENT_VIEW === 'map') renderFlowMap(window.__v9_lastCtx);
 
       // Determine which pi_ids are live (heartbeat within 5 minutes)
       const livePiIds = [];
@@ -4450,6 +4724,11 @@ function renderProvenance() {
         v9Select({ type: 'node', pi_id });
       });
     }
+    // V2-PHASE-12B — view toggle
+    document.querySelectorAll('#nv-view-toggle button').forEach(btn => {
+      btn.addEventListener('click', () => setView(btn.dataset.view));
+    });
+
     // V2-PHASE-11-JS — refresh button + ESC keybinding
     const refreshBtn = document.getElementById('nv-refresh-btn');
     if (refreshBtn) {

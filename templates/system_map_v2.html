@@ -436,6 +436,34 @@
   .ext-pill .ext-name{ color:rgba(255,255,255,0.88); }
   .ext-pill[title]{ cursor:help; }
 
+  /* V2-PHASE-12A-CSS — connections section (textual flows) */
+  .node-card-v2 .nc-flows{ margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.07); }
+  .flow-row{ display:grid; grid-template-columns:auto auto 1fr; gap:8px; align-items:start; padding:5px 0;
+              font-size:11px; cursor:pointer; border-radius:4px; padding-left:4px; margin-left:-4px;
+              transition:background 0.12s; }
+  .flow-row:hover{ background:rgba(255,255,255,0.04); }
+  .flow-row .fr-dir{ font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:700;
+                      width:14px; text-align:center; flex-shrink:0; }
+  .flow-row .fr-dir.out{ color:#00f5d4; }
+  .flow-row .fr-dir.in{ color:#7b61ff; }
+  .flow-row .fr-kind{ font-family:'JetBrains Mono',monospace; font-size:9px; font-weight:600;
+                       padding:2px 6px; border-radius:4px; text-transform:lowercase; letter-spacing:0.04em;
+                       background:rgba(255,255,255,0.05); color:rgba(255,255,255,0.65);
+                       border:1px solid rgba(255,255,255,0.10); white-space:nowrap; }
+  .flow-row .fr-kind.mqtt-pub, .flow-row .fr-kind.mqtt-sub{ background:rgba(0,245,212,0.10); color:#00f5d4; border-color:rgba(0,245,212,0.25); }
+  .flow-row .fr-kind.http-post, .flow-row .fr-kind.http-fetch{ background:rgba(123,97,255,0.10); color:#7b61ff; border-color:rgba(123,97,255,0.25); }
+  .flow-row .fr-kind.api-call{ background:rgba(255,179,71,0.10); color:#ffb347; border-color:rgba(255,179,71,0.25); }
+  .flow-row .fr-kind.ssh-exec{ background:rgba(255,75,110,0.10); color:#ff4b6e; border-color:rgba(255,75,110,0.25); }
+  .flow-row .fr-kind.git-fetch, .flow-row .fr-kind.git-push{ background:rgba(74,222,128,0.10); color:#4ade80; border-color:rgba(74,222,128,0.25); }
+  .flow-row .fr-kind.mail-out{ background:rgba(255,179,71,0.08); color:#ffb347; border-color:rgba(255,179,71,0.20); }
+  .flow-row .fr-target{ color:rgba(255,255,255,0.85); font-family:'JetBrains Mono',monospace; font-size:10px; }
+  .flow-row .fr-target.external{ color:rgba(255,255,255,0.6); }
+  .flow-row .fr-target.unknown{ color:#ffb347; }
+  .flow-row .fr-target.unknown::after{ content:" (unknown target)"; font-size:9px; font-style:italic; }
+  .flow-row .fr-purpose{ font-size:10px; color:rgba(255,255,255,0.45); margin-top:2px; line-height:1.4;
+                          grid-column:2/4; word-break:break-word; }
+
+
 
 
   .node-card-v2 .nc-bottom{ margin-top:14px; padding-top:10px; border-top:1px dashed rgba(255,255,255,0.06);
@@ -3902,6 +3930,61 @@ function renderProvenance() {
     );
   }
 
+  // V2-PHASE-12A-JS — connections / data-flow helpers
+  function renderFlowRowHtml(direction, flow, allManifests) {
+    // direction: 'out' or 'in'
+    // For inbound flows we display the source node_id; for outbound, the to.
+    const target = flow.to || '';
+    const isExternal = target.indexOf('external:') === 0;
+    const targetName = isExternal ? target.replace(/^external:/, '') : target;
+    let cls = isExternal ? 'external' : '';
+    // For internal targets, mark unknown if no manifest claims this id
+    if (!isExternal && allManifests && !allManifests[target]) cls += ' unknown';
+    const arrow = direction === 'out' ? '→' : '←';
+    const dirCls = direction;
+    const kindStr = (flow.kind || 'misc').toLowerCase();
+    return (
+      '<div class="flow-row" data-flow-direction="' + direction + '" data-flow-target="' + escapeHtml(target) + '">' +
+        '<span class="fr-dir ' + dirCls + '">' + arrow + '</span>' +
+        '<span class="fr-kind ' + escapeHtml(kindStr) + '">' + escapeHtml(kindStr) + '</span>' +
+        '<div>' +
+          '<div class="fr-target ' + cls + '">' + escapeHtml(targetName) + '</div>' +
+          (flow.purpose ? '<div class="fr-purpose">' + escapeHtml(flow.purpose) + '</div>' : '') +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  function buildConnectionsSectionHtml(pi_id, manifest, allManifests) {
+    const outbound = (manifest && manifest.data_flows) || [];
+    // Compute inbound: scan all OTHER manifests for flows whose `to` equals our pi_id
+    const inbound = [];
+    for (const [otherId, otherM] of Object.entries(allManifests || {})) {
+      if (otherId === pi_id) continue;
+      for (const f of (otherM && otherM.data_flows) || []) {
+        if (f.to === pi_id) {
+          inbound.push({ ...f, _from: otherId });
+        }
+      }
+    }
+    if (outbound.length === 0 && inbound.length === 0) return '';
+
+    const outHtml = outbound.map(f => renderFlowRowHtml('out', f, allManifests)).join('');
+    // For inbound, swap target → source so row reads "← <source>"
+    const inHtml = inbound.map(f => renderFlowRowHtml('in', { ...f, to: f._from }, allManifests)).join('');
+
+    const total = outbound.length + inbound.length;
+    return (
+      '<div class="nc-flows">' +
+        '<div class="nc-section-header">' +
+          'Connections <span class="sh-count">(' + total + ')</span>' +
+          '<span class="ah-meta">↑' + outbound.length + ' out · ↓' + inbound.length + ' in</span>' +
+        '</div>' +
+        outHtml + inHtml +
+      '</div>'
+    );
+  }
+
   // V2-PHASE-9-DETAIL-JS — click-to-detail render router
   let _DETAIL_SELECTION = null;
 
@@ -4057,6 +4140,7 @@ function renderProvenance() {
   window.__v9_select = v9Select;
 
   // V2-PHASE-8-DRIFT-JS — drift computation + panel renderer
+  let _ALL_MANIFESTS = {};       // V2-PHASE-12A — full manifests map for connection joins
   let _UNDECLARED_BY_GROUP = {};   // group → Set<agentName>, refreshed each tick
 
   function computeDrift(manifests, agentsByGroup) {
@@ -4242,6 +4326,7 @@ function renderProvenance() {
       buildAgentsSectionHtml(manifest, groupAgents) +
       buildDbsSectionHtml(manifest) +
       buildExternalsSectionHtml(manifest) +
+      buildConnectionsSectionHtml(pi_id, manifest, _ALL_MANIFESTS) +
       '<div class="nc-bottom">' +
         '<span>identity from heartbeat</span>' +
         manifestTag +
@@ -4276,6 +4361,7 @@ function renderProvenance() {
       // V2-PHASE-5-PARSE — endpoint now returns {manifests, _fetch_log}
       const manifestsRaw = manifestsRes.ok ? (await manifestsRes.json()) : {};
       const manifests = (manifestsRaw && manifestsRaw.manifests) || manifestsRaw || {};
+      _ALL_MANIFESTS = manifests;
       const agentsPayload = agentsRes.ok ? (await agentsRes.json()) : { agents: {} };
       const agentsByGroup = agentsPayload.agents || {};
 

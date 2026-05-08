@@ -29,12 +29,13 @@ contract is the floor below which no field can drop.
 | 1.0     | 2026-05-07 | Initial: identity-only (node_id, label, role, hardware, deployed_at) |
 | 1.1     | 2026-05-07 | Add `mqtt_group` (string) + `agents` (array)                          |
 | 1.2     | 2026-05-07 | Add `databases` (array) + `externals` (array)                         |
+| 1.3     | 2026-05-07 | Add `data_flows` (array) — declared outbound connections per node     |
 
-## Schema (v1.2)
+## Schema (v1.3)
 
 ```json
 {
-  "manifest_version": "1.2",
+  "manifest_version": "1.3",
   "node_id": "pi4b-company",
   "label": "Company Operations Node",
   "role": "company_ops",
@@ -62,6 +63,18 @@ contract is the floor below which no field can drop.
       "purpose": "code repository + system_architecture.json source"
     }
   ],
+  "data_flows": [
+    {
+      "kind": "mqtt-pub",
+      "to": "pi4b-company",
+      "purpose": "agent heartbeats published on broker"
+    },
+    {
+      "kind": "api-call",
+      "to": "external:Alpaca",
+      "purpose": "paper trades + price quotes"
+    }
+  ],
   "updated_at": "2026-05-07T17:00:00Z"
 }
 ```
@@ -81,6 +94,7 @@ contract is the floor below which no field can drop.
 | `updated_at`       | string  | yes      | ISO timestamp the manifest was last written. The installer sets this when it writes the file. |
 | `databases`        | array   | optional | DBs hosted by this node. Each entry `{name, path, purpose}`. Renderer shows them inside the node card under a "Databases" section. Phase 4 schema. |
 | `externals`        | array   | optional | Outbound services this node depends on. Each entry `{name, kind, purpose}`. `kind` is a free-text classifier (e.g. `vcs`, `mail`, `mqtt`, `api`) used to pick a pill color. Phase 4 schema. |
+| `data_flows`       | array   | optional | Outbound connections from this node. Each entry `{kind, to, purpose}`. `to` is either another `node_id` or `external:<name>` (matches an externals entry). The architecture page joins these across all manifests to show inbound + outbound per node, and (Phase 12b) draws SVG edges between positioned nodes. Phase 12 schema. |
 
 ### Agents array entries
 
@@ -142,6 +156,20 @@ user's home directory" rather than a literal `/home/pi/` path — that
 way every node's installer can use `$HOME/manifest.json` without
 caring about the username.
 
+
+
+### Data flows array entries (v1.3)
+
+| Field      | Type   | Required | Description |
+|------------|--------|----------|-------------|
+| `kind`     | string | yes      | Transport classifier. Suggested values: `mqtt-pub`, `mqtt-sub`, `http-post`, `http-fetch`, `api-call`, `ssh-exec`, `git-fetch`, `git-push`, `mail-out`, `db-read`, `db-write`. Drives the row icon and color. |
+| `to`       | string | yes      | Target identifier. Either a `node_id` (matches another manifest) or `external:<name>` (matches an `externals[]` entry by name on this same manifest). |
+| `purpose`  | string | yes      | One-line description of the flow. |
+
+Each manifest declares only its **outbound** flows. The architecture page
+infers inbound flows for a node by scanning all manifests and finding
+`to` references back to it. So one declaration per side is enough.
+
 ## Installer integration notes
 
 - Each node's installer renders this file from a template that knows
@@ -160,6 +188,5 @@ caring about the username.
 These are reserved for future phases — the installer should not write
 them yet, and the renderer does not yet read them:
 
-- `data_flows` (array) — future: declared edges between this node and others/externals
 - `signed_at` / `signature` — future: optional manifest authenticity signing
 - `size_estimate_gb` (database field) — future: hint for capacity planning

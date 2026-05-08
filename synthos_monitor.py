@@ -8929,7 +8929,7 @@ def api_manifests():
     if not _authorized():
         return jsonify({"error": "unauthorized"}), 401
     manifests = {}
-    local_path = "/home/pi/synthos-company/manifest.json"
+    local_path = "/home/pi/manifest.json"
     if os.path.exists(local_path):
         try:
             with open(local_path, "r") as f:

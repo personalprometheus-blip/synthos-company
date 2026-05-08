@@ -25,6 +25,23 @@ Phase 5 — Deployment Pipeline
 Retail node code → https://github.com/personalprometheus-blip/synthos
 Company node is the authority domain. Retail is the validated domain.
 
+
+## Node manifest convention (Phase 2+ V2 architecture page)
+
+Each Synthos node self-describes via `/home/pi/manifest.json` — fixed
+absolute path on every node, regardless of role/repo. The universal
+installer writes this file at provision time. The architecture page V2
+(`/system-architecture-v2`) reads manifests and joins them onto live
+heartbeat data to render the topology dynamically.
+
+Schema contract: `MANIFEST_SCHEMA.md` (this repo, root). Bump
+`manifest_version` semver on any structural change. Required fields,
+optional fields, and field reference all documented there.
+
+This node's manifest is at `/home/pi/manifest.json`. Edit it when
+agents are added/removed/renamed; the architecture page picks up
+changes on next 30s refresh.
+
 ## Where To Find Things
 - **Master project status** → synthos repo: PROJECT_STATUS.md (phases, cross-repo blockers, overall progress)
 - **This node's status** → STATUS.md (company node operational health)

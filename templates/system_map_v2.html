@@ -278,6 +278,32 @@
                          color:rgba(255,255,255,0.35); margin-top:6px; letter-spacing:0.04em; }
   .node-card-v2 .nc-bottom .ok{ color:rgba(0,245,212,0.7); }
   .node-card-v2 .nc-bottom .miss{ color:rgba(255,179,71,0.55); font-style:italic; }
+  /* Phase 3 — agents section inside node card */
+  .node-card-v2 .nc-agents{ margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.07); }
+  .node-card-v2 .nc-agents-header{ font-family:'JetBrains Mono',monospace; font-size:9px; font-weight:700;
+                                    text-transform:uppercase; letter-spacing:0.08em; color:rgba(255,255,255,0.4);
+                                    margin-bottom:8px; display:flex; gap:6px; align-items:center; }
+  .node-card-v2 .nc-agents-header .ah-count{ color:rgba(255,255,255,0.6); font-weight:600; }
+  .node-card-v2 .nc-agents-header .ah-meta{ margin-left:auto; color:rgba(255,255,255,0.3); font-weight:500;
+                                             text-transform:none; letter-spacing:0.02em; }
+  .agent-box{ display:grid; grid-template-columns:auto 1fr auto; gap:10px; align-items:start;
+              padding:6px 0; font-size:11px; color:rgba(255,255,255,0.7); transition:opacity 0.3s; }
+  .agent-box .ab-dot{ width:7px; height:7px; border-radius:50%; flex-shrink:0; margin-top:5px; }
+  .agent-box .ab-dot.ok{ background:#4ade80; box-shadow:0 0 6px rgba(74,222,128,0.5); }
+  .agent-box .ab-dot.warn{ background:#ffb347; }
+  .agent-box .ab-dot.crit{ background:#ff4b6e; }
+  .agent-box .ab-dot.silent{ background:rgba(255,255,255,0.15); border:1px dashed rgba(255,255,255,0.25);
+                              box-sizing:border-box; }
+  .agent-box .ab-name{ font-family:'JetBrains Mono',monospace; font-weight:600; color:rgba(255,255,255,0.88);
+                        font-size:11px; }
+  .agent-box .ab-purpose{ font-size:10px; color:rgba(255,255,255,0.45); margin-top:2px;
+                           white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .agent-box .ab-cadence{ font-family:'JetBrains Mono',monospace; font-size:9px;
+                            color:rgba(255,255,255,0.3); text-align:right; white-space:nowrap; }
+  .agent-box .ab-age{ font-family:'JetBrains Mono',monospace; font-size:9px;
+                        color:rgba(255,255,255,0.4); }
+  .agent-box.silent{ opacity:0.6; }
+
 
   .node-card-v2 .nc-bottom{ margin-top:14px; padding-top:10px; border-top:1px dashed rgba(255,255,255,0.06);
                              font-family:'JetBrains Mono',monospace; font-size:9px;
@@ -3570,13 +3596,16 @@ function renderProvenance() {
     try {
       const tok = new URLSearchParams(location.search).get('token') || '';
       const qs = tok ? ('?token=' + encodeURIComponent(tok)) : '';
-      const [metricsRes, manifestsRes] = await Promise.all([
+      const [metricsRes, manifestsRes, agentsRes] = await Promise.all([
         fetch('/api/metrics/current' + qs, { credentials: 'same-origin' }),
         fetch('/api/manifests' + qs, { credentials: 'same-origin' }),
+        fetch('/api/agents/status' + qs, { credentials: 'same-origin' }),
       ]);
       if (!metricsRes.ok) throw new Error('metrics HTTP ' + metricsRes.status);
       const data = await metricsRes.json();
       const manifests = manifestsRes.ok ? (await manifestsRes.json()) : {};
+      const agentsPayload = agentsRes.ok ? (await agentsRes.json()) : { agents: {} };
+      const agentsByGroup = agentsPayload.agents || {};
       wrap.innerHTML = '';
       let liveCount = 0;
       const seenApiIds = new Set();
@@ -3662,12 +3691,67 @@ function renderProvenance() {
   function fmtTemp(v) { return v == null ? '—' : v.toFixed(1) + '°C'; }
   function pctClass(v, w, c) { return v == null ? '' : (v >= c ? 'crit' : (v >= w ? 'warn' : '')); }
 
+  // ── Modular renderer for one agent inside a node card ──────────
+  // Joins manifest agent entry (purpose, cadence) with live MQTT
+  // heartbeat (status, age_seconds). Returns HTML string.
+  function renderAgentBoxHtml(agent, live) {
+    const status = live ? live.status : 'silent';
+    const dotCls = (status === 'healthy') ? 'ok'
+                   : (status === 'stale') ? 'warn'
+                   : (status === 'down') ? 'crit'
+                   : 'silent';  // no MQTT publish ever observed
+    const age = live ? fmtAge(live.age_seconds) : 'never';
+    const cadence = agent.cadence || '';
+    const purpose = agent.purpose || '';
+    return (
+      '<div class="agent-box' + (dotCls === 'silent' ? ' silent' : '') + '">' +
+        '<span class="ab-dot ' + dotCls + '"></span>' +
+        '<div>' +
+          '<div class="ab-name">' + agent.name + '</div>' +
+          '<div class="ab-purpose">' + purpose + '</div>' +
+        '</div>' +
+        '<div style="text-align:right">' +
+          '<div class="ab-age">' + age + '</div>' +
+          (cadence ? '<div class="ab-cadence">' + cadence + '</div>' : '') +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  // Returns HTML for the agents section of a node card, or empty string
+  // when the manifest declares no agents.
+  function buildAgentsSectionHtml(manifest, groupAgents) {
+    if (!manifest || !manifest.agents || manifest.agents.length === 0) return '';
+    // Index live MQTT data by agent name
+    const liveByName = {};
+    for (const la of (groupAgents || [])) liveByName[la.name] = la;
+    const agentsHtml = manifest.agents.map(a => renderAgentBoxHtml(a, liveByName[a.name])).join('');
+    let healthy = 0, stale = 0, down = 0, silent = 0;
+    for (const a of manifest.agents) {
+      const live = liveByName[a.name];
+      if (!live) silent++;
+      else if (live.status === 'healthy') healthy++;
+      else if (live.status === 'stale') stale++;
+      else down++;
+    }
+    const summary = healthy + ' live · ' + (stale + down) + ' stale · ' + silent + ' silent';
+    return (
+      '<div class="nc-agents">' +
+        '<div class="nc-agents-header">' +
+          'Agents <span class="ah-count">(' + manifest.agents.length + ')</span>' +
+          '<span class="ah-meta">' + summary + '</span>' +
+        '</div>' +
+        agentsHtml +
+      '</div>'
+    );
+  }
+
   // ── Modular renderer for one node card ──────────────────────────
-  // Phase 2: takes a manifest object as a third arg. When present, the
-  // card decorates itself with role pill + label override + hardware
-  // tag and the bottom strip flips from "manifest: missing" to
-  // "manifest: v<X>". Cards without a manifest stay bare.
-  function renderNodeCardV2(pi_id, live, manifest) {
+  // Phase 2: manifest enrichment (3rd arg).
+  // Phase 3: groupAgents (4th arg) — array from /api/agents/status for
+  // this node's mqtt_group. Joined onto manifest.agents by name to show
+  // each agent's freshness inside the node card.
+  function renderNodeCardV2(pi_id, live, manifest, groupAgents) {
     const ageSec = live.last_seen ? (Date.now() - new Date(live.last_seen).getTime())/1000 : null;
     const status = statusFromAge(ageSec);
     const displayLabel = (manifest && manifest.label) || live.label || '—';
@@ -3704,6 +3788,7 @@ function renderProvenance() {
         '<div class="nc-metric"><span class="lab">Disk</span><span class="val ' + pctClass(live.disk_percent, 75, 90) + '">' + fmtPct(live.disk_percent) + '</span></div>' +
         '<div class="nc-metric"><span class="lab">Temp</span><span class="val ' + pctClass(live.cpu_temp, 65, 80) + '">' + fmtTemp(live.cpu_temp) + '</span></div>' +
       '</div>' +
+      buildAgentsSectionHtml(manifest, groupAgents) +
       '<div class="nc-bottom">' +
         '<span>identity from heartbeat</span>' +
         manifestTag +
@@ -3712,8 +3797,8 @@ function renderProvenance() {
     return card;
   }
 
-  function updateExistingCard(card, pi_id, live, manifest) {
-    const fresh = renderNodeCardV2(pi_id, live, manifest);
+  function updateExistingCard(card, pi_id, live, manifest, groupAgents) {
+    const fresh = renderNodeCardV2(pi_id, live, manifest, groupAgents);
     fresh.classList.remove('entering','entered');
     card.innerHTML = fresh.innerHTML;
     card.classList.add('pulse');
@@ -3749,15 +3834,17 @@ function renderProvenance() {
         }
       });
 
-      // Update or add cards for live nodes (manifest may be undefined)
+      // Update or add cards for live nodes (manifest + mqtt agents may be undefined)
       for (const pi_id of livePiIds) {
         const live = data[pi_id];
         const manifest = manifests[pi_id] || null;
+        const groupName = manifest && manifest.mqtt_group;
+        const groupAgents = (groupName && agentsByGroup[groupName]) || [];
         const existing = grid.querySelector('.node-card-v2[data-pi-id="' + pi_id + '"]');
         if (existing) {
-          updateExistingCard(existing, pi_id, live, manifest);
+          updateExistingCard(existing, pi_id, live, manifest, groupAgents);
         } else {
-          const card = renderNodeCardV2(pi_id, live, manifest);
+          const card = renderNodeCardV2(pi_id, live, manifest, groupAgents);
           grid.appendChild(card);
         }
       }

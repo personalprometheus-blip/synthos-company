@@ -463,6 +463,109 @@
   .flow-row .fr-purpose{ font-size:10px; color:rgba(255,255,255,0.45); margin-top:2px; line-height:1.4;
                           grid-column:2/4; word-break:break-word; }
 
+  /* V2-PHASE-13A-CSS — block diagram view */
+  #blocks-view-toggle{ display:inline-flex; gap:0; border-radius:8px; overflow:hidden;
+                        border:1px solid rgba(255,255,255,0.13); }
+  #blocks-view-toggle button{ background:transparent; border:none; color:rgba(255,255,255,0.55);
+                               padding:5px 12px; font-family:'JetBrains Mono',monospace; font-size:10px;
+                               font-weight:600; letter-spacing:0.06em; cursor:pointer; transition:all 0.15s; }
+  #blocks-view-toggle button:hover{ background:rgba(255,255,255,0.04); color:rgba(255,255,255,0.85); }
+  #blocks-view-toggle button.active{ background:rgba(0,245,212,0.10); color:#00f5d4; }
+
+  #blocks-wrap{ position:absolute; inset:0; padding:90px 20px 20px; overflow:auto; z-index:3; display:none; }
+  #blocks-wrap.active{ display:block; }
+  #blocks-wrap.active ~ #nodes-v2-grid{ display:none; }
+  #blocks-svg{ width:100%; min-height:880px; display:block; background:rgba(13,17,32,0.4);
+                border:1px solid rgba(255,255,255,0.07); border-radius:14px; }
+
+  /* Node block shells */
+  .bd-node{ cursor:pointer; }
+  .bd-node-rect{ fill:rgba(13,17,32,0.85); stroke:rgba(255,255,255,0.13); stroke-width:1.5; }
+  .bd-node-rect.role-retail{ stroke:rgba(123,97,255,0.55); }
+  .bd-node-rect.role-company_ops{ stroke:rgba(0,245,212,0.55); }
+  .bd-node-rect.role-sentinel{ stroke:rgba(255,179,71,0.55); }
+  .bd-node-rect.is-hub{ stroke-width:2.5; filter:drop-shadow(0 0 18px rgba(123,97,255,0.18)); }
+  .bd-node-rect.live-stale{ stroke-dasharray:5,4; }
+  .bd-node-rect.live-down{ stroke-dasharray:3,5; opacity:0.55; }
+
+  .bd-node-label{ fill:rgba(255,255,255,0.92); font-family:'JetBrains Mono',monospace;
+                   font-size:13px; font-weight:700; letter-spacing:0.04em; }
+  .bd-node-sublabel{ fill:rgba(255,255,255,0.4); font-family:'JetBrains Mono',monospace;
+                      font-size:10px; letter-spacing:0.06em; text-transform:uppercase; }
+  .bd-node-status-dot{ pointer-events:none; }
+
+  /* Agent rectangles inside a node */
+  .bd-agent{ cursor:pointer; }
+  .bd-agent-rect{ fill:rgba(255,255,255,0.025); stroke:rgba(255,255,255,0.20); stroke-width:1; rx:4; }
+  .bd-agent.daemon  .bd-agent-rect{ stroke:rgba(0,245,212,0.45); fill:rgba(0,245,212,0.04); }
+  .bd-agent.cron    .bd-agent-rect{ stroke:rgba(255,179,71,0.45); fill:rgba(255,179,71,0.04); stroke-dasharray:4,3; }
+  .bd-agent.intraday .bd-agent-rect{ stroke:rgba(123,97,255,0.45); fill:rgba(123,97,255,0.04); stroke-dasharray:2,2; }
+  .bd-agent.silent  .bd-agent-rect{ stroke:rgba(255,255,255,0.10); stroke-dasharray:2,4; opacity:0.55; }
+  .bd-agent:hover .bd-agent-rect{ stroke-width:2; filter:drop-shadow(0 0 6px rgba(0,245,212,0.35)); }
+
+  .bd-agent-name{ fill:rgba(255,255,255,0.85); font-family:'JetBrains Mono',monospace;
+                   font-size:10px; font-weight:600; pointer-events:none; }
+  .bd-agent-cad{ fill:rgba(255,255,255,0.40); font-family:'JetBrains Mono',monospace;
+                  font-size:8px; letter-spacing:0.04em; pointer-events:none; }
+  .bd-agent-dot{ pointer-events:none; }
+
+  /* DB cylinders inside a node */
+  .bd-db{ cursor:pointer; }
+  .bd-db-side{ fill:rgba(123,97,255,0.06); stroke:rgba(123,97,255,0.35); stroke-width:1; }
+  .bd-db-top{ fill:rgba(123,97,255,0.10); stroke:rgba(123,97,255,0.35); stroke-width:1; }
+  .bd-db:hover .bd-db-side{ fill:rgba(123,97,255,0.15); }
+  .bd-db-name{ fill:rgba(255,255,255,0.80); font-family:'JetBrains Mono',monospace;
+                font-size:9px; font-weight:600; text-anchor:middle; pointer-events:none; }
+
+  /* External boxes scattered near connecting agents */
+  .bd-ext{ cursor:pointer; }
+  .bd-ext-rect{ fill:rgba(13,17,32,0.7); stroke:rgba(255,255,255,0.18); stroke-width:1;
+                 stroke-dasharray:5,3; rx:6; }
+  .bd-ext.kind-vcs    .bd-ext-rect{ stroke:rgba(74,222,128,0.45); }
+  .bd-ext.kind-api    .bd-ext-rect{ stroke:rgba(255,179,71,0.55); }
+  .bd-ext.kind-mqtt   .bd-ext-rect{ stroke:rgba(0,245,212,0.45); }
+  .bd-ext.kind-mail   .bd-ext-rect{ stroke:rgba(255,179,71,0.40); }
+  .bd-ext.kind-auth   .bd-ext-rect{ stroke:rgba(255,75,110,0.45); }
+  .bd-ext-name{ fill:rgba(255,255,255,0.85); font-family:'JetBrains Mono',monospace;
+                 font-size:10px; font-weight:600; text-anchor:middle; pointer-events:none; }
+  .bd-ext-kind{ fill:rgba(255,255,255,0.45); font-family:'JetBrains Mono',monospace;
+                 font-size:8px; letter-spacing:0.08em; text-transform:uppercase; text-anchor:middle;
+                 pointer-events:none; }
+  .bd-ext:hover .bd-ext-rect{ stroke-width:2; }
+
+  /* Edges by kind */
+  .bd-edge{ fill:none; stroke-width:1.5; opacity:0.8; transition:all 0.18s; cursor:help; }
+  .bd-edge:hover{ stroke-width:2.5; opacity:1; }
+  .bd-edge.kind-mqtt-pub, .bd-edge.kind-mqtt-sub{ stroke:#00f5d4; stroke-width:2; }
+  .bd-edge.kind-http-post{ stroke:rgba(123,97,255,0.75); stroke-width:1.5; }
+  .bd-edge.kind-http-fetch{ stroke:rgba(123,97,255,0.6); stroke-width:1.2; }
+  .bd-edge.kind-api-call{ stroke:#ffb347; stroke-width:1.5; }
+  .bd-edge.kind-ssh-exec{ stroke:rgba(255,75,110,0.7); stroke-width:1.2; stroke-dasharray:5,3; }
+  .bd-edge.kind-git-fetch, .bd-edge.kind-git-push{ stroke:#4ade80; stroke-width:1.2; stroke-dasharray:1,4; }
+  .bd-edge.kind-mail-out{ stroke:rgba(255,179,71,0.65); stroke-width:1.2; stroke-dasharray:1,4; }
+
+  /* Tooltip */
+  #bd-tooltip{ position:absolute; padding:6px 10px; border-radius:6px; background:rgba(13,17,32,0.95);
+                border:1px solid rgba(255,255,255,0.13); color:rgba(255,255,255,0.9);
+                font-family:'JetBrains Mono',monospace; font-size:10px; pointer-events:none; z-index:99;
+                display:none; max-width:300px; line-height:1.5; box-shadow:0 4px 24px rgba(0,0,0,0.5);
+                white-space:pre-wrap; }
+  #bd-tooltip.open{ display:block; }
+
+  .bd-legend{ position:absolute; bottom:32px; right:32px; background:rgba(13,17,32,0.85);
+               border:1px solid rgba(255,255,255,0.13); border-radius:10px; padding:10px 14px;
+               font-family:'JetBrains Mono',monospace; font-size:9px; color:rgba(255,255,255,0.7);
+               z-index:4; backdrop-filter:blur(14px); max-width:200px; }
+  .bd-legend .lg-h{ font-weight:700; color:rgba(255,255,255,0.85); margin-top:6px; margin-bottom:3px;
+                     letter-spacing:0.08em; }
+  .bd-legend .lg-h:first-child{ margin-top:0; }
+  .bd-legend .lg-row{ display:flex; align-items:center; gap:6px; margin:2px 0; }
+  .bd-legend .swatch{ width:18px; height:2px; flex-shrink:0; }
+  .bd-legend .swatch.box{ width:14px; height:10px; border:1px solid; border-radius:2px; }
+
+  /* Hide sub-blocks already handled in #app.collapsed-* */
+
+
   /* V2-PHASE-12B-CSS — view toggle + flow map */
   #nv-view-toggle{ display:inline-flex; gap:0; border-radius:8px; overflow:hidden;
                     border:1px solid rgba(255,255,255,0.13); }
@@ -999,25 +1102,30 @@
   </aside>
 
   <main id="canvas-wrap">
-  <div id="flow-map-wrap">
-    <svg id="flow-map-svg" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet"></svg>
-    <div id="fm-tooltip"></div>
-    <div class="fm-legend">
-      <div style="font-weight:700; color:rgba(255,255,255,0.85); margin-bottom:5px; letter-spacing:0.08em">EDGE KINDS</div>
-      <div class="fm-legend-row"><span class="swatch" style="background:#00f5d4"></span> mqtt</div>
-      <div class="fm-legend-row"><span class="swatch" style="background:#7b61ff"></span> http</div>
-      <div class="fm-legend-row"><span class="swatch" style="background:#ffb347"></span> api</div>
-      <div class="fm-legend-row"><span class="swatch" style="background:#ff4b6e; background-image:linear-gradient(90deg,#ff4b6e 50%, transparent 50%); background-size:6px 100%"></span> ssh</div>
-      <div class="fm-legend-row"><span class="swatch" style="background:#4ade80; background-image:linear-gradient(90deg,#4ade80 50%, transparent 50%); background-size:6px 100%"></span> git</div>
+  <div id="blocks-wrap">
+    <svg id="blocks-svg" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet"></svg>
+    <div id="bd-tooltip"></div>
+    <div class="bd-legend">
+      <div class="lg-h">CHANNELS</div>
+      <div class="lg-row"><span class="swatch" style="background:#00f5d4; height:2px"></span> mqtt</div>
+      <div class="lg-row"><span class="swatch" style="background:#7b61ff"></span> http</div>
+      <div class="lg-row"><span class="swatch" style="background:#ffb347"></span> api</div>
+      <div class="lg-row"><span class="swatch" style="background-image:linear-gradient(90deg,#ff4b6e 50%,transparent 50%); background-size:6px 100%; background-color:transparent;"></span> ssh</div>
+      <div class="lg-row"><span class="swatch" style="background-image:radial-gradient(circle,#4ade80 50%,transparent 50%); background-size:5px 100%; background-color:transparent;"></span> git/mail</div>
+      <div class="lg-h">AGENTS</div>
+      <div class="lg-row"><span class="swatch box" style="border-color:rgba(0,245,212,0.6); background:rgba(0,245,212,0.06)"></span> daemon</div>
+      <div class="lg-row"><span class="swatch box" style="border-color:rgba(255,179,71,0.6); background:rgba(255,179,71,0.04); border-style:dashed"></span> cron</div>
+      <div class="lg-row"><span class="swatch box" style="border-color:rgba(123,97,255,0.6); background:rgba(123,97,255,0.04); border-style:dotted"></span> intraday</div>
+      <div class="lg-row"><span class="swatch box" style="border-color:rgba(255,255,255,0.15); border-style:dashed; background:transparent"></span> silent</div>
     </div>
   </div>
   <div id="nodes-v2-grid">
     <div class="nv-banner">
       <span class="nv-tag">LIVE</span>
       <span>Topology stripped to bare nodes — populated only when a heartbeat lands within 5 min.</span>
-      <span id="nv-view-toggle">
-        <button data-view="cards" class="active" title="Card grid">CARDS</button>
-        <button data-view="map" title="Flow map (data_flows visualization)">FLOW MAP</button>
+      <span id="blocks-view-toggle">
+        <button data-bd-view="cards" class="active" title="Card grid">CARDS</button>
+        <button data-bd-view="blocks" title="Block diagram (hub-and-spoke)">BLOCKS</button>
       </span>
       <button id="nv-refresh-btn" title="Refresh manifests (flush peer cache)">↻</button>
       <span id="nv-drift-chip" class="nv-drift clean" title="Click to view drift detail">drift: —</span>
@@ -4202,6 +4310,389 @@ function renderProvenance() {
     }
   }
 
+  // V2-PHASE-13A-JS — block diagram (hub-and-spoke) renderer
+  let _BD_VIEW = 'cards';
+  const BD_SVG_NS = 'http://www.w3.org/2000/svg';
+  const HUB_W = 720, HUB_H = 360;
+  const SPOKE_W = 380, SPOKE_H = 260;
+  const SENTINEL_W = 240, SENTINEL_H = 130;
+  const AGENT_W = 132, AGENT_H = 48, AGENT_GAP = 8;
+  const DB_W = 100, DB_H = 44;
+  const EXT_W = 120, EXT_H = 50;
+  const NODE_HEADER_H = 50;
+  const NODE_PADDING = 14;
+
+  function bdSvg(name, attrs, parent) {
+    const el = document.createElementNS(BD_SVG_NS, name);
+    if (attrs) for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+    if (parent) parent.appendChild(el);
+    return el;
+  }
+  function agentTypeFromCadence(cadence) {
+    const c = (cadence || '').toLowerCase();
+    if (!c || c === 'continuous') return 'daemon';
+    if (c.match(/\bdaily\b/)) return 'cron';
+    if (c.match(/\bintraday\b/) || c.match(/\d{2}:\d{2}/)) return 'intraday';
+    return 'daemon';
+  }
+  function bdNodeStatus(live) {
+    if (!live || !live.last_seen) return 'down';
+    const ageSec = (Date.now() - new Date(live.last_seen).getTime()) / 1000;
+    if (ageSec < 60) return 'ok';
+    if (ageSec < 300) return 'stale';
+    return 'down';
+  }
+  function bdAgentStatus(live) {
+    if (!live) return 'silent';
+    return live.status || 'silent';
+  }
+
+  // Layout: place hub at center, spokes around, externals near connecting agents
+  function bdComputeLayout(manifests, viewW, viewH) {
+    const ids = Object.keys(manifests);
+    if (ids.length === 0) return { nodes: {}, externals: {}, hubId: null };
+
+    // Hub = retail role, fallback to first
+    let hubId = ids.find(id => (manifests[id] || {}).role === 'retail');
+    if (!hubId) hubId = ids.sort()[0];
+
+    const cx = viewW / 2;
+    const cy = viewH / 2;
+
+    const nodes = {};
+    // Hub
+    nodes[hubId] = bdNodeBox(hubId, manifests[hubId], cx, cy, true);
+
+    // Spokes — assign angular slots
+    const spokeIds = ids.filter(id => id !== hubId);
+    const spokeAngles = {
+      'company_ops': 0,        // right
+      'sentinel':    -135,     // top-left
+    };
+    spokeIds.forEach((id, i) => {
+      const role = (manifests[id] || {}).role || 'unknown';
+      let angle = spokeAngles[role];
+      if (angle == null) angle = 30 + i * 60;   // fallback ring
+      const rad = angle * Math.PI / 180;
+      const dist = (role === 'sentinel') ? 360 : 480;
+      const sx = cx + Math.cos(rad) * dist;
+      const sy = cy + Math.sin(rad) * dist;
+      nodes[id] = bdNodeBox(id, manifests[id], sx, sy, false);
+    });
+
+    // Externals: dedupe by name, choose owning node by which manifest declares them
+    const externalsMap = {};   // name → {kind, sources:Set, owners:[node_id]}
+    for (const [pid, m] of Object.entries(manifests)) {
+      for (const e of (m && m.externals) || []) {
+        if (!externalsMap[e.name]) externalsMap[e.name] = { kind: e.kind, owners: [], purpose: e.purpose };
+        externalsMap[e.name].owners.push(pid);
+      }
+    }
+    // Position each external NEAR an owning node, on its outward side
+    const externals = {};
+    const extByOwner = {};
+    for (const [name, info] of Object.entries(externalsMap)) {
+      const ownerId = info.owners[0];
+      if (!extByOwner[ownerId]) extByOwner[ownerId] = [];
+      extByOwner[ownerId].push({ name, kind: info.kind, purpose: info.purpose });
+    }
+    for (const [ownerId, exts] of Object.entries(extByOwner)) {
+      const node = nodes[ownerId];
+      if (!node) continue;
+      // Vector from hub center to this node center
+      const dx = node.cx - cx, dy = node.cy - cy;
+      const len = Math.max(1, Math.sqrt(dx*dx + dy*dy));
+      // Place externals beyond the node, fanned out perpendicular to the spoke
+      let perpX = -dy/len, perpY = dx/len;
+      // For hub itself, fan externals upward
+      if (ownerId === hubId) { perpX = 1; perpY = 0; }
+      const beyondX = ownerId === hubId ? cx : node.cx + dx/len * 240;
+      const beyondY = ownerId === hubId ? cy - HUB_H/2 - 100 : node.cy + dy/len * 240;
+      exts.forEach((e, i) => {
+        const offset = (i - (exts.length - 1)/2) * (EXT_W + 16);
+        const ex = beyondX + perpX * offset;
+        const ey = beyondY + perpY * offset;
+        externals[e.name] = { x: ex - EXT_W/2, y: ey - EXT_H/2, w: EXT_W, h: EXT_H, kind: e.kind, purpose: e.purpose, cx: ex, cy: ey };
+      });
+    }
+
+    return { nodes, externals, hubId };
+  }
+
+  function bdNodeBox(pi_id, manifest, cx, cy, isHub) {
+    const role = (manifest && manifest.role) || 'unknown';
+    let w, h;
+    if (isHub) { w = HUB_W; h = HUB_H; }
+    else if (role === 'sentinel') { w = SENTINEL_W; h = SENTINEL_H; }
+    else { w = SPOKE_W; h = SPOKE_H; }
+    return {
+      pi_id, manifest, role, cx, cy,
+      x: cx - w/2, y: cy - h/2, w, h, isHub,
+    };
+  }
+
+  function bdRenderNodeBlock(svg, node, ctx) {
+    const { pi_id, manifest, role, x, y, w, h, isHub } = node;
+    const live = (ctx.metrics || {})[pi_id];
+    const status = bdNodeStatus(live);
+    const g = bdSvg('g', { class: 'bd-node', 'data-pi-id': pi_id }, svg);
+    bdSvg('rect', {
+      x, y, width: w, height: h, rx: 12,
+      class: 'bd-node-rect role-' + role + (isHub ? ' is-hub' : '') + ' live-' + status,
+    }, g);
+    // Header label
+    bdSvg('text', { x: x + 18, y: y + 24, class: 'bd-node-label' }, g).textContent = pi_id;
+    bdSvg('text', { x: x + 18, y: y + 40, class: 'bd-node-sublabel' }, g).textContent =
+      ((manifest && manifest.role) || '?') + ' · ' + ((manifest && manifest.hardware) || '?');
+    // Status dot
+    const dotColor = status === 'ok' ? '#4ade80' : status === 'stale' ? '#ffb347' : '#ff4b6e';
+    bdSvg('circle', {
+      cx: x + w - 18, cy: y + 18, r: 5, fill: dotColor,
+      class: 'bd-node-status-dot',
+    }, g);
+
+    // Agent grid inside the node
+    const agents = (manifest && manifest.agents) || [];
+    if (agents.length > 0) {
+      const groupName = manifest && manifest.mqtt_group;
+      const liveAgents = (groupName && (ctx.agentsByGroup || {})[groupName]) || [];
+      const liveByName = {};
+      for (const la of liveAgents) liveByName[la.name] = la;
+
+      const innerW = w - 2 * NODE_PADDING;
+      const cols = Math.max(1, Math.floor((innerW + AGENT_GAP) / (AGENT_W + AGENT_GAP)));
+      const rows = Math.ceil(agents.length / cols);
+      const gridX = x + NODE_PADDING;
+      const gridY = y + NODE_HEADER_H;
+
+      agents.forEach((a, i) => {
+        const r = Math.floor(i / cols);
+        const c = i % cols;
+        const ax = gridX + c * (AGENT_W + AGENT_GAP);
+        const ay = gridY + r * (AGENT_H + AGENT_GAP);
+        node._agentPositions = node._agentPositions || {};
+        node._agentPositions[a.name] = { x: ax, y: ay, w: AGENT_W, h: AGENT_H, cx: ax + AGENT_W/2, cy: ay + AGENT_H/2 };
+
+        const agentLive = liveByName[a.name];
+        const aStatus = bdAgentStatus(agentLive);
+        const aType = agentTypeFromCadence(a.cadence);
+        const aClass = aStatus === 'silent' ? 'silent' : aType;
+
+        const ag = bdSvg('g', { class: 'bd-agent ' + aClass, 'data-pi-id': pi_id, 'data-agent-name': a.name }, g);
+        bdSvg('rect', { x: ax, y: ay, width: AGENT_W, height: AGENT_H, class: 'bd-agent-rect' }, ag);
+        bdSvg('text', { x: ax + 8, y: ay + 16, class: 'bd-agent-name' }, ag).textContent = a.name;
+        if (a.cadence) {
+          bdSvg('text', { x: ax + 8, y: ay + 32, class: 'bd-agent-cad' }, ag).textContent = a.cadence;
+        }
+        // Agent live status dot
+        const adotColor = aStatus === 'healthy' ? '#4ade80' :
+                          aStatus === 'stale' ? '#ffb347' :
+                          aStatus === 'down' ? '#ff4b6e' : 'rgba(255,255,255,0.18)';
+        bdSvg('circle', { cx: ax + AGENT_W - 8, cy: ay + 8, r: 3, fill: adotColor, class: 'bd-agent-dot' }, ag);
+      });
+    }
+
+    // DBs — render at the bottom of the block
+    const dbs = (manifest && manifest.databases) || [];
+    if (dbs.length > 0) {
+      const dbsTotalW = dbs.length * DB_W + (dbs.length - 1) * 12;
+      const dbsX = x + (w - dbsTotalW) / 2;
+      const dbsY = y + h - DB_H - NODE_PADDING;
+      dbs.forEach((d, i) => {
+        const dx = dbsX + i * (DB_W + 12);
+        node._dbPositions = node._dbPositions || {};
+        node._dbPositions[d.name] = { x: dx, y: dbsY, w: DB_W, h: DB_H, cx: dx + DB_W/2, cy: dbsY + DB_H/2 };
+        const dg = bdSvg('g', { class: 'bd-db', 'data-pi-id': pi_id, 'data-db-name': d.name }, g);
+        // Cylinder = side rect + top ellipse
+        bdSvg('rect', { x: dx, y: dbsY + 6, width: DB_W, height: DB_H - 6, rx: 4, class: 'bd-db-side' }, dg);
+        bdSvg('ellipse', { cx: dx + DB_W/2, cy: dbsY + 6, rx: DB_W/2, ry: 5, class: 'bd-db-top' }, dg);
+        bdSvg('text', { x: dx + DB_W/2, y: dbsY + 28, class: 'bd-db-name' }, dg).textContent = d.name.length > 18 ? d.name.substring(0, 16) + '…' : d.name;
+      });
+    }
+  }
+
+  function bdRenderExternal(svg, name, ext) {
+    const g = bdSvg('g', { class: 'bd-ext kind-' + (ext.kind || 'misc'), 'data-ext-name': name }, svg);
+    bdSvg('rect', {
+      x: ext.x, y: ext.y, width: ext.w, height: ext.h, rx: 6,
+      class: 'bd-ext-rect',
+    }, g);
+    bdSvg('text', { x: ext.cx, y: ext.cy - 4, class: 'bd-ext-name' }, g).textContent = name.length > 14 ? name.substring(0, 12) + '…' : name;
+    bdSvg('text', { x: ext.cx, y: ext.cy + 12, class: 'bd-ext-kind' }, g).textContent = ext.kind || 'misc';
+  }
+
+  function bdEdgePath(srcPt, dstPt) {
+    const dx = dstPt.x - srcPt.x;
+    const dy = dstPt.y - srcPt.y;
+    const c1x = srcPt.x + dx * 0.4;
+    const c1y = srcPt.y + dy * 0.6;
+    const c2x = srcPt.x + dx * 0.6;
+    const c2y = srcPt.y + dy * 0.4;
+    return `M ${srcPt.x} ${srcPt.y} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${dstPt.x} ${dstPt.y}`;
+  }
+
+  // Compute the point on a node block edge closest to the target point
+  function bdEdgePointOnNode(node, towardPt) {
+    const cx = node.cx, cy = node.cy;
+    const dx = towardPt.x - cx, dy = towardPt.y - cy;
+    const angle = Math.atan2(dy, dx);
+    // Intersect with rectangle
+    const halfW = node.w / 2, halfH = node.h / 2;
+    const tx = Math.abs(Math.cos(angle)) > 0 ? halfW / Math.abs(Math.cos(angle)) : Infinity;
+    const ty = Math.abs(Math.sin(angle)) > 0 ? halfH / Math.abs(Math.sin(angle)) : Infinity;
+    const t = Math.min(tx, ty);
+    return { x: cx + Math.cos(angle) * t, y: cy + Math.sin(angle) * t };
+  }
+
+  function bdEdgePointOnRect(rect, towardPt) {
+    const cx = rect.cx, cy = rect.cy;
+    const dx = towardPt.x - cx, dy = towardPt.y - cy;
+    const angle = Math.atan2(dy, dx);
+    const halfW = rect.w / 2, halfH = rect.h / 2;
+    const tx = Math.abs(Math.cos(angle)) > 0 ? halfW / Math.abs(Math.cos(angle)) : Infinity;
+    const ty = Math.abs(Math.sin(angle)) > 0 ? halfH / Math.abs(Math.sin(angle)) : Infinity;
+    const t = Math.min(tx, ty);
+    return { x: cx + Math.cos(angle) * t, y: cy + Math.sin(angle) * t };
+  }
+
+  function bdRenderEdges(svg, layout, manifests) {
+    const tooltip = document.getElementById('bd-tooltip');
+    const wrap = document.getElementById('blocks-wrap');
+    const wrapRect = wrap.getBoundingClientRect();
+    function showTip(text, ev) {
+      tooltip.textContent = text;
+      tooltip.style.left = (ev.clientX - wrapRect.left + 12) + 'px';
+      tooltip.style.top = (ev.clientY - wrapRect.top + 12) + 'px';
+      tooltip.classList.add('open');
+    }
+    function hideTip() { tooltip.classList.remove('open'); }
+
+    const edgesGroup = bdSvg('g', { class: 'bd-edges' }, svg);
+    for (const [pid, m] of Object.entries(manifests)) {
+      const flows = (m && m.data_flows) || [];
+      const srcNode = layout.nodes[pid];
+      if (!srcNode) continue;
+      for (const f of flows) {
+        const isExt = (f.to || '').indexOf('external:') === 0;
+        const targetName = isExt ? f.to.replace(/^external:/, '') : f.to;
+        let srcPt, dstPt;
+        // Source point: agent center if from_agent specified, else node edge toward target
+        if (f.from_agent && srcNode._agentPositions && srcNode._agentPositions[f.from_agent]) {
+          const ap = srcNode._agentPositions[f.from_agent];
+          srcPt = { x: ap.cx, y: ap.cy };
+        }
+        if (isExt) {
+          const ext = layout.externals[targetName];
+          if (!ext) continue;
+          if (!srcPt) srcPt = bdEdgePointOnNode(srcNode, { x: ext.cx, y: ext.cy });
+          dstPt = bdEdgePointOnRect(ext, srcPt);
+        } else {
+          const dstNode = layout.nodes[targetName];
+          if (!dstNode) continue;
+          if (!srcPt) srcPt = bdEdgePointOnNode(srcNode, { x: dstNode.cx, y: dstNode.cy });
+          if (f.to_agent && dstNode._agentPositions && dstNode._agentPositions[f.to_agent]) {
+            const ap = dstNode._agentPositions[f.to_agent];
+            dstPt = { x: ap.cx, y: ap.cy };
+          } else {
+            dstPt = bdEdgePointOnNode(dstNode, srcPt);
+          }
+        }
+        const kind = (f.kind || 'misc').toLowerCase();
+        const path = bdSvg('path', {
+          d: bdEdgePath(srcPt, dstPt),
+          class: 'bd-edge kind-' + kind,
+          'data-from': pid,
+          'data-to': f.to || '',
+          'data-kind': kind,
+        }, edgesGroup);
+        path.addEventListener('mouseenter', (ev) => {
+          const txt = pid + (f.from_agent ? ' [' + f.from_agent + ']' : '') +
+                      ' → ' + (f.to || '?') + (f.to_agent ? ' [' + f.to_agent + ']' : '') +
+                      '\n[' + kind + ']\n' + (f.purpose || '');
+          showTip(txt, ev);
+        });
+        path.addEventListener('mousemove', (ev) => {
+          tooltip.style.left = (ev.clientX - wrapRect.left + 12) + 'px';
+          tooltip.style.top = (ev.clientY - wrapRect.top + 12) + 'px';
+        });
+        path.addEventListener('mouseleave', hideTip);
+      }
+    }
+  }
+
+  function renderBlockDiagram(ctx) {
+    const svg = document.getElementById('blocks-svg');
+    if (!svg) return;
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+    const wrap = document.getElementById('blocks-wrap');
+    const W = Math.max(1200, wrap.clientWidth - 40);
+    const H = 880;
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+
+    const manifests = ctx.manifests || {};
+    if (Object.keys(manifests).length === 0) {
+      const t = bdSvg('text', { x: W/2, y: H/2, fill: 'rgba(255,255,255,0.4)', 'text-anchor': 'middle',
+                                 'font-family': 'JetBrains Mono, monospace', 'font-size': 12 }, svg);
+      t.textContent = 'No manifests yet — waiting for first heartbeat with manifest...';
+      return;
+    }
+
+    const layout = bdComputeLayout(manifests, W, H);
+
+    // Edges first so blocks overlay
+    bdRenderEdges(svg, layout, manifests);
+
+    // Nodes
+    for (const node of Object.values(layout.nodes)) bdRenderNodeBlock(svg, node, ctx);
+
+    // Externals
+    for (const [name, ext] of Object.entries(layout.externals)) bdRenderExternal(svg, name, ext);
+
+    // Wire clicks via delegation
+    svg.addEventListener('click', (ev) => {
+      const agentEl = ev.target.closest('.bd-agent');
+      const dbEl = ev.target.closest('.bd-db');
+      const extEl = ev.target.closest('.bd-ext');
+      const nodeEl = ev.target.closest('.bd-node');
+      if (agentEl) {
+        const pid = agentEl.dataset.piId, name = agentEl.dataset.agentName;
+        if (typeof v9Select === 'function') v9Select({ type: 'agent', pi_id: pid, name });
+      } else if (dbEl) {
+        const pid = dbEl.dataset.piId, name = dbEl.dataset.dbName;
+        if (typeof v9Select === 'function') v9Select({ type: 'db', pi_id: pid, name });
+      } else if (extEl) {
+        const name = extEl.dataset.extName;
+        // Find owner node (first manifest declaring this external)
+        let owner = null;
+        for (const [pid, m] of Object.entries(manifests)) {
+          if ((m.externals || []).find(e => e.name === name)) { owner = pid; break; }
+        }
+        if (owner && typeof v9Select === 'function') v9Select({ type: 'external', pi_id: owner, name });
+      } else if (nodeEl) {
+        const pid = nodeEl.dataset.piId;
+        if (typeof v9Select === 'function') v9Select({ type: 'node', pi_id: pid });
+      }
+    }, { once: false });
+  }
+
+  function setBlocksView(view) {
+    _BD_VIEW = view;
+    const wrap = document.getElementById('blocks-wrap');
+    const grid = document.getElementById('nodes-v2-grid');
+    document.querySelectorAll('#blocks-view-toggle button').forEach(b => {
+      b.classList.toggle('active', b.dataset.bdView === view);
+    });
+    if (view === 'blocks') {
+      if (wrap) wrap.classList.add('active');
+      if (grid) grid.style.display = 'none';
+      if (window.__v9_lastCtx) renderBlockDiagram(window.__v9_lastCtx);
+    } else {
+      if (wrap) wrap.classList.remove('active');
+      if (grid) grid.style.display = '';
+    }
+  }
+
   // V2-PHASE-12A-JS — connections / data-flow helpers
   function renderFlowRowHtml(direction, flow, allManifests) {
     // direction: 'out' or 'in'
@@ -4647,8 +5138,7 @@ function renderProvenance() {
       window.__v9_lastCtx = { metrics: data, manifests: manifests, agentsByGroup: agentsByGroup,
                               fetchLog: (manifestsRaw && manifestsRaw._fetch_log) || {}, drift: drift };
       if (_DETAIL_SELECTION) renderDetailPanel(_DETAIL_SELECTION, window.__v9_lastCtx);
-      // V2-PHASE-12B — re-render flow map if active
-      if (_CURRENT_VIEW === 'map') renderFlowMap(window.__v9_lastCtx);
+      if (_BD_VIEW === 'blocks') renderBlockDiagram(window.__v9_lastCtx);
 
       // Determine which pi_ids are live (heartbeat within 5 minutes)
       const livePiIds = [];
@@ -4724,9 +5214,9 @@ function renderProvenance() {
         v9Select({ type: 'node', pi_id });
       });
     }
-    // V2-PHASE-12B — view toggle
-    document.querySelectorAll('#nv-view-toggle button').forEach(btn => {
-      btn.addEventListener('click', () => setView(btn.dataset.view));
+    // V2-PHASE-13A — blocks view toggle
+    document.querySelectorAll('#blocks-view-toggle button').forEach(btn => {
+      btn.addEventListener('click', () => setBlocksView(btn.dataset.bdView));
     });
 
     // V2-PHASE-11-JS — refresh button + ESC keybinding

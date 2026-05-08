@@ -240,6 +240,19 @@
   #nodes-v2-grid .nv-drift-panel .drift-section:last-child{ margin-bottom:0; }
   #nodes-v2-grid .nv-drift-panel .empty-row{ color:rgba(255,255,255,0.4); font-style:italic; padding-left:0; list-style:none; }
 
+  /* V2-PHASE-11-CSS — refresh button */
+  #nv-refresh-btn{ display:inline-flex; align-items:center; justify-content:center;
+                    width:24px; height:24px; padding:0; border-radius:50%;
+                    border:1px solid rgba(255,255,255,0.13); background:transparent;
+                    color:rgba(255,255,255,0.55); font-size:12px; cursor:pointer;
+                    transition:all 0.18s; }
+  #nv-refresh-btn:hover{ color:#00f5d4; border-color:rgba(0,245,212,0.4);
+                          background:rgba(0,245,212,0.06); }
+  #nv-refresh-btn.spinning{ animation:nvSpin 0.7s linear infinite; pointer-events:none;
+                             color:#00f5d4; border-color:rgba(0,245,212,0.4); }
+  @keyframes nvSpin{ from{ transform:rotate(0deg) } to{ transform:rotate(360deg) } }
+
+
   /* Inline marker on agent boxes that are undeclared */
   .agent-box.undeclared{ background:rgba(255,179,71,0.06); border-left:2px solid rgba(255,179,71,0.45);
                           padding-left:10px; margin-left:-10px; border-radius:0 4px 4px 0; }
@@ -4351,6 +4364,27 @@ function renderProvenance() {
         v9Select({ type: 'node', pi_id });
       });
     }
+    // V2-PHASE-11-JS — refresh button + ESC keybinding
+    const refreshBtn = document.getElementById('nv-refresh-btn');
+    if (refreshBtn) {
+      refreshBtn.addEventListener('click', async () => {
+        if (refreshBtn.classList.contains('spinning')) return;
+        refreshBtn.classList.add('spinning');
+        try {
+          const tok = new URLSearchParams(location.search).get('token') || '';
+          const qs = tok ? ('?token=' + encodeURIComponent(tok)) : '';
+          await fetch('/api/manifests/refresh' + qs, { method: 'POST', credentials: 'same-origin' });
+          await tick();
+        } catch (e) { /* tick() handles its own errors */ }
+        finally { refreshBtn.classList.remove('spinning'); }
+      });
+    }
+    document.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape' && _DETAIL_SELECTION) {
+        v9Select(null);
+        ev.stopPropagation();
+      }
+    });
     tick();
     setInterval(tick, 30000);
   });

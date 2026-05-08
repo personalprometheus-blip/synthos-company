@@ -8974,6 +8974,19 @@ def _fetch_peer_manifest(node_id, ssh_target, manifest_path="~/manifest.json"):
         _PEER_MANIFEST_CACHE[node_id] = (None, now)
     return None
 
+@app.route("/api/manifests/refresh", methods=["POST"])
+def api_manifests_refresh():
+    """Flush the peer manifest cache so the next /api/manifests refetches
+    every peer fresh. Used by the lab page'''s manifest-refresh button
+    during installer iteration."""
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    with _PEER_MANIFEST_CACHE_LOCK:
+        cleared = list(_PEER_MANIFEST_CACHE.keys())
+        _PEER_MANIFEST_CACHE.clear()
+    return jsonify({"refreshed": True, "cleared_peers": cleared}), 200
+
+
 @app.route("/api/manifests")
 def api_manifests():
     """Return per-node manifest documents keyed by node_id.

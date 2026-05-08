@@ -1139,6 +1139,19 @@
     <svg id="blocks-svg" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet"></svg>
     <div id="bd-tooltip"></div>
     <button id="bd-reset-btn" title="Reset block positions to auto-layout">↺ reset positions</button>
+    <div id="bd-time-mode-toggle">
+      <button data-bd-time="live" class="active" title="Live (real-time, 30s refresh)">LIVE</button>
+      <button data-bd-time="playback" title="24H replay (scrub historical metrics)">24H REPLAY</button>
+    </div>
+    <div id="bd-playback-controls">
+      <span class="pb-tag">REPLAY</span>
+      <button class="pb-step" data-pb-step="-30" title="Back 30s">−30s</button>
+      <button class="pb-step" data-pb-step="-300" title="Back 5m">−5m</button>
+      <input type="range" id="bd-playback-slider" min="0" max="2880" step="1" value="2880">
+      <button class="pb-step" data-pb-step="300" title="Forward 5m">+5m</button>
+      <button class="pb-step" data-pb-step="30" title="Forward 30s">+30s</button>
+      <span id="bd-playback-time">— now —</span>
+    </div>
     <div id="bd-drag-hint">drag block to move · drag empty canvas to pan · wheel to zoom · click to inspect</div>
     <div id="bd-zoom-indicator">
       <button class="bdz-btn" data-bdz="out" title="Zoom out">−</button>
@@ -4411,6 +4424,97 @@ function renderProvenance() {
     bdApplyViewBox(svg);
   }
 
+  // V2-PHASE-14-JS — ext drag + 24H replay state
+  let _BD_EXT_POSITIONS = bdLoadExtPositions();
+  let _BD_EXT_DRAG = null;
+  let _BD_TIME_MODE = 'live';
+  let _BD_PLAYBACK_TIME = null;
+  let _BD_HISTORICAL_METRICS = {};
+
+  function bdLoadExtPositions() {
+    try { return JSON.parse(localStorage.getItem('bd_ext_positions_v1') || '{}'); }
+    catch(e) { return {}; }
+  }
+  function bdSaveExtPositions() {
+    try { localStorage.setItem('bd_ext_positions_v1', JSON.stringify(_BD_EXT_POSITIONS)); } catch(e) {}
+  }
+
+  async function bdLoadHistoricalMetrics() {
+    _BD_HISTORICAL_METRICS = {};
+    const manifests = (window.__v9_lastCtx || {}).manifests || {};
+    const tok = new URLSearchParams(location.search).get('token') || '';
+    const qs = tok ? ('?token=' + encodeURIComponent(tok)) : '';
+    const sep = qs ? '&' : '?';
+    await Promise.all(Object.keys(manifests).map(async (pid) => {
+      try {
+        const url = '/api/metrics/history' + qs + sep + 'node=' + encodeURIComponent(pid) + '&hours=24';
+        const r = await fetch(url, { credentials: 'same-origin' });
+        if (r.ok) {
+          const data = await r.json();
+          _BD_HISTORICAL_METRICS[pid] = data.samples || [];
+        }
+      } catch(e) {}
+    }));
+  }
+
+  function bdMetricsAt(pi_id, time_ms) {
+    const samples = _BD_HISTORICAL_METRICS[pi_id] || [];
+    if (samples.length === 0) return null;
+    const ts = Math.floor(time_ms / 1000);
+    let closest = null, minDelta = Infinity;
+    for (const s of samples) {
+      const d = Math.abs(s.ts_bucket - ts);
+      if (d < minDelta) { minDelta = d; closest = s; }
+    }
+    if (minDelta > 90) return null;
+    return closest;
+  }
+
+  function bdFmtPlaybackTime(time_ms) {
+    if (!time_ms) return '— now —';
+    const d = new Date(time_ms);
+    const hh = d.getHours().toString().padStart(2,'0');
+    const mm = d.getMinutes().toString().padStart(2,'0');
+    const ss = d.getSeconds().toString().padStart(2,'0');
+    const ageSec = (Date.now() - time_ms) / 1000;
+    let rel;
+    if (ageSec < 60) rel = Math.floor(ageSec) + 's ago';
+    else if (ageSec < 3600) rel = Math.floor(ageSec/60) + 'm ago';
+    else rel = Math.floor(ageSec/3600) + 'h ' + Math.floor((ageSec%3600)/60) + 'm ago';
+    return hh + ':' + mm + ':' + ss + ' ET <span class="pb-rel">· ' + rel + '</span>';
+  }
+
+  function bdUpdatePlaybackUi() {
+    const t = document.getElementById('bd-playback-time');
+    if (t) t.innerHTML = bdFmtPlaybackTime(_BD_PLAYBACK_TIME);
+  }
+
+  async function bdSetTimeMode(mode) {
+    _BD_TIME_MODE = mode;
+    document.querySelectorAll('#bd-time-mode-toggle button').forEach(b => {
+      b.classList.toggle('active', b.dataset.bdTime === mode);
+    });
+    const ctrl = document.getElementById('bd-playback-controls');
+    if (mode === 'playback') {
+      if (ctrl) ctrl.classList.add('active');
+      await bdLoadHistoricalMetrics();
+      _BD_PLAYBACK_TIME = Date.now();
+      const slider = document.getElementById('bd-playback-slider');
+      if (slider) slider.value = slider.max;
+      bdUpdatePlaybackUi();
+    } else {
+      if (ctrl) ctrl.classList.remove('active');
+      _BD_PLAYBACK_TIME = null;
+    }
+    if (window.__v9_lastCtx) renderBlockDiagram(window.__v9_lastCtx);
+  }
+
+  function bdSetPlaybackTime(time_ms) {
+    _BD_PLAYBACK_TIME = time_ms;
+    bdUpdatePlaybackUi();
+    if (window.__v9_lastCtx) renderBlockDiagram(window.__v9_lastCtx);
+  }
+
   // V2-PHASE-13A-DRAG-JS — saved positions + drag state
   let _BD_NODE_POSITIONS = bdLoadPositions();
   let _BD_DRAG = null;
@@ -4424,7 +4528,11 @@ function renderProvenance() {
   }
   function bdResetPositions() {
     _BD_NODE_POSITIONS = {};
+    _BD_EXT_POSITIONS = {};
+    _BD_VIEWBOX = null;
     bdSavePositions();
+    bdSaveExtPositions();
+    bdSaveViewBox();
     if (window.__v9_lastCtx) renderBlockDiagram(window.__v9_lastCtx);
   }
 
@@ -4547,9 +4655,14 @@ function renderProvenance() {
       const beyondX = ownerId === hubId ? cx : node.cx + dx/len * 240;
       const beyondY = ownerId === hubId ? cy - HUB_H/2 - 100 : node.cy + dy/len * 240;
       exts.forEach((e, i) => {
-        const offset = (i - (exts.length - 1)/2) * (EXT_W + 16);
-        const ex = beyondX + perpX * offset;
-        const ey = beyondY + perpY * offset;
+        const saved = _BD_EXT_POSITIONS[e.name];
+        let ex, ey;
+        if (saved) { ex = saved.cx; ey = saved.cy; }
+        else {
+          const offset = (i - (exts.length - 1)/2) * (EXT_W + 16);
+          ex = beyondX + perpX * offset;
+          ey = beyondY + perpY * offset;
+        }
         externals[e.name] = { x: ex - EXT_W/2, y: ey - EXT_H/2, w: EXT_W, h: EXT_H, kind: e.kind, purpose: e.purpose, cx: ex, cy: ey };
       });
     }
@@ -4762,6 +4875,23 @@ function renderProvenance() {
     const svg = document.getElementById('blocks-svg');
     if (!svg) return;
     while (svg.firstChild) svg.removeChild(svg.firstChild);
+    // V2-PHASE-14 — playback override: swap live metrics for the closest historical bucket
+    if (_BD_TIME_MODE === 'playback' && _BD_PLAYBACK_TIME && ctx && ctx.metrics) {
+      const histMetrics = {};
+      for (const pid of Object.keys(ctx.metrics)) {
+        const h = bdMetricsAt(pid, _BD_PLAYBACK_TIME);
+        if (h) {
+          histMetrics[pid] = Object.assign({}, ctx.metrics[pid], {
+            cpu_percent: h.cpu_pct, ram_percent: h.ram_pct,
+            disk_percent: h.disk_pct, cpu_temp: h.temp_c,
+            last_seen: new Date(h.ts_bucket * 1000).toUTCString(),
+          });
+        } else {
+          histMetrics[pid] = Object.assign({}, ctx.metrics[pid], { last_seen: null });
+        }
+      }
+      ctx = Object.assign({}, ctx, { metrics: histMetrics });
+    }
 
     const wrap = document.getElementById('blocks-wrap');
     const W = Math.max(1200, wrap.clientWidth - 40);
@@ -4794,6 +4924,18 @@ function renderProvenance() {
       const wrapEl = document.getElementById('blocks-wrap');
 
       svg.addEventListener('mousedown', (ev) => {
+        const extElDrag = ev.target.closest('.bd-ext');
+        if (extElDrag) {
+          const name = extElDrag.dataset.extName;
+          const lay = window.__v9_bdLayout;
+          const ext = lay && lay.externals && lay.externals[name];
+          if (ext) {
+            const p = bdSvgPoint(svg, ev);
+            _BD_EXT_DRAG = { name, startX: p.x, startY: p.y, origCx: ext.cx, origCy: ext.cy, moved: false };
+            ev.preventDefault();
+            return;
+          }
+        }
         const nodeEl = ev.target.closest('.bd-node');
         const innerEl = ev.target.closest('.bd-agent, .bd-db, .bd-ext');
         if (nodeEl && !innerEl) {
@@ -4832,6 +4974,19 @@ function renderProvenance() {
             _BD_NODE_POSITIONS[_BD_DRAG.pi_id] = { cx: _BD_DRAG.origCx + dx, cy: _BD_DRAG.origCy + dy };
             if (window.__v9_lastCtx) renderBlockDiagram(window.__v9_lastCtx);
           }
+        } else if (_BD_EXT_DRAG) {
+          const p = bdSvgPoint(svg, ev);
+          const dx = p.x - _BD_EXT_DRAG.startX;
+          const dy = p.y - _BD_EXT_DRAG.startY;
+          if (!_BD_EXT_DRAG.moved && (Math.abs(dx) + Math.abs(dy)) > 4) {
+            _BD_EXT_DRAG.moved = true;
+            const el = svg.querySelector('.bd-ext[data-ext-name="' + _BD_EXT_DRAG.name + '"]');
+            if (el) el.classList.add('dragging-ext');
+          }
+          if (_BD_EXT_DRAG.moved) {
+            _BD_EXT_POSITIONS[_BD_EXT_DRAG.name] = { cx: _BD_EXT_DRAG.origCx + dx, cy: _BD_EXT_DRAG.origCy + dy };
+            if (window.__v9_lastCtx) renderBlockDiagram(window.__v9_lastCtx);
+          }
         } else if (_BD_PAN) {
           const ctm = svg.getScreenCTM();
           const scale = ctm ? ctm.a : 1;
@@ -4849,6 +5004,24 @@ function renderProvenance() {
           _BD_PAN = null;
           if (wrapEl) wrapEl.classList.remove('panning');
           bdSaveViewBox();
+          return;
+        }
+        if (_BD_EXT_DRAG) {
+          const wasMoved = _BD_EXT_DRAG.moved;
+          const name = _BD_EXT_DRAG.name;
+          _BD_EXT_DRAG = null;
+          const el = svg.querySelector('.bd-ext[data-ext-name="' + name + '"]');
+          if (el) el.classList.remove('dragging-ext');
+          if (wasMoved) {
+            bdSaveExtPositions();
+          } else {
+            const ms = (window.__v9_lastCtx || {}).manifests || {};
+            let owner = null;
+            for (const [opid, m] of Object.entries(ms)) {
+              if ((m.externals || []).find(e => e.name === name)) { owner = opid; break; }
+            }
+            if (owner && typeof v9Select === 'function') v9Select({ type: 'external', pi_id: owner, name });
+          }
           return;
         }
         if (_BD_DRAG) {
@@ -5450,6 +5623,31 @@ function renderProvenance() {
     });
     const bdResetBtn = document.getElementById('bd-reset-btn');
     if (bdResetBtn) bdResetBtn.addEventListener('click', () => bdResetPositions());
+
+    // V2-PHASE-14 — time-mode toggle + playback slider + step buttons
+    document.querySelectorAll('#bd-time-mode-toggle button').forEach(btn => {
+      btn.addEventListener('click', () => bdSetTimeMode(btn.dataset.bdTime));
+    });
+    const slider = document.getElementById('bd-playback-slider');
+    if (slider) {
+      slider.addEventListener('input', () => {
+        const minutesAgo = (slider.max - slider.value) * 0.5;
+        const t = Date.now() - minutesAgo * 60 * 1000;
+        bdSetPlaybackTime(t);
+      });
+    }
+    document.querySelectorAll('#bd-playback-controls .pb-step').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (!_BD_PLAYBACK_TIME) return;
+        const deltaSec = parseInt(btn.dataset.pbStep, 10) || 0;
+        const newTime = _BD_PLAYBACK_TIME + deltaSec * 1000;
+        const oldest = Date.now() - 24 * 3600 * 1000;
+        const clamped = Math.max(oldest, Math.min(Date.now(), newTime));
+        const minutesAgo = (Date.now() - clamped) / 60000;
+        if (slider) slider.value = slider.max - Math.round(minutesAgo * 2);
+        bdSetPlaybackTime(clamped);
+      });
+    });
 
     // V2-PHASE-11-JS — refresh button + ESC keybinding
     const refreshBtn = document.getElementById('nv-refresh-btn');

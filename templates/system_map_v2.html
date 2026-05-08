@@ -3812,10 +3812,17 @@ function renderProvenance() {
     if (!grid) return;
     try {
       const tok = new URLSearchParams(location.search).get('token') || '';
-      const r = await fetch('/api/metrics/current' + (tok ? ('?token=' + encodeURIComponent(tok)) : ''),
-                            { credentials: 'same-origin' });
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      const data = await r.json();
+      const qs = tok ? ('?token=' + encodeURIComponent(tok)) : '';
+      const [metricsRes, manifestsRes, agentsRes] = await Promise.all([
+        fetch('/api/metrics/current' + qs, { credentials: 'same-origin' }),
+        fetch('/api/manifests' + qs, { credentials: 'same-origin' }),
+        fetch('/api/agents/status' + qs, { credentials: 'same-origin' }),
+      ]);
+      if (!metricsRes.ok) throw new Error('metrics HTTP ' + metricsRes.status);
+      const data = await metricsRes.json();
+      const manifests = manifestsRes.ok ? (await manifestsRes.json()) : {};
+      const agentsPayload = agentsRes.ok ? (await agentsRes.json()) : { agents: {} };
+      const agentsByGroup = agentsPayload.agents || {};
 
       // Determine which pi_ids are live (heartbeat within 5 minutes)
       const livePiIds = [];

@@ -258,8 +258,8 @@ def _company_stream_contents() -> tuple[list[dict], list[tuple[Path, str]]]:
         ("data/monitor.db",  DATA_DIR / "monitor.db",  "data/monitor.db",  "file",      "0644", False, "replace"),
         ("data/support.db",  DATA_DIR / "support.db",  "data/support.db",  "file",      "0644", False, "replace"),
         ("data/archives",    DATA_DIR / "archives",    "data/archives",    "directory", "0755", False, "merge"),
-        # Operator state files at synthos-company root — runtime-mutable, not in git
-        ("monitor_registry", SYNTHOS_HOME / ".monitor_registry.json", ".monitor_registry.json",
+        # Runtime-mutable operator state — not in git, would be lost on disaster
+        ("monitor_registry", DATA_DIR / ".monitor_registry.json", "data/.monitor_registry.json",
                                                                        "file",      "0600", False, "replace"),
         ("admin_overrides",  DATA_DIR / ".admin_overrides.json", "data/.admin_overrides.json",
                                                                        "file",      "0600", False, "replace"),

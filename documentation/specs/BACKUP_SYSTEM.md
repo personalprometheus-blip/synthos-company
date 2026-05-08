@@ -53,9 +53,15 @@ the next snapshot.
 
 | Stream | Source node | Contents | R2 prefix |
 |---|---|---|---|
-| `company` | pi4b | data/company.db + auditor.db + monitor.db + support.db + data/archives/ + company.env + agents/ + config/ + (legacy) user/ | `company/<pi_id>/<date>/` |
+| `company` | pi4b | data/{company,auditor,monitor,support}.db + data/archives/ + .monitor_registry.json + data/.admin_overrides.json + data/.patches_state.json + peer_nodes.json + company.env + agents/ + config/ + (legacy) user/ | `company/<pi_id>/<date>/` |
 | `customer` | pi5 | data/auth.db + data/customers/<uuid>/ | `customer/<pi_id>/<date>/` |
-| `retail` | pi5 | user/.env + user/signals.db + user/agreements/ | `retail/<pi_id>/<date>/` |
+| `retail` | pi5 | user/.env + user/signals.db + user/agreements/ + data/policy_eod/ | `retail/<pi_id>/<date>/` |
+
+**SQLite WAL handling (pi4b):** Before tarring, strongbox runs
+`PRAGMA wal_checkpoint(TRUNCATE)` on every SQLite DB so any uncommitted
+writes in `*.db-wal`/`*.db-shm` are folded into the main `.db` file.
+This means the backup tar contains only the main `.db` files (no -wal/-shm
+needed) and any restore is consistent.
 
 The 3-stream split limits the blast radius of a credential leak. A leak of the
 customer-stream R2 path doesn't expose operator config; a leak of retail-stream

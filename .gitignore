@@ -55,3 +55,6 @@ logs/archive/
 logs/*.bak.*
 data/.company_write.lock
 data/.monitor_registry.json
+
+# Local vault key — never commit
+.vault_key

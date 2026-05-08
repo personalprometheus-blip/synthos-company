@@ -7256,6 +7256,113 @@ def _expected_keys_for_node(node_id):
         print(f"[expected_keys] {node_id}: {e}", file=sys.stderr)
     return []
 
+
+# KEY-MGMT-PHASE-3 — Fernet vault for api_key_metadata.backup_value
+_VAULT_KEY_PATH = "/home/pi/synthos-company/.vault_key"
+_VAULT_FERNET = None
+
+def _vault_get_fernet():
+    """Lazy-init the Fernet instance. Generates a key on first use,
+    persisted at /home/pi/synthos-company/.vault_key with mode 0600."""
+    global _VAULT_FERNET
+    if _VAULT_FERNET is not None:
+        return _VAULT_FERNET
+    try:
+        from cryptography.fernet import Fernet
+    except ImportError:
+        print("[VAULT] cryptography not installed; encryption disabled (passthrough)", file=sys.stderr)
+        return None
+    if os.path.exists(_VAULT_KEY_PATH):
+        try:
+            with open(_VAULT_KEY_PATH, "rb") as f:
+                key = f.read().strip()
+        except Exception as e:
+            print(f"[VAULT] read key failed: {e}", file=sys.stderr)
+            return None
+    else:
+        key = Fernet.generate_key()
+        try:
+            with open(_VAULT_KEY_PATH, "wb") as f:
+                f.write(key)
+            os.chmod(_VAULT_KEY_PATH, 0o600)
+            print(f"[VAULT] generated new key at {_VAULT_KEY_PATH}")
+        except Exception as e:
+            print(f"[VAULT] write key failed: {e}", file=sys.stderr)
+            return None
+    _VAULT_FERNET = Fernet(key)
+    return _VAULT_FERNET
+
+# Sentinel prefix to identify encrypted blobs vs. legacy plaintext
+_VAULT_PREFIX = "vault:v1:"
+
+def _vault_encrypt(plaintext):
+    """Encrypt a string. Returns prefix + base64-Fernet-token. Returns
+    plaintext unchanged if the vault is unavailable (passthrough)."""
+    if not plaintext:
+        return plaintext
+    f = _vault_get_fernet()
+    if f is None:
+        return plaintext
+    if isinstance(plaintext, str) and plaintext.startswith(_VAULT_PREFIX):
+        return plaintext   # already encrypted
+    try:
+        token = f.encrypt(plaintext.encode("utf-8")).decode("ascii")
+        return _VAULT_PREFIX + token
+    except Exception as e:
+        print(f"[VAULT] encrypt failed: {e}", file=sys.stderr)
+        return plaintext
+
+def _vault_decrypt(value):
+    """Decrypt a vault-prefixed string. Returns the value unchanged if
+    not vault-prefixed (legacy plaintext) or if decryption fails."""
+    if not value or not isinstance(value, str):
+        return value
+    if not value.startswith(_VAULT_PREFIX):
+        return value   # legacy plaintext
+    f = _vault_get_fernet()
+    if f is None:
+        return value
+    try:
+        return f.decrypt(value[len(_VAULT_PREFIX):].encode("ascii")).decode("utf-8")
+    except Exception as e:
+        print(f"[VAULT] decrypt failed: {e}", file=sys.stderr)
+        return value
+
+def _vault_migrate_backup_values():
+    """One-shot migration: wrap any plaintext backup_value rows in vault
+    encryption. Runs at boot. Idempotent (skips already-encrypted rows
+    via the _VAULT_PREFIX sentinel)."""
+    f = _vault_get_fernet()
+    if f is None:
+        return
+    try:
+        with _support_conn() as conn:
+            rows = conn.execute(
+                "SELECT node, key_name, backup_value FROM api_key_metadata "
+                "WHERE backup_value IS NOT NULL AND backup_value != ''"
+            ).fetchall()
+            migrated = 0
+            for r in rows:
+                bv = r["backup_value"]
+                if bv and not bv.startswith(_VAULT_PREFIX):
+                    enc = _vault_encrypt(bv)
+                    if enc != bv:
+                        conn.execute(
+                            "UPDATE api_key_metadata SET backup_value=? WHERE node=? AND key_name=?",
+                            (enc, r["node"], r["key_name"]),
+                        )
+                        migrated += 1
+            if migrated:
+                print(f"[VAULT] migrated {migrated} backup_value row(s) to encrypted form")
+    except Exception as e:
+        print(f"[VAULT] migration failed: {e}", file=sys.stderr)
+
+# KEY-MGMT-PHASE-3 — run vault migration on module load (idempotent)
+try:
+    _vault_migrate_backup_values()
+except Exception as _e:
+    print(f"[VAULT] startup migration error (non-fatal): {_e}", file=sys.stderr)
+
 _KEY_FILTER = {
     'pi4b': {'ANTHROPIC_API_KEY','RESEND_API_KEY','GITHUB_TOKEN','SECRET_TOKEN','SSO_SECRET','PORTAL_TOKEN'},
     'pi5':  {'ANTHROPIC_API_KEY','ALPACA_API_KEY','ALPACA_SECRET_KEY','RESEND_API_KEY','GITHUB_TOKEN',
@@ -7476,7 +7583,9 @@ def api_node_keys_update(node):
                     backup_value=COALESCE(excluded.backup_value, backup_value),
                     notes=COALESCE(excluded.notes, notes),
                     updated_at=excluded.updated_at
-            """, (node, key_name, expires_at, backup_value, notes, now_iso))
+            """, (node, key_name, expires_at,
+                  _vault_encrypt(backup_value) if backup_value else backup_value,
+                  notes, now_iso))
     except Exception as e:
         return jsonify({"error": f"Metadata save failed: {e}"}), 500
 
@@ -7513,6 +7622,7 @@ def api_node_keys_rotate(node):
     try:
         with _support_conn() as conn:
             row = conn.execute(
+                # KEY-MGMT-PHASE-3 — decrypt on read
                 "SELECT backup_value FROM api_key_metadata WHERE node=? AND key_name=?",
                 (node, key_name)).fetchone()
     except Exception:
@@ -7521,7 +7631,8 @@ def api_node_keys_rotate(node):
     if not row or not row['backup_value']:
         return jsonify({"error": "No backup key to rotate"}), 400
 
-    backup_val = row['backup_value']
+    # KEY-MGMT-PHASE-3 — decrypt vault-encrypted backup_value
+    backup_val = _vault_decrypt(row['backup_value'])
 
     # Write backup as new primary
     if node == 'pi4b':
@@ -7546,7 +7657,8 @@ def api_node_keys_rotate(node):
     with _support_conn() as conn:
         conn.execute(
             "UPDATE api_key_metadata SET backup_value=?, updated_at=? WHERE node=? AND key_name=?",
-            (current_val, _dt.now(_tz.utc).isoformat(), node, key_name))
+            # KEY-MGMT-PHASE-3 — encrypt the demoted primary before storing
+            (_vault_encrypt(current_val), _dt.now(_tz.utc).isoformat(), node, key_name))
 
     print(f"[Monitor] Rotated {key_name} on {node}")
     return jsonify({"ok": True, "key_name": key_name, "node": node})

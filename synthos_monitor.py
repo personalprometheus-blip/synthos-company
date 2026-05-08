@@ -6839,9 +6839,7 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
   <div class="title" style="margin-top:8px"><span>Key Management</span></div>
   <div class="subtitle">API keys across all nodes &mdash; update, track expiration, rotate</div>
 
-  <div id="km-pi4b" class="card"><div class="card-label">pi4b &middot; Company Server</div><div class="km-table" id="km-table-pi4b"><div class="km-loading">Loading&hellip;</div></div><button class="km-add-btn" onclick="kmAddRow('pi4b')">+ Add Key</button></div>
-  <div id="km-pi5" class="card"><div class="card-label">pi5 &middot; Retail Node</div><div class="km-table" id="km-table-pi5"><div class="km-loading">Loading&hellip;</div></div><button class="km-add-btn" onclick="kmAddRow('pi5')">+ Add Key</button></div>
-  <div id="km-pi2w" class="card"><div class="card-label">pi2w &middot; Monitor Node</div><div class="km-table" id="km-table-pi2w"><div class="km-loading">Loading&hellip;</div></div></div>
+  <div id="km-cards"><div class="km-loading" style="padding:1rem">Loading nodes&hellip;</div></div>
 
 </div>
 
@@ -7060,10 +7058,53 @@ function kmAddRow(node) {
   kmEdit(node, name);
 }
 
-// Load all nodes on page init
-kmLoadNode('pi4b');
-kmLoadNode('pi5');
-kmLoadNode('pi2w');
+// KEY-MGMT-PHASE-2 — discover nodes from /api/manifests
+async function kmDiscoverNodes() {
+  var container = document.getElementById('km-cards');
+  if (!container) return;
+  try {
+    var r = await fetch('/api/manifests');
+    var data = await r.json();
+    var manifests = (data && data.manifests) || data || {};
+    var ids = Object.keys(manifests).sort(function(a, b) {
+      var roleOrder = { sentinel: 0, retail: 1, company_ops: 2 };
+      var ra = (manifests[a] || {}).role || 'zzz';
+      var rb = (manifests[b] || {}).role || 'zzz';
+      var oa = roleOrder[ra] != null ? roleOrder[ra] : 99;
+      var ob = roleOrder[rb] != null ? roleOrder[rb] : 99;
+      if (oa !== ob) return oa - ob;
+      return a.localeCompare(b);
+    });
+    if (ids.length === 0) {
+      container.innerHTML = '<div class="km-loading" style="padding:1rem;color:var(--pink)">No manifests discovered. Check /api/manifests.</div>';
+      return;
+    }
+    var shortMap = {
+      'pi4b-company': 'pi4b',
+      'synthos-pi-retail': 'pi5',
+      'pi2w-monitor': 'pi2w',
+    };
+    container.innerHTML = '';
+    ids.forEach(function(id) {
+      var m = manifests[id] || {};
+      var short = shortMap[id] || id;
+      var label = m.label || id;
+      var role = (m.role || 'unknown').replace(/_/g, ' ');
+      var card = document.createElement('div');
+      card.id = 'km-' + short;
+      card.className = 'card';
+      card.innerHTML = '<div class="card-label">' + short + ' &middot; ' + label +
+                        ' <span style="font-size:0.65rem;color:var(--muted);margin-left:6px">' + role + '</span></div>' +
+                       '<div class="km-table" id="km-table-' + short + '"><div class="km-loading">Loading&hellip;</div></div>' +
+                       '<button class="km-add-btn" onclick="kmAddRow(\''  + short + '\')">+ Add Key</button>';
+      container.appendChild(card);
+      kmLoadNode(short);
+    });
+  } catch (e) {
+    container.innerHTML = '<div class="km-loading" style="padding:1rem;color:var(--pink)">Failed to discover nodes: ' + e.message + '</div>';
+  }
+}
+kmDiscoverNodes();
 
 updatePreview();
 </script>
@@ -7194,6 +7235,27 @@ def api_node_power(pi_id):
 
 # ── KEY MANAGEMENT API ────────────────────────────────────────────────────────
 
+
+def _expected_keys_for_node(node_id):
+    """Read the manifest for `node_id` and return its expected_keys list.
+    Falls back to an empty list if the manifest is missing or malformed.
+
+    Used by /api/node-keys/<node> GET to enumerate which keys to display.
+    Replaces the legacy _KEY_FILTER hardcoded set as of Phase 2.
+    """
+    try:
+        # Reuse the same helpers that /api/manifests uses
+        if node_id == _read_local_manifest()[0]:
+            return (_read_local_manifest()[1] or {}).get("expected_keys") or []
+        # Peer node — fetch via the existing peer cache
+        for peer_id, peer in _load_peer_config().items():
+            if peer_id == node_id:
+                m = _fetch_peer_manifest(peer_id, peer["ssh_target"], peer.get("manifest_path", "~/manifest.json"))
+                return (m or {}).get("expected_keys") or []
+    except Exception as e:
+        print(f"[expected_keys] {node_id}: {e}", file=sys.stderr)
+    return []
+
 _KEY_FILTER = {
     'pi4b': {'ANTHROPIC_API_KEY','RESEND_API_KEY','GITHUB_TOKEN','SECRET_TOKEN','SSO_SECRET','PORTAL_TOKEN'},
     'pi5':  {'ANTHROPIC_API_KEY','ALPACA_API_KEY','ALPACA_SECRET_KEY','RESEND_API_KEY','GITHUB_TOKEN',
@@ -7270,18 +7332,35 @@ def _get_key_metadata():
 @app.route("/api/node-keys/<node>", methods=["GET"])
 def api_node_keys(node):
     """Fetch API keys for a node with obfuscated values and expiration metadata.
-    No auth required — values are obfuscated. Page-level auth gates access to /maintenance."""
+    No auth required — values are obfuscated. Page-level auth gates access to /maintenance.
 
-    allowed = _KEY_FILTER.get(node)
-    if allowed is None:
-        return jsonify({"error": f"Unknown node: {node}"}), 404
+    KEY-MGMT-PHASE-2 — keys enumerated from the node's manifest expected_keys[]
+    rather than the legacy _KEY_FILTER hardcoded set. Adding a new node only
+    requires writing its manifest; this endpoint picks up the new node
+    automatically.
+    """
+    # Map well-known node aliases to canonical pi_id (manifest node_id).
+    canon = {"pi4b": "pi4b-company", "pi5": "synthos-pi-retail", "pi2w": "pi2w-monitor"}
+    canon_id = canon.get(node, node)
 
-    # Read raw keys from node
-    if node == 'pi4b':
+    expected = _expected_keys_for_node(canon_id)
+    allowed_names = {e["name"] for e in expected if e.get("name")} if expected else None
+
+    # If no manifest declares expected_keys for this node, fall back to
+    # _KEY_FILTER for backward compat. Should disappear once all nodes
+    # have manifest v1.6.
+    if not allowed_names:
+        allowed_names = _KEY_FILTER.get(node) or _KEY_FILTER.get(canon_id)
+        if not allowed_names:
+            return jsonify({"error": f"Unknown node: {node}"}), 404
+
+    # Read raw keys from node (same dispatch as before by short alias)
+    short = {"pi4b-company": "pi4b", "synthos-pi-retail": "pi5", "pi2w-monitor": "pi2w"}.get(canon_id, node)
+    if short == 'pi4b':
         raw = _read_env()
-    elif node == 'pi5':
+    elif short == 'pi5':
         raw = _read_pi5_keys()
-    elif node == 'pi2w':
+    elif short == 'pi2w':
         raw = _read_pi2w_keys()
     else:
         raw = {}
@@ -7290,7 +7369,7 @@ def api_node_keys(node):
     from datetime import datetime as _dt, timezone as _tz
 
     keys = []
-    for kname in sorted(allowed):
+    for kname in sorted(allowed_names):
         val = raw.get(kname, '')
         meta = metadata.get((node, kname), {})
         exp = meta.get('expires_at')
@@ -7329,8 +7408,12 @@ def api_node_keys_update(node):
     backup_value = data.get('backup_value')
     notes = data.get('notes')
 
-    if node not in _KEY_FILTER:
+    canon = {"pi4b": "pi4b-company", "pi5": "synthos-pi-retail", "pi2w": "pi2w-monitor"}
+    canon_id = canon.get(node, node)
+    short = {"pi4b-company": "pi4b", "synthos-pi-retail": "pi5", "pi2w-monitor": "pi2w"}.get(canon_id, node)
+    if short not in {"pi4b", "pi5", "pi2w"}:
         return jsonify({"error": f"Unknown node: {node}"}), 404
+    node = short  # use short alias for the dispatch below
 
     # Write key value to the node's .env
     write_ok = False

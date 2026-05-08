@@ -31,12 +31,13 @@ contract is the floor below which no field can drop.
 | 1.2     | 2026-05-07 | Add `databases` (array) + `externals` (array)                         |
 | 1.3     | 2026-05-07 | Add `data_flows` (array) — declared outbound connections per node     |
 | 1.5     | 2026-05-07 | Add `gates` (array) on each agent — declared gate sequence            |
+| 1.6     | 2026-05-08 | Add `expected_keys` (array) on each manifest — node-scoped env vars   |
 
-## Schema (v1.5)
+## Schema (v1.6)
 
 ```json
 {
-  "manifest_version": "1.5",
+  "manifest_version": "1.6",
   "node_id": "pi4b-company",
   "label": "Company Operations Node",
   "role": "company_ops",
@@ -186,6 +187,27 @@ full label + purpose. Gates are static declaration only today — no live
 | `id`       | string | yes      | Stable gate identifier. Numbered prefix is conventional, e.g. `1_FAULT`, `2_BENCHMARK`, `3_REGIME`. The prefix before underscore is what the pill shows. |
 | `label`    | string | yes      | Short human-readable name shown in the detail panel. |
 | `purpose`  | string | optional | One-line description of what the gate checks or guards. |
+
+
+
+### Manifest expected_keys array entries (v1.6)
+
+Each manifest can declare which env vars (.env-level keys) it expects
+on its node. The maintenance page enumerates manifests and renders one
+card per node, with rows for each expected_key. Adding a new node ⇒
+new manifest with its own expected_keys[] ⇒ card appears automatically.
+
+| Field                    | Type    | Required | Description |
+|--------------------------|---------|----------|-------------|
+| `name`                   | string  | yes      | Env var name (uppercase, `^[A-Z][A-Z0-9_]+$`). |
+| `purpose`                | string  | yes      | One-line description of what the key is for. |
+| `rotation_interval_days` | integer | optional | Suggested rotation cadence; drives expiration warnings on the page. |
+| `required`               | boolean | optional, default false | When true, the page shows a red NOT SET marker if missing. |
+
+**Per-customer keys (ALPACA_API_KEY, ALPACA_SECRET_KEY) are NOT
+declared in expected_keys** — they live in each customer's encrypted
+auth.db row, not the node's .env. The maintenance page deals with
+node-scoped keys only.
 
 ## Installer integration notes
 

@@ -7349,14 +7349,34 @@ def api_node_keys_update(node):
             except Exception as e:
                 return jsonify({"error": f"pi5 write failed: {e}"}), 502
         elif node == 'pi2w':
-            import subprocess
+            # KEY-MGMT-PHASE-1 — Python-on-remote handles both update
+            # and append-on-miss. The original `sed -i 's|^X=.*|...'`
+            # only replaced existing lines; new keys silently no-oped.
+            import subprocess, json as _j
             try:
-                # Use sed to update in-place on remote
-                cmd = f"sed -i 's|^{key_name}=.*|{key_name}={value}|' /home/pi-02w/synthos/.env"
+                env_path = '/home/pi-02w/synthos/.env'
+                payload = _j.dumps({'k': key_name, 'v': value})
+                py_remote = (
+                    "import json,re,sys\n"
+                    f"d=json.loads({_j.dumps(payload)})\n"
+                    f"p='{env_path}'\n"
+                    "k,v=d['k'],d['v']\n"
+                    "try:\n  txt=open(p).read()\nexcept FileNotFoundError:\n  txt=''\n"
+                    "pat=re.compile(r'^'+re.escape(k)+r'=.*$',re.M)\n"
+                    "new,n=pat.subn(k+'='+v,txt)\n"
+                    "if n==0:\n"
+                    "  if new and not new.endswith('\\n'): new+='\\n'\n"
+                    "  new+=k+'='+v+'\\n'\n"
+                    "open(p,'w').write(new)\n"
+                    "print('OK' if k+'='+v in new else 'VERIFY_FAIL')\n"
+                )
                 r = subprocess.run(
-                    ["ssh", "-o", "ConnectTimeout=5", "pi-02w@10.0.0.12", cmd],
+                    ["ssh", "-o", "ConnectTimeout=5", "pi-02w@10.0.0.12",
+                     "python3", "-c", py_remote],
                     capture_output=True, text=True, timeout=10)
-                write_ok = (r.returncode == 0)
+                write_ok = (r.returncode == 0 and 'OK' in (r.stdout or ''))
+                if not write_ok:
+                    return jsonify({"error": f"pi2w write failed: rc={r.returncode} stderr={r.stderr[:200]}"}), 502
             except Exception as e:
                 return jsonify({"error": f"pi2w write failed: {e}"}), 502
 
@@ -7377,6 +7397,10 @@ def api_node_keys_update(node):
     except Exception as e:
         return jsonify({"error": f"Metadata save failed: {e}"}), 500
 
+    # KEY-MGMT-PHASE-1 — honest feedback
+    if value and not write_ok:
+        return jsonify({"ok": False, "error": f"Write to {node} reported success but verification failed",
+                        "key_name": key_name, "node": node}), 502
     return jsonify({"ok": True, "written": write_ok, "key_name": key_name, "node": node})
 
 

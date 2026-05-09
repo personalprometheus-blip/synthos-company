@@ -54,6 +54,52 @@
 .ac-view-btn:disabled{opacity:0.4;cursor:wait}
 .ac-help{font-size:11px;color:rgba(255,255,255,0.45);margin-bottom:12px;line-height:1.6;max-width:760px}
 .ac-help code{font-family:'JetBrains Mono',monospace;font-size:10px;background:rgba(255,255,255,0.04);padding:1px 5px;border-radius:3px;color:rgba(255,255,255,0.7)}
+
+/* ── VIEW-AS MODAL ─────────────────────────────────────────────────────
+   Modal backdrop is full-viewport fixed; inner card houses the iframe
+   that loads pi5's /admin/view-as URL. The iframe shows the customer's
+   portal exactly as they see it, with the read-only banner sticky at
+   top. ESC + click-outside-card + the X button + the banner's Exit
+   link (which postMessages us) all close the modal. */
+.ac-modal-backdrop{
+  position:fixed;inset:0;background:rgba(5,7,12,0.78);backdrop-filter:blur(4px);
+  display:none;align-items:center;justify-content:center;z-index:1000;
+}
+.ac-modal-backdrop.open{display:flex}
+.ac-modal-card{
+  width:min(1180px,96vw);height:min(92vh,920px);
+  background:#0a0c14;border:1px solid rgba(123,97,255,0.32);border-radius:12px;
+  box-shadow:0 30px 80px rgba(0,0,0,0.6);overflow:hidden;display:flex;flex-direction:column;
+}
+.ac-modal-head{
+  display:flex;align-items:center;gap:14px;padding:11px 16px;
+  background:linear-gradient(90deg,rgba(123,97,255,0.18) 0%,rgba(123,97,255,0.06) 100%);
+  border-bottom:1px solid rgba(123,97,255,0.26);
+  font-family:'Inter',system-ui,sans-serif;
+}
+.ac-modal-eye{font-size:16px}
+.ac-modal-title{flex:1;font-size:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#a78bfa}
+.ac-modal-sub{font-size:11px;color:rgba(255,255,255,0.6);margin-left:6px;text-transform:none;letter-spacing:0;font-weight:500}
+.ac-modal-newtab,.ac-modal-close{
+  background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);color:rgba(255,255,255,0.7);
+  padding:5px 10px;border-radius:6px;font-size:10px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;
+  cursor:pointer;font-family:inherit;text-decoration:none;display:inline-flex;align-items:center;gap:5px;
+}
+.ac-modal-newtab:hover,.ac-modal-close:hover{background:rgba(255,255,255,0.08);color:#fff}
+.ac-modal-close{background:rgba(255,75,110,0.08);border-color:rgba(255,75,110,0.32);color:#ff4b6e}
+.ac-modal-close:hover{background:rgba(255,75,110,0.16);color:#ff7a90}
+.ac-modal-body{flex:1;background:#0a0c14;position:relative;overflow:hidden}
+.ac-modal-iframe{width:100%;height:100%;border:none;display:block;background:#0a0c14}
+.ac-modal-loading{
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  color:rgba(255,255,255,0.4);font-size:12px;background:#0a0c14;letter-spacing:0.04em;
+}
+.ac-modal-loading.hidden{display:none}
+.ac-modal-loading .ac-spinner{
+  width:18px;height:18px;border:2px solid rgba(123,97,255,0.25);border-top-color:#a78bfa;
+  border-radius:99px;animation:ac-spin 0.7s linear infinite;margin-right:10px;
+}
+@keyframes ac-spin{to{transform:rotate(360deg)}}
 </style>
 
 <div class="ac-wrap">
@@ -72,6 +118,29 @@
 
   <div class="ac-dir" id="ac-dir-wrap">
     <div class="ac-dir-empty" id="ac-dir-loading">Loading customer list…</div>
+  </div>
+</div>
+
+<!-- VIEW-AS MODAL — hosts the pi5 portal iframe. Hidden until a row's
+     View button mints a token + tells us to open. -->
+<div class="ac-modal-backdrop" id="ac-view-modal" onclick="if(event.target===this)acCloseModal()">
+  <div class="ac-modal-card" role="dialog" aria-modal="true" aria-label="View as customer">
+    <div class="ac-modal-head">
+      <span class="ac-modal-eye">👁️</span>
+      <div class="ac-modal-title">
+        View as customer <span class="ac-modal-sub" id="ac-modal-sub">—</span>
+      </div>
+      <a class="ac-modal-newtab" id="ac-modal-newtab" href="#" target="_blank" rel="noopener noreferrer" title="Open in a new tab instead">↗ New tab</a>
+      <button class="ac-modal-close" onclick="acCloseModal()" title="Close (also runs Exit on the customer side)">✕ Close</button>
+    </div>
+    <div class="ac-modal-body">
+      <div class="ac-modal-loading" id="ac-modal-loading">
+        <div class="ac-spinner"></div>Opening customer portal…
+      </div>
+      <iframe class="ac-modal-iframe" id="ac-modal-iframe" name="view-as-iframe"
+              referrerpolicy="strict-origin-when-cross-origin"
+              sandbox="allow-same-origin allow-scripts allow-forms allow-popups"></iframe>
+    </div>
   </div>
 </div>
 
@@ -136,11 +205,72 @@
   }
 
   // ── VIEW-AS HANDOFF ──────────────────────────────────────────────────
-  // POST /api/view-as-customer with the customer_id; Pi4B forwards to Pi5
-  // /api/admin/view-as/mint-token, gets a single-use token, returns the
-  // redirect URL. The browser then bounces to portal.synth-cloud.com,
-  // which validates + consumes the token + sets up the impersonation
-  // session before rendering the dashboard.
+  // POST /api/view-as-customer with the customer_id; pi4b forwards to pi5
+  // /api/admin/view-as/mint-token to mint a single-use 60s token and
+  // returns a redirect_url. We load that URL inside an iframe in the
+  // modal — pi5 validates + consumes the token + swaps the session into
+  // impersonation mode + renders the dashboard, all inside the modal.
+  //
+  // Cookie note: portal.synth-cloud.com and command.synth-cloud.com
+  // share the synth-cloud.com registrable domain so they're "same-site"
+  // for SameSite=Strict cookie purposes — the session cookie does flow
+  // into the iframe even though the iframe is cross-origin.
+  //
+  // CSP / X-Frame-Options: pi5 emits frame-ancestors 'self'
+  // https://command.synth-cloud.com (and drops X-Frame-Options) only
+  // for view-as sessions — see retail_portal.py _security_headers().
+
+  const modalEl    = () => document.getElementById('ac-view-modal');
+  const iframeEl   = () => document.getElementById('ac-modal-iframe');
+  const loadingEl  = () => document.getElementById('ac-modal-loading');
+  const subEl      = () => document.getElementById('ac-modal-sub');
+  const newtabEl   = () => document.getElementById('ac-modal-newtab');
+
+  function openModal(redirectUrl, label){
+    const m = modalEl(), f = iframeEl(), l = loadingEl(), s = subEl(), n = newtabEl();
+    s.textContent = label || '—';
+    n.href = redirectUrl;
+    l.classList.remove('hidden');
+    f.onload = function(){ l.classList.add('hidden'); };
+    f.src = redirectUrl;
+    m.classList.add('open');
+    document.body.style.overflow = 'hidden';
+    // Trap ESC while modal is open
+    document.addEventListener('keydown', escHandler);
+  }
+
+  function closeModal(){
+    const m = modalEl(), f = iframeEl(), l = loadingEl();
+    m.classList.remove('open');
+    // Unload the iframe so the customer portal doesn't keep running
+    // (charts, polling, etc.) in the background. Server-side session
+    // is cleared by the banner's Exit link separately; if the user
+    // clicked our X button rather than the banner Exit, we punt the
+    // server-side cleanup to the next view-as session (single-use
+    // tokens + 30-min idle timeout limit the blast radius).
+    try { f.src = 'about:blank'; } catch(e){}
+    l.classList.remove('hidden');
+    document.body.style.overflow = '';
+    document.removeEventListener('keydown', escHandler);
+  }
+
+  function escHandler(e){
+    if (e.key === 'Escape') closeModal();
+  }
+
+  // Listen for postMessage from inside the iframe (banner Exit click).
+  // Only accept messages from the pi5 portal origin.
+  window.addEventListener('message', function(ev){
+    if (ev.origin !== 'https://portal.synth-cloud.com') return;
+    const data = ev.data || {};
+    if (data && data.type === 'view-as:exit') {
+      // The banner link is also navigating the iframe to /admin/view-as/exit
+      // which clears the server-side session. Give it a beat to land,
+      // then close the modal locally.
+      setTimeout(closeModal, 400);
+    }
+  });
+
   async function viewAsCustomer(btn, customerId, customerName){
     btn.disabled = true;
     const orig = btn.textContent;
@@ -155,11 +285,9 @@
       if (!r.ok || !d.ok || !d.redirect_url) {
         throw new Error(d.error || ('view-as mint failed: HTTP ' + r.status));
       }
-      // Open in new tab so admin can keep the accounts page open behind it.
-      // The 30-min idle timeout fires regardless of which tab is focused.
-      window.open(d.redirect_url, '_blank', 'noopener');
-      btn.textContent = 'Opened ↗';
-      setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 1800);
+      openModal(d.redirect_url, customerName + ' · read only · 30-min idle');
+      btn.textContent = 'Open ✓';
+      setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 1200);
     } catch(e) {
       console.error('view-as failed', e);
       btn.textContent = 'Error';
@@ -175,9 +303,10 @@
     }
   }
 
-  // Expose for onclick attribute
+  // Expose for onclick attributes
   window.acViewAsCustomer = viewAsCustomer;
   window.acCopyUuid       = copyUuid;
+  window.acCloseModal     = closeModal;
 
   // ── DIRECTORY ──────────────────────────────────────────────────────────
   async function loadDirectory(){

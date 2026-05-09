@@ -286,7 +286,24 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    # Heartbeat is self-published inside main() (right after connect)
-    # rather than via heartbeat.register_telemetry — that helper lives in
-    # the synthos repo, which company node doesn't clone.
+    # MQTT heartbeat (audit 2026-05-09) — non-fatal if utils/ unavailable.
+    # Note: main() also self-publishes a once-only "online" message + LWT
+    # on the same topic via the listener's own paho client, which we keep
+    # so the LWT is bound to the listener's connection (so its death
+    # actually triggers the offline broadcast). register_telemetry adds a
+    # SECOND paho connection that re-publishes every 30s — necessary
+    # because without periodic re-publish the listener would itself
+    # appear STALE in its own observation table after 120s.
+    try:
+        import os, sys as _hbsys
+        _here = os.path.dirname(os.path.abspath(__file__))
+        for _d in (_here, os.path.dirname(_here)):
+            _u = os.path.join(_d, 'utils')
+            if os.path.isdir(_u) and _u not in _hbsys.path:
+                _hbsys.path.insert(0, _u); break
+        from heartbeat import register_telemetry as _register_telemetry
+        _register_telemetry('mqtt_listener', long_running=True)
+    except Exception:
+        pass
+
     sys.exit(main())

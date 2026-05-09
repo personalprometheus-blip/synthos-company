@@ -10131,6 +10131,24 @@ def route_api_customers_active():
     return api_customers_active(request)
 
 if __name__ == "__main__":
+    # MQTT heartbeat (audit 2026-05-09) — non-fatal if utils/ unavailable.
+    # The pre-existing _self_heartbeat_loop POSTs system metrics over HTTP
+    # to localhost:PORT/heartbeat for the node-roster UI. This is an
+    # ADDITIVE pulse on the MQTT telemetry plane so the auditor's
+    # mqtt_observations table sees this node's liveness independently of
+    # the Flask HTTP loopback.
+    try:
+        import os as _hbos, sys as _hbsys
+        _here = _hbos.path.dirname(_hbos.path.abspath(__file__))
+        for _d in (_here, _hbos.path.dirname(_here)):
+            _u = _hbos.path.join(_d, 'utils')
+            if _hbos.path.isdir(_u) and _u not in _hbsys.path:
+                _hbsys.path.insert(0, _u); break
+        from heartbeat import register_telemetry as _register_telemetry
+        _register_telemetry('synthos_monitor', long_running=True)
+    except Exception:
+        pass
+
     init_db()
     trim_pi_events()
     if not SECRET_TOKEN:

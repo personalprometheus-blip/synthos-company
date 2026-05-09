@@ -182,4 +182,21 @@ def main():
 
 
 if __name__ == "__main__":
+    # MQTT heartbeat (audit 2026-05-09) — non-fatal if utils/ unavailable.
+    # node_heartbeat is itself an outbound HTTP POST to MONITOR_URL with
+    # system metrics (the legacy node-roster path). The MQTT pulse is the
+    # additive telemetry-plane signal so the auditor records that this
+    # cron actually fired, independent of whether the HTTP POST landed.
+    try:
+        import os as _hbos, sys as _hbsys
+        _here = _hbos.path.dirname(_hbos.path.abspath(__file__))
+        for _d in (_here, _hbos.path.dirname(_here)):
+            _u = _hbos.path.join(_d, 'utils')
+            if _hbos.path.isdir(_u) and _u not in _hbsys.path:
+                _hbsys.path.insert(0, _u); break
+        from heartbeat import register_telemetry as _register_telemetry
+        _register_telemetry('node_heartbeat', long_running=False)
+    except Exception:
+        pass
+
     main()

@@ -854,6 +854,19 @@ def cli_backup_status() -> None:
 # ── ENTRY POINT ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    # MQTT heartbeat (audit 2026-05-09) — non-fatal if utils/ unavailable
+    try:
+        import os, sys
+        _here = os.path.dirname(os.path.abspath(__file__))
+        for _d in (_here, os.path.dirname(_here)):
+            _u = os.path.join(_d, 'utils')
+            if os.path.isdir(_u) and _u not in sys.path:
+                sys.path.insert(0, _u); break
+        from heartbeat import register_telemetry as _register_telemetry
+        _register_telemetry('vault', long_running=False)
+    except Exception:
+        pass
+
     parser = argparse.ArgumentParser(description="Vault — Control Agent")
     parser.add_argument("--generate-key",    metavar="PI_ID",
                         help="Generate new license key for Pi")

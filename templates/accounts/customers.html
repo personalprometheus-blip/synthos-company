@@ -1,0 +1,263 @@
+<style>
+/* Customer Directory styles — robbed from templates/customers/activity.html
+   2026-05-08 with prefix renamed ca- → ac- to avoid collisions if both
+   pages are open in adjacent browser tabs. Same visual language.
+
+   Phase 1: directory + "View as customer" button (read-only impersonation).
+   Customer Activity Report stays on /customers#activity until phased out. */
+.ac-wrap{max-width:1200px;margin:0 auto;padding:20px 24px}
+.ac-h{font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.4);margin-bottom:10px;display:flex;align-items:center;gap:10px}
+.ac-h::after{content:'';flex:1;height:1px;background:rgba(255,255,255,0.07)}
+.ac-h-meta{font-size:10px;font-weight:500;color:rgba(255,255,255,0.3);text-transform:none;letter-spacing:0;margin-left:auto;font-family:'JetBrains Mono',monospace}
+.ac-dir{background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:0;margin-bottom:24px;overflow:auto}
+.ac-dir-empty{padding:40px;text-align:center;color:rgba(255,255,255,0.3);font-size:12px}
+.ac-dir-table{width:100%;border-collapse:collapse;font-size:12px;table-layout:auto}
+.ac-dir-table thead th{
+  text-align:left;padding:10px 9px;border-bottom:1px solid rgba(255,255,255,0.08);
+  font-weight:600;color:rgba(255,255,255,0.4);font-size:9px;text-transform:uppercase;letter-spacing:0.08em;
+  background:rgba(255,255,255,0.02);position:sticky;top:0;white-space:nowrap;
+}
+.ac-dir-table tbody td{padding:9px 9px;border-bottom:1px solid rgba(255,255,255,0.04);vertical-align:middle}
+.ac-dir-table tbody tr:hover td{background:rgba(255,255,255,0.025)}
+.ac-dir-table tbody tr:last-child td{border-bottom:none}
+.ac-dir-table th.col-email,.ac-dir-table td.col-email{max-width:240px}
+.ac-dir-table th.col-uuid,.ac-dir-table td.col-uuid{white-space:nowrap;min-width:108px}
+.ac-dir-table th.col-joined,.ac-dir-table td.col-joined{white-space:nowrap;min-width:90px}
+.ac-dir-table th.col-plan,.ac-dir-table td.col-plan,
+.ac-dir-table th.col-status,.ac-dir-table td.col-status,
+.ac-dir-table th.col-trading,.ac-dir-table td.col-trading,
+.ac-dir-table th.col-alpaca,.ac-dir-table td.col-alpaca,
+.ac-dir-table th.col-view,.ac-dir-table td.col-view{white-space:nowrap}
+.ac-dir-name{font-weight:600;color:rgba(255,255,255,0.95);font-size:13px;white-space:nowrap}
+.ac-dir-email{font-family:'JetBrains Mono',monospace;font-size:11px;color:rgba(255,255,255,0.6);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;max-width:240px}
+.ac-dir-uuid{font-family:'JetBrains Mono',monospace;font-size:10px;color:rgba(255,255,255,0.3);cursor:pointer;white-space:nowrap}
+.ac-dir-uuid:hover{color:rgba(255,255,255,0.6)}
+.ac-dir-uuid.copied{color:#00f5d4}
+.ac-pill{display:inline-flex;align-items:center;gap:4px;padding:2px 9px;border-radius:99px;font-size:10px;font-weight:600;letter-spacing:0.04em;font-family:inherit;line-height:1.6}
+.ac-pill-tier{background:rgba(123,97,255,0.08);border:1px solid rgba(123,97,255,0.25);color:#a78bfa}
+.ac-pill-active{background:rgba(0,245,212,0.06);border:1px solid rgba(0,245,212,0.22);color:#00f5d4}
+.ac-pill-trial{background:rgba(123,97,255,0.06);border:1px solid rgba(123,97,255,0.22);color:#a78bfa}
+.ac-pill-past{background:rgba(245,166,35,0.07);border:1px solid rgba(245,166,35,0.25);color:#f5a623}
+.ac-pill-cancel{background:rgba(255,75,110,0.06);border:1px solid rgba(255,75,110,0.22);color:#ff4b6e}
+.ac-pill-mute{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);color:rgba(255,255,255,0.45)}
+.ac-pill-paper{background:rgba(123,97,255,0.06);border:1px solid rgba(123,97,255,0.2);color:#a78bfa}
+.ac-pill-live{background:rgba(0,245,212,0.07);border:1px solid rgba(0,245,212,0.25);color:#00f5d4}
+.ac-check{display:inline-block;width:14px;height:14px;border-radius:99px;text-align:center;font-size:9px;line-height:14px;font-weight:700}
+.ac-check-yes{background:rgba(0,245,212,0.15);color:#00f5d4}
+.ac-check-no{background:rgba(255,255,255,0.04);color:rgba(255,255,255,0.3)}
+.ac-view-btn{
+  background:rgba(123,97,255,0.10);border:1px solid rgba(123,97,255,0.32);color:#a78bfa;
+  border-radius:6px;padding:5px 13px;font-size:10px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;
+  cursor:pointer;font-family:inherit;transition:all 0.12s;
+}
+.ac-view-btn:hover{background:rgba(123,97,255,0.18);border-color:rgba(123,97,255,0.5);color:#c4b5fd}
+.ac-view-btn:disabled{opacity:0.4;cursor:wait}
+.ac-help{font-size:11px;color:rgba(255,255,255,0.45);margin-bottom:12px;line-height:1.6;max-width:760px}
+.ac-help code{font-family:'JetBrains Mono',monospace;font-size:10px;background:rgba(255,255,255,0.04);padding:1px 5px;border-radius:3px;color:rgba(255,255,255,0.7)}
+</style>
+
+<div class="ac-wrap">
+
+  <div class="ac-h">
+    Customer Directory
+    <span class="ac-h-meta" id="ac-dir-count">—</span>
+  </div>
+
+  <div class="ac-help">
+    Click <strong>View</strong> on any row to open that customer's portal dashboard
+    in <span style="color:#a78bfa">read-only impersonation mode</span> — exactly as
+    they see it. All write actions are blocked. Session expires after 30 minutes
+    of idle. Every view-as is logged.
+  </div>
+
+  <div class="ac-dir" id="ac-dir-wrap">
+    <div class="ac-dir-empty" id="ac-dir-loading">Loading customer list…</div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const SECRET_TOKEN = '{{ secret_token }}';
+  let _customers = null;
+
+  function ymd(d){
+    const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), dd=String(d.getDate()).padStart(2,'0');
+    return y+'-'+m+'-'+dd;
+  }
+
+  function fmtRelativeDate(iso){
+    if (!iso) return '—';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '—';
+    const days = Math.floor((Date.now() - d.getTime()) / 86400000);
+    if (days < 1) return 'today';
+    if (days === 1) return '1 day ago';
+    if (days < 30) return days + ' days ago';
+    if (days < 365) return Math.floor(days/30) + ' mo ago';
+    return Math.floor(days/365) + 'y ago';
+  }
+
+  function fmtTier(tier){
+    if (!tier) return '<span class="ac-pill ac-pill-mute">—</span>';
+    const label = tier.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase());
+    return '<span class="ac-pill ac-pill-tier">' + label + '</span>';
+  }
+
+  function fmtStatus(status){
+    if (!status) return '<span class="ac-pill ac-pill-mute">—</span>';
+    const cls = status === 'active'    ? 'ac-pill-active'
+              : status === 'trialing'  ? 'ac-pill-trial'
+              : status === 'past_due'  ? 'ac-pill-past'
+              : status === 'cancelled' ? 'ac-pill-cancel'
+              : 'ac-pill-mute';
+    return '<span class="ac-pill ' + cls + '">' + status.replace(/_/g,' ') + '</span>';
+  }
+
+  function fmtTradingMode(mode){
+    if (!mode) return '<span class="ac-pill ac-pill-mute">—</span>';
+    const cls = mode === 'LIVE' ? 'ac-pill-live' : 'ac-pill-paper';
+    return '<span class="ac-pill ' + cls + '">' + mode + '</span>';
+  }
+
+  function escHtml(s){
+    return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  }
+
+  async function copyUuid(el){
+    const uuid = el.getAttribute('data-uuid');
+    if (!uuid) return;
+    try {
+      await navigator.clipboard.writeText(uuid);
+      el.classList.add('copied');
+      const orig = el.textContent;
+      el.textContent = 'copied!';
+      setTimeout(() => { el.classList.remove('copied'); el.textContent = orig; }, 1100);
+    } catch(e) { /* swallow */ }
+  }
+
+  // ── VIEW-AS HANDOFF ──────────────────────────────────────────────────
+  // POST /api/view-as-customer with the customer_id; Pi4B forwards to Pi5
+  // /api/admin/view-as/mint-token, gets a single-use token, returns the
+  // redirect URL. The browser then bounces to portal.synth-cloud.com,
+  // which validates + consumes the token + sets up the impersonation
+  // session before rendering the dashboard.
+  async function viewAsCustomer(btn, customerId, customerName){
+    btn.disabled = true;
+    const orig = btn.textContent;
+    btn.textContent = 'Opening…';
+    try {
+      const r = await fetch('/api/view-as-customer', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-Token': SECRET_TOKEN},
+        body: JSON.stringify({customer_id: customerId}),
+      });
+      const d = await r.json();
+      if (!r.ok || !d.ok || !d.redirect_url) {
+        throw new Error(d.error || ('view-as mint failed: HTTP ' + r.status));
+      }
+      // Open in new tab so admin can keep the accounts page open behind it.
+      // The 30-min idle timeout fires regardless of which tab is focused.
+      window.open(d.redirect_url, '_blank', 'noopener');
+      btn.textContent = 'Opened ↗';
+      setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 1800);
+    } catch(e) {
+      console.error('view-as failed', e);
+      btn.textContent = 'Error';
+      btn.style.borderColor = 'rgba(255,75,110,0.5)';
+      btn.style.color = '#ff4b6e';
+      setTimeout(() => {
+        btn.disabled = false;
+        btn.textContent = orig;
+        btn.style.borderColor = '';
+        btn.style.color = '';
+      }, 2400);
+      alert('Could not open view-as session for ' + customerName + ':\n\n' + e.message);
+    }
+  }
+
+  // Expose for onclick attribute
+  window.acViewAsCustomer = viewAsCustomer;
+  window.acCopyUuid       = copyUuid;
+
+  // ── DIRECTORY ──────────────────────────────────────────────────────────
+  async function loadDirectory(){
+    try {
+      const r = await fetch('/api/proxy/billing/all-customers', {headers:{'X-Token':SECRET_TOKEN}});
+      if (!r.ok) throw new Error('billing fetch ' + r.status);
+      const d = await r.json();
+      _customers = (d.customers || []).filter(c => c.id);
+    } catch(e) {
+      _customers = [];
+      const wrap = document.getElementById('ac-dir-wrap');
+      wrap.innerHTML = '<div class="ac-dir-empty" style="color:#ff4b6e">Failed to load customer list — ' + escHtml(String(e)) + '</div>';
+      return;
+    }
+
+    const wrap = document.getElementById('ac-dir-wrap');
+    const countEl = document.getElementById('ac-dir-count');
+    const tabCountEl = document.getElementById('acc-cust-count');
+    const n = _customers.length;
+    if (countEl) countEl.textContent = n + ' customer' + (n === 1 ? '' : 's');
+    if (tabCountEl) tabCountEl.textContent = String(n);
+
+    if (!n) {
+      wrap.innerHTML = '<div class="ac-dir-empty">No customers yet.</div>';
+      return;
+    }
+
+    // Sort newest first.
+    _customers.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+
+    const rows = _customers.map(c => {
+      const name = c.name || '(unnamed)';
+      const email = c.email || '—';
+      const uuid = c.id || '';
+      const uuidShort = uuid ? uuid.slice(0,8) + '…' : '—';
+      const nameJs  = (name).replace(/'/g,"\\'");
+      const uuidJs  = (uuid).replace(/'/g,"\\'");
+      return `
+        <tr>
+          <td><div class="ac-dir-name">${escHtml(name)}</div></td>
+          <td class="col-email"><div class="ac-dir-email" title="${escHtml(email)}">${escHtml(email)}</div></td>
+          <td class="col-plan">${fmtTier(c.pricing_tier)}</td>
+          <td class="col-status">${fmtStatus(c.subscription_status)}</td>
+          <td class="col-trading">${fmtTradingMode(c.trading_mode)}</td>
+          <td class="col-alpaca"><span class="ac-check ${c.has_alpaca ? 'ac-check-yes' : 'ac-check-no'}">${c.has_alpaca ? '✓' : '✗'}</span></td>
+          <td class="col-joined"><div style="font-size:11px;color:rgba(255,255,255,0.7)">${fmtRelativeDate(c.created_at)}</div></td>
+          <td class="col-uuid"><span class="ac-dir-uuid" data-uuid="${escHtml(uuid)}" onclick="acCopyUuid(this)" title="${escHtml(uuid)}">${escHtml(uuidShort)}</span></td>
+          <td class="col-view"><button class="ac-view-btn" onclick="acViewAsCustomer(this, '${uuidJs}', '${nameJs}')" title="Open this customer's portal in read-only impersonation mode">View</button></td>
+        </tr>
+      `;
+    }).join('');
+
+    wrap.innerHTML = `
+      <table class="ac-dir-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th class="col-email">Email</th>
+            <th class="col-plan">Plan</th>
+            <th class="col-status">Status</th>
+            <th class="col-trading">Trading</th>
+            <th class="col-alpaca">Alpaca</th>
+            <th class="col-joined">Joined</th>
+            <th class="col-uuid">UUID</th>
+            <th class="col-view"></th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  }
+
+  // Lazy-load: only fetch when the tab activates. The accounts.html shell
+  // activates 'customers' by default so this fires on page load anyway,
+  // but the guard means switching tabs doesn't re-fetch unnecessarily.
+  if (!window._acDirLoaded) {
+    window._acDirLoaded = true;
+    document.addEventListener('DOMContentLoaded', loadDirectory);
+    // Also fire if DOMContentLoaded already passed
+    if (document.readyState !== 'loading') loadDirectory();
+  }
+})();
+</script>

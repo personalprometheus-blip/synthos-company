@@ -1766,6 +1766,7 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
         <a href="/auditor" class="hmenu-item">System Health</a>
         <a href="/admin/alerts" class="hmenu-item">Alerts Center</a>
         <a href="/logs" class="hmenu-item">Logs</a>
+        <a href="/accounts" class="hmenu-item">Accounts</a>
         <a href="/customers" class="hmenu-item">Customers <span id="appr-badge" style="display:none;background:var(--amber);color:#000;font-size:9px;font-weight:800;padding:1px 5px;border-radius:99px;margin-left:3px"></span></a>
         <a href="/company-finances" class="hmenu-item">Company Finances</a>
         <a href="/reports" class="hmenu-item">Reports</a>
@@ -4909,6 +4910,7 @@ def _subpage_header(page_name):
         '<a href="/auditor">System Health</a>'
         '<a href="/admin/alerts">Alerts Center</a>'
         '<a href="/logs">Logs</a>'
+        '<a href="/accounts">Accounts</a>'
         '<a href="/customers">Customers</a>'
         '<a href="/company-finances">Company Finances</a>'
         '<a href="/reports">Reports</a>'
@@ -6654,6 +6656,87 @@ def customers_page():
         'customers.html',
         secret_token=SECRET_TOKEN,
     )
+
+
+# ── ACCOUNTS PAGE ────────────────────────────────────────────────────────────
+# New consolidated /accounts page (2026-05-08). v1 ships with the Customers
+# tab active — directory robbed from /customers#activity, plus a "View as
+# customer" button per row that opens the customer's pi5 portal in read-only
+# impersonation mode. Employees + Tests tabs are placeholders waiting on
+# PROJ-employee-access-v1 to ship. /customers is kept alive during the
+# transition; will be retired once everything has migrated to /accounts.
+
+@app.route("/accounts")
+def accounts_page():
+    """New consolidated accounts admin (Customers / Employees / Tests)."""
+    if not _authorized():
+        return redirect(url_for("login"))
+    return _subpage_header('Accounts') + render_template(
+        'accounts.html',
+        secret_token=SECRET_TOKEN,
+    )
+
+
+@app.route("/api/view-as-customer", methods=["POST"])
+def api_view_as_customer():
+    """Mint a single-use view-as token from pi5 and return the redirect URL.
+
+    Browser flow:
+      1. JS in /accounts#customers POSTs {customer_id} here
+      2. We forward to pi5 /api/admin/view-as/mint-token with X-Token auth
+      3. Return {ok, redirect_url} — JS opens in a new tab
+      4. Pi5 validates + consumes the token + sets up impersonation session
+
+    Authorized callers: existing pi4b admin sessions (X-Token or session
+    cookie). Once employee accounts ship, this endpoint will additionally
+    check the caller has the 'view_as_customer' permission grant.
+    """
+    if not _authorized():
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+
+    data = request.get_json(silent=True) or {}
+    customer_id = (data.get("customer_id") or "").strip()
+    if not customer_id:
+        return jsonify({"ok": False, "error": "customer_id required"}), 400
+
+    import requests as _req
+    try:
+        r = _req.post(
+            f"{RETAIL_PORTAL_URL}/api/admin/view-as/mint-token",
+            headers={"X-Token": SECRET_TOKEN, "Content-Type": "application/json"},
+            json={"customer_id": customer_id, "admin_id": "admin"},
+            timeout=8,
+        )
+    except Exception as e:
+        print(f"[view-as] mint-token call failed: {e}")
+        return jsonify({"ok": False, "error": f"pi5 unreachable: {e}"}), 502
+
+    if r.status_code != 200:
+        # Surface pi5's error reason if it returned JSON, else raw text
+        body = {}
+        try:
+            body = r.json()
+        except Exception:
+            body = {"error": (r.text or "")[:200]}
+        return jsonify({"ok": False, "error": body.get("error", "mint failed"),
+                        "status": r.status_code}), 502
+
+    payload = r.json()
+    token = payload.get("token")
+    if not token:
+        return jsonify({"ok": False, "error": "no token in pi5 response"}), 502
+
+    # Build the public Pi5 URL the admin's browser bounces to. The token IS
+    # the auth — it's single-use, expires in 60s, and consume_token records
+    # the consumer's IP + User-Agent for the audit trail.
+    portal_base = os.getenv("RETAIL_PORTAL_PUBLIC_URL", "https://portal.synth-cloud.com")
+    redirect_url = f"{portal_base}/admin/view-as?token={token}"
+
+    return jsonify({
+        "ok": True,
+        "redirect_url": redirect_url,
+        "expires_at": payload.get("expires_at"),
+    })
 
 
 # ── POLICY EOD PAGE (Trader V1 daily comparison) ─────────────────────────────

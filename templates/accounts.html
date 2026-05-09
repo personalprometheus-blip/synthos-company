@@ -1,0 +1,73 @@
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0a0c14;color:rgba(255,255,255,0.88);font-family:'Inter',system-ui,sans-serif;font-size:14px;min-height:100vh}
+::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:99px}
+
+.acc-tabs-wrap{max-width:1200px;margin:0 auto;padding:18px 24px 0}
+.acc-tabs{display:flex;gap:4px;border-bottom:1px solid rgba(255,255,255,0.08)}
+.acc-tab{
+  padding:9px 18px;border-radius:8px 8px 0 0;font-size:11px;font-weight:600;
+  background:transparent;border:none;color:rgba(255,255,255,0.5);
+  cursor:pointer;font-family:inherit;letter-spacing:0.06em;text-transform:uppercase;
+  transition:all 0.15s;
+  border-bottom:2px solid transparent;
+  margin-bottom:-1px;
+}
+.acc-tab:hover{background:rgba(255,255,255,0.04);color:rgba(255,255,255,0.8)}
+.acc-tab.active{background:rgba(0,245,212,0.06);color:#00f5d4;border-bottom-color:#00f5d4}
+.acc-tab-meta{font-size:9px;color:rgba(255,255,255,0.3);margin-left:6px;font-family:'JetBrains Mono',monospace;letter-spacing:0}
+.acc-panel{display:none}
+.acc-panel.active{display:block}
+.acc-stub{padding:60px 24px;text-align:center;color:rgba(255,255,255,0.3);font-size:13px;max-width:600px;margin:0 auto}
+.acc-stub h3{font-size:14px;font-weight:600;color:rgba(255,255,255,0.7);margin-bottom:8px;letter-spacing:0.04em;text-transform:uppercase}
+.acc-stub p{font-size:12px;line-height:1.6;margin-bottom:8px}
+.acc-stub .acc-stub-tag{display:inline-block;font-size:10px;font-family:'JetBrains Mono',monospace;color:#a78bfa;background:rgba(123,97,255,0.08);border:1px solid rgba(123,97,255,0.22);padding:3px 9px;border-radius:99px;margin-bottom:14px;letter-spacing:0.04em}
+</style>
+
+<div class="acc-tabs-wrap">
+  <div class="acc-tabs">
+    <button class="acc-tab" data-tab="customers">Customers <span class="acc-tab-meta" id="acc-cust-count"></span></button>
+    <button class="acc-tab" data-tab="employees">Employees <span class="acc-tab-meta">soon</span></button>
+    <button class="acc-tab" data-tab="tests">Tests <span class="acc-tab-meta">soon</span></button>
+  </div>
+</div>
+
+<div class="acc-panel" id="acc-panel-customers">
+  {% include 'accounts/customers.html' %}
+</div>
+<div class="acc-panel" id="acc-panel-employees">
+  {% include 'accounts/employees.html' %}
+</div>
+<div class="acc-panel" id="acc-panel-tests">
+  {% include 'accounts/tests.html' %}
+</div>
+
+<script>
+(function(){
+  // Customers first — it's the only live tab in v1. Employees + Tests are
+  // empty placeholders waiting on PROJ-employee-access-v1 to ship.
+  const VALID = ['customers','employees','tests'];
+  const DEFAULT_TAB = 'customers';
+
+  function activate(tab){
+    if (!VALID.includes(tab)) tab = DEFAULT_TAB;
+    document.querySelectorAll('.acc-tab').forEach(function(b){
+      b.classList.toggle('active', b.dataset.tab === tab);
+    });
+    document.querySelectorAll('.acc-panel').forEach(function(p){
+      p.classList.toggle('active', p.id === 'acc-panel-' + tab);
+    });
+    if (window.location.hash !== '#' + tab) {
+      history.replaceState(null, '', '#' + tab);
+    }
+  }
+
+  document.querySelectorAll('.acc-tab').forEach(function(b){
+    b.addEventListener('click', function(){ activate(b.dataset.tab); });
+  });
+  window.addEventListener('hashchange', function(){
+    activate((window.location.hash || '').slice(1) || DEFAULT_TAB);
+  });
+  activate((window.location.hash || '').slice(1) || DEFAULT_TAB);
+})();
+</script>

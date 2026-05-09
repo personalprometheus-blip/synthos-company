@@ -3973,6 +3973,17 @@ document.addEventListener('click',function(e){if(!document.getElementById('hbtn'
   </div>
 </div>
 
+<div id="histcov-drawer">
+  <div id="histcov-drawer-header">
+    <div id="histcov-drawer-title">History Mirror</div>
+    <span id="histcov-drawer-meta" style="font-size:10px;color:var(--muted);font-family:'JetBrains Mono',monospace">—</span>
+    <button id="histcov-drawer-close" onclick="histcovCloseDrawer()" title="Close">&times;</button>
+  </div>
+  <div id="histcov-drawer-body">
+    <div style="padding:20px;color:var(--muted);font-size:11px">Loading scan&hellip;</div>
+  </div>
+</div>
+
 <script>
 /* SIGCOV-JS — hero card + drawer */
 let _SIGCOV_LAST = null;
@@ -4110,6 +4121,153 @@ document.addEventListener('keydown', function(ev) {
 // Initial + 60s refresh
 sigcovLoad();
 setInterval(sigcovLoad, 60000);
+
+// HISTCOV — sibling of SIGCOV but for the history-mirror DBs
+let _HISTCOV_LAST = null;
+
+function histcovBarClass(pct) {
+  if (pct == null) return '';
+  if (pct >= 90) return 'green';
+  if (pct >= 50) return 'amber';
+  return 'red';
+}
+
+function histcovEscape(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c) {
+    return ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"})[c];
+  });
+}
+
+function histcovFmtAge(hrs) {
+  if (hrs == null) return 'never';
+  if (hrs < 1) return Math.round(hrs * 60) + 'm';
+  if (hrs < 24) return hrs.toFixed(1) + 'h';
+  return (hrs / 24).toFixed(1) + 'd';
+}
+
+function histcovFmtBytes(mb) {
+  if (mb == null) return '—';
+  if (mb < 1) return (mb * 1024).toFixed(0) + ' KB';
+  if (mb < 1000) return mb.toFixed(1) + ' MB';
+  return (mb / 1024).toFixed(2) + ' GB';
+}
+
+function histcovFmtRows(n) {
+  if (n == null) return '—';
+  if (n < 1000) return String(n);
+  if (n < 1000000) return (n / 1000).toFixed(1) + 'K';
+  return (n / 1000000).toFixed(2) + 'M';
+}
+
+async function histcovLoad() {
+  try {
+    const r = await fetch('/api/history-coverage');
+    if (!r.ok) return;
+    const data = await r.json();
+    const nodes = data.nodes || {};
+    const ids = Object.keys(nodes);
+    const fill = document.getElementById('histcov-bar-fill');
+    const pctEl = document.getElementById('histcov-bar-pct');
+    const metaDbs = document.getElementById('histcov-meta-dbs');
+    const metaScan = document.getElementById('histcov-meta-scan');
+    if (ids.length === 0) {
+      if (fill) fill.style.width = '0%';
+      if (pctEl) pctEl.textContent = '—';
+      if (metaDbs) metaDbs.textContent = 'no scans yet';
+      return;
+    }
+    const scan = nodes[ids[0]];
+    _HISTCOV_LAST = scan;
+    const overall = scan.overall_pct;
+    if (fill) {
+      fill.style.width = (overall != null ? overall : 0) + '%';
+      fill.className = 'histcov-bar-fill ' + histcovBarClass(overall);
+    }
+    if (pctEl) pctEl.textContent = overall != null ? overall.toFixed(0) + '%' : '—';
+    const dbs = scan.dbs || [];
+    const fresh = dbs.filter(function(d) { return d.is_fresh; }).length;
+    if (metaDbs) metaDbs.textContent = fresh + '/' + dbs.length + ' DBs fresh';
+    if (metaScan) {
+      try {
+        const t = new Date(scan.scan_at).getTime();
+        const ageSec = (Date.now() - t) / 1000;
+        if (ageSec < 60) metaScan.textContent = Math.floor(ageSec) + 's ago';
+        else if (ageSec < 3600) metaScan.textContent = Math.floor(ageSec/60) + 'm ago';
+        else metaScan.textContent = Math.floor(ageSec/3600) + 'h ago';
+      } catch (e) { metaScan.textContent = '—'; }
+    }
+    histcovRenderDrawer(scan);
+  } catch (e) { /* silent */ }
+}
+
+function histcovRenderDrawer(scan) {
+  const body = document.getElementById('histcov-drawer-body');
+  const meta = document.getElementById('histcov-drawer-meta');
+  if (!body) return;
+  if (meta) {
+    const fresh = (scan.dbs || []).filter(function(d) { return d.is_fresh; }).length;
+    meta.textContent = scan.node_id + ' · ' + fresh + '/' + (scan.dbs || []).length + ' fresh · ' + scan.active_tickers + ' active tickers';
+  }
+  const dbs = (scan.dbs || []).slice().sort(function(a, b) {
+    if (a.is_fresh === b.is_fresh) return a.name.localeCompare(b.name);
+    return a.is_fresh ? 1 : -1;
+  });
+  if (dbs.length === 0) {
+    body.innerHTML = '<div style="padding:20px;color:var(--muted)">No DBs reported.</div>';
+    return;
+  }
+  let html = '';
+  for (const d of dbs) {
+    const cls = d.is_fresh ? 'fresh' : 'stale';
+    html += '<div class="histcov-db ' + cls + '">';
+    html += '<div class="histcov-db-head">';
+    html += '<span class="histcov-db-name">' + histcovEscape(d.name) + '</span>';
+    html += '<span class="histcov-db-status ' + cls + '">' + (d.is_fresh ? '✓ fresh' : '⚠ stale') + '</span>';
+    if (d.is_updating) html += '<span class="sigcov-updating-badge">● updating</span>';
+    html += '</div>';
+    if (d.purpose) html += '<div class="histcov-db-purpose">' + histcovEscape(d.purpose) + '</div>';
+    html += '<div class="histcov-db-stats">';
+    html += '<span class="label">Rows</span><span class="value">' + histcovFmtRows(d.row_count) + '</span>';
+    html += '<span class="label">Size</span><span class="value">' + histcovFmtBytes(d.size_mb) + '</span>';
+    if (d.distinct_tickers != null) {
+      html += '<span class="label">Tickers</span><span class="value">' + d.distinct_tickers.toLocaleString() + '</span>';
+    }
+    if (d.earliest && d.latest) {
+      html += '<span class="label">Range</span><span class="value">' + histcovEscape(String(d.earliest).slice(0,10)) + ' → ' + histcovEscape(String(d.latest).slice(0,10)) + '</span>';
+    }
+    html += '<span class="label">Last write</span><span class="value">' + histcovFmtAge(d.age_hours) + ' ago</span>';
+    html += '<span class="label">Threshold</span><span class="value">≤ ' + d.freshness_threshold_hours + 'h</span>';
+    html += '<span class="label">Owner</span><span class="value">' + histcovEscape(d.owner_agent) + '</span>';
+    html += '<span class="label">Schedule</span><span class="value">' + histcovEscape(d.schedule) + '</span>';
+    html += '</div>';
+    if (d.extra && Object.keys(d.extra).length > 0) {
+      const extraStr = Object.keys(d.extra).map(function(k) {
+        const v = d.extra[k];
+        if (typeof v === 'object') return k + ': ' + JSON.stringify(v);
+        return k + ': ' + v;
+      }).join(' · ');
+      html += '<div class="histcov-db-extra">' + histcovEscape(extraStr) + '</div>';
+    }
+    html += '</div>';
+  }
+  body.innerHTML = html;
+}
+
+function histcovOpenDrawer() {
+  if (_HISTCOV_LAST) histcovRenderDrawer(_HISTCOV_LAST);
+  document.getElementById('histcov-drawer').classList.add('open');
+}
+function histcovCloseDrawer() {
+  document.getElementById('histcov-drawer').classList.remove('open');
+}
+
+document.addEventListener('keydown', function(ev) {
+  if (ev.key === 'Escape') histcovCloseDrawer();
+});
+
+histcovLoad();
+setInterval(histcovLoad, 60000);
 </script>
 </body>
 </html>"""
@@ -9712,6 +9870,134 @@ def api_signal_coverage_current():
             ).fetchone()
             if row:
                 out[r["node_id"]] = _signal_coverage_enrich(json.loads(row["payload"]))
+        return jsonify({"nodes": out, "scan_count": len(out)}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        try: conn.close()
+        except: pass
+
+
+def history_coverage_table_init():
+    """Idempotent CREATE TABLE for history_coverage in auditor.db.
+    Mirrors signal_coverage shape but tracks the 8 history-mirror DBs."""
+    auditor_db = os.getenv("AUDITOR_DB_PATH", "/home/pi/synthos-company/data/auditor.db")
+    conn = sqlite3.connect(auditor_db, timeout=5)
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS history_coverage (
+                node_id TEXT NOT NULL,
+                scan_at INTEGER NOT NULL,
+                payload TEXT NOT NULL,
+                overall_pct REAL,
+                PRIMARY KEY (node_id, scan_at)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_history_coverage_node ON history_coverage(node_id, scan_at DESC)")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+@app.route("/api/history-coverage", methods=["POST"])
+def api_history_coverage_report():
+    """Receive history-mirror coverage scan from a retail node. Stores
+    in auditor.db.history_coverage. Auth via X-Token (SECRET_TOKEN)."""
+    token = request.headers.get("X-Token", "")
+    if token != SECRET_TOKEN:
+        return jsonify({"error": "unauthorized"}), 401
+    try:
+        data = request.get_json(force=True)
+    except Exception:
+        return jsonify({"error": "invalid JSON"}), 400
+    node_id = data.get("node_id") or "unknown"
+    scan_iso = data.get("scan_at") or ""
+    overall = data.get("overall_pct")
+    try:
+        scan_epoch = int(__import__("datetime").datetime.strptime(
+            scan_iso, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=__import__("datetime").timezone.utc).timestamp())
+    except Exception:
+        scan_epoch = int(time.time())
+
+    history_coverage_table_init()
+    auditor_db = os.getenv("AUDITOR_DB_PATH", "/home/pi/synthos-company/data/auditor.db")
+    conn = sqlite3.connect(auditor_db, timeout=5)
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO history_coverage (node_id, scan_at, payload, overall_pct) VALUES (?, ?, ?, ?)",
+            (node_id, scan_epoch, json.dumps(data), overall),
+        )
+        cutoff = int(time.time()) - 7 * 86400
+        conn.execute(
+            "DELETE FROM history_coverage WHERE node_id = ? AND scan_at < ?",
+            (node_id, cutoff),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return jsonify({"ok": True, "node_id": node_id, "scan_at": scan_iso}), 200
+
+
+def _history_coverage_enrich(scan):
+    """Add is_updating flag to each DB by joining MQTT heartbeat freshness.
+    A DB's owner_agent is 'actively updating' when last MQTT publish <30s."""
+    if not scan or not scan.get("dbs"):
+        return scan
+    fresh_agents = set()
+    try:
+        conn = sqlite3.connect(_AUDITOR_DB_PATH, timeout=5)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT topic, last_seen_ts FROM mqtt_observations "
+            "WHERE topic LIKE 'process/heartbeat/%'"
+        ).fetchall()
+        conn.close()
+        now = time.time()
+        for r in rows:
+            parts = r["topic"].split("/")
+            if len(parts) >= 4:
+                name = "/".join(parts[3:])
+                age = now - (r["last_seen_ts"] or 0)
+                if age < 30:
+                    fresh_agents.add(name)
+    except Exception:
+        pass
+    for d in scan["dbs"]:
+        owner = d.get("owner_agent")
+        d["is_updating"] = bool(owner and owner in fresh_agents)
+    return scan
+
+
+@app.route("/api/history-coverage", methods=["GET"])
+def api_history_coverage_current():
+    """Latest history-mirror coverage scan(s) for the histcov dashboard card."""
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    node = request.args.get("node", "").strip()
+    auditor_db = os.getenv("AUDITOR_DB_PATH", "/home/pi/synthos-company/data/auditor.db")
+    try:
+        conn = sqlite3.connect(auditor_db, timeout=5)
+        conn.row_factory = sqlite3.Row
+        if node:
+            row = conn.execute(
+                "SELECT node_id, scan_at, payload, overall_pct FROM history_coverage "
+                "WHERE node_id = ? ORDER BY scan_at DESC LIMIT 1",
+                (node,),
+            ).fetchone()
+            payload = json.loads(row["payload"]) if row else None
+            return jsonify({"node": node, "scan": _history_coverage_enrich(payload)}), 200
+        rows = conn.execute(
+            "SELECT node_id, MAX(scan_at) AS latest FROM history_coverage GROUP BY node_id"
+        ).fetchall()
+        out = {}
+        for r in rows:
+            row = conn.execute(
+                "SELECT payload FROM history_coverage WHERE node_id = ? AND scan_at = ?",
+                (r["node_id"], r["latest"]),
+            ).fetchone()
+            if row:
+                out[r["node_id"]] = _history_coverage_enrich(json.loads(row["payload"]))
         return jsonify({"nodes": out, "scan_count": len(out)}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500

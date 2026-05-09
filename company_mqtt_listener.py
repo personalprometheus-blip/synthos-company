@@ -70,13 +70,21 @@ AUDITOR_DB = os.environ.get(
     str(_HERE / "data" / "auditor.db"),
 )
 
-SUMMARY_INTERVAL_S = 60   # log a summary line this often
-HEARTBEAT_STALE_S  = 120  # warn if an agent hasn't pulsed in this long
+SUMMARY_INTERVAL_S  = 60   # log a summary line this often
+HEARTBEAT_STALE_S   = 120  # warn (log) if an agent hasn't pulsed in this long
+HEARTBEAT_ALERT_S   = 600  # escalate to scoop_queue at this threshold (10 min)
+
+# scoop_queue lives in company.db on pi4b. Same default path as company_auditor.
+COMPANY_DB = os.environ.get(
+    "COMPANY_DB_PATH",
+    str(_HERE / "data" / "company.db"),
+)
 
 # ── STATE ─────────────────────────────────────────────────────────────────
 _state_lock = Lock()
 _topic_counts: dict[str, int] = {}     # topic -> messages received this minute
 _last_heartbeat: dict[str, float] = {} # agent_key -> epoch_ts
+_alerted_stale: set[str] = set()       # agents we've already escalated this stale event
 _stop_event = Event()
 
 
@@ -142,11 +150,62 @@ def _on_message(topic: str, payload: bytes) -> None:
     _record_observation(topic, payload)
 
 
+# ── ADMIN-ALERT ESCALATION ────────────────────────────────────────────────
+
+def _notify_scoop_for_stale(agent_key: str, stale_s: int, *, recovery: bool = False) -> None:
+    """Insert a row into company.db scoop_queue when an agent crosses
+    HEARTBEAT_ALERT_S of silence (or when it recovers).
+
+    Mirrors company_auditor._notify_scoop's pattern. Never throws — a
+    DB-write failure must not take down the listener.
+    """
+    try:
+        import uuid
+        eid       = str(uuid.uuid4())
+        queued_at = datetime.now(timezone.utc).isoformat()
+        if recovery:
+            subject  = f"MQTT agent recovered: {agent_key}"
+            body     = (
+                f"Agent {agent_key} resumed publishing heartbeats after "
+                f"{stale_s}s of silence. Resolving prior STALE alert."
+            )
+            severity = 'low'
+        else:
+            subject  = f"MQTT agent STALE: {agent_key} ({stale_s}s silent)"
+            body     = (
+                f"Agent {agent_key} has not published a heartbeat in {stale_s} "
+                f"seconds (threshold: {HEARTBEAT_ALERT_S}s). Either the agent "
+                f"crashed without LWT, the broker connection broke, or the "
+                f"agent's process exited cleanly without re-publishing on "
+                f"restart. Check journalctl on the publishing node."
+            )
+            severity = 'high'
+        priority = 0 if severity in ('critical', 'high') else 1
+
+        conn = sqlite3.connect(COMPANY_DB, timeout=30)
+        try:
+            conn.execute(
+                "INSERT INTO scoop_queue "
+                "(id, event_type, priority, subject, body, source_agent, "
+                " audience, status, queued_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (eid, 'mqtt_listener_stale', priority, subject, body,
+                 'mqtt_listener', 'ops', 'queued', queued_at),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        log.info("Scoop alert queued: %s", subject)
+    except Exception as e:
+        log.warning("Could not queue scoop alert for %s: %s", agent_key, e)
+
+
 # ── PERIODIC SUMMARY ──────────────────────────────────────────────────────
 
 def _summary_loop() -> None:
     """Background thread: every SUMMARY_INTERVAL_S, log a one-line summary
-    of message counts + any stale heartbeats."""
+    of message counts + any stale heartbeats. Escalates to scoop_queue
+    when an agent crosses HEARTBEAT_ALERT_S of silence."""
     while not _stop_event.is_set():
         if _stop_event.wait(SUMMARY_INTERVAL_S):
             return
@@ -159,6 +218,19 @@ def _summary_loop() -> None:
                 for k, ts in _last_heartbeat.items()
                 if now - ts > HEARTBEAT_STALE_S
             )
+            # ── Admin-alert escalation: agents past HEARTBEAT_ALERT_S
+            # we haven't already alerted on; recovery for agents we
+            # alerted on that are now back inside the stale window.
+            new_alerts: list[tuple[str, int]] = []
+            recoveries: list[tuple[str, int]] = []
+            for k, ts in _last_heartbeat.items():
+                age = int(now - ts)
+                if age > HEARTBEAT_ALERT_S and k not in _alerted_stale:
+                    _alerted_stale.add(k)
+                    new_alerts.append((k, age))
+                elif age <= HEARTBEAT_STALE_S and k in _alerted_stale:
+                    _alerted_stale.discard(k)
+                    recoveries.append((k, age))
         # Aggregate counts by topic prefix for compact log
         agg = {"heartbeat": 0, "regime": 0, "prices": 0, "other": 0}
         for topic, n in counts.items():
@@ -178,6 +250,11 @@ def _summary_loop() -> None:
         if stale:
             msg += f" | STALE: {', '.join(stale)}"
         log.info(msg)
+        # Fire admin alerts outside the lock (DB I/O can be slow)
+        for k, age in new_alerts:
+            _notify_scoop_for_stale(k, age, recovery=False)
+        for k, age in recoveries:
+            _notify_scoop_for_stale(k, age, recovery=True)
 
 
 # ── MAIN LOOP ─────────────────────────────────────────────────────────────

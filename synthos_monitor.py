@@ -1582,6 +1582,36 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 #sigcov-drawer-close{ background:transparent; border:1px solid rgba(255,255,255,0.13); color:rgba(255,255,255,0.55); width:28px; height:28px; border-radius:6px; cursor:pointer; padding:0; font-size:16px; line-height:1; }
 #sigcov-drawer-close:hover{ color:#ff4b6e; border-color:rgba(255,75,110,0.4); }
 #sigcov-drawer-body{ flex:1; overflow-y:auto; padding:14px 20px; }
+/* HISTCOV — sibling of SIGCOV but for the local history-mirror DBs */
+.histcov-card{ cursor:pointer; transition:all 0.18s; }
+.histcov-card:hover{ border-color:rgba(255,179,71,0.35); }
+.histcov-bar-wrap{ position:relative; height:28px; background:rgba(255,255,255,0.04); border-radius:6px; overflow:hidden; margin:6px 0 4px; border:1px solid rgba(255,255,255,0.07); }
+.histcov-bar-fill{ position:absolute; left:0; top:0; bottom:0; width:0%; transition:width 0.7s ease-out, background 0.3s; box-shadow:inset 0 0 8px rgba(255,255,255,0.10); }
+.histcov-bar-fill.green{ background:linear-gradient(90deg,#4ade80 0%,#facc15 100%); }
+.histcov-bar-fill.amber{ background:linear-gradient(90deg,#f5a623 0%,#ffb347 100%); }
+.histcov-bar-fill.red{ background:linear-gradient(90deg,#ff4b6e 0%,#ff0040 100%); }
+.histcov-bar-pct{ position:absolute; right:10px; top:50%; transform:translateY(-50%); font-family:&apos;JetBrains Mono&apos;,monospace; font-weight:700; font-size:13px; color:#fff; text-shadow:0 1px 3px rgba(0,0,0,0.5); }
+.histcov-meta{ display:flex; justify-content:space-between; font-size:10px; color:var(--muted); font-family:&apos;JetBrains Mono&apos;,monospace; margin-top:4px; }
+#histcov-drawer{ position:fixed; top:0; right:0; bottom:0; width:480px; max-width:100vw; background:rgba(13,17,32,0.97); border-left:1px solid rgba(255,179,71,0.25); backdrop-filter:blur(16px); z-index:9998; transform:translateX(100%); transition:transform 0.32s ease-out; box-shadow:-12px 0 40px rgba(0,0,0,0.5); display:flex; flex-direction:column; }
+#histcov-drawer.open{ transform:translateX(0); }
+#histcov-drawer-header{ padding:18px 20px; border-bottom:1px solid rgba(255,255,255,0.07); display:flex; align-items:center; gap:10px; flex-shrink:0; }
+#histcov-drawer-title{ font-size:15px; font-weight:700; color:#fff; flex:1; letter-spacing:0.04em; }
+#histcov-drawer-close{ background:transparent; border:1px solid rgba(255,255,255,0.13); color:rgba(255,255,255,0.55); width:28px; height:28px; border-radius:6px; cursor:pointer; padding:0; font-size:16px; line-height:1; }
+#histcov-drawer-close:hover{ color:#ff4b6e; border-color:rgba(255,75,110,0.4); }
+#histcov-drawer-body{ flex:1; overflow-y:auto; padding:14px 20px; }
+.histcov-db{ padding:12px 14px; margin-bottom:10px; background:rgba(255,255,255,0.025); border:1px solid rgba(255,255,255,0.06); border-radius:8px; }
+.histcov-db.fresh{ border-left:3px solid #4ade80; }
+.histcov-db.stale{ border-left:3px solid #ff4b6e; }
+.histcov-db-head{ display:flex; align-items:center; gap:8px; margin-bottom:6px; flex-wrap:wrap; }
+.histcov-db-name{ font-family:&apos;JetBrains Mono&apos;,monospace; font-size:12px; font-weight:700; color:#fff; }
+.histcov-db-status{ font-family:&apos;JetBrains Mono&apos;,monospace; font-size:10px; padding:1px 6px; border-radius:99px; }
+.histcov-db-status.fresh{ background:rgba(74,222,128,0.12); color:#4ade80; border:1px solid rgba(74,222,128,0.3); }
+.histcov-db-status.stale{ background:rgba(255,75,110,0.12); color:#ff4b6e; border:1px solid rgba(255,75,110,0.3); }
+.histcov-db-purpose{ font-size:10px; color:rgba(255,255,255,0.55); margin-bottom:8px; line-height:1.4; }
+.histcov-db-stats{ display:grid; grid-template-columns:auto 1fr; gap:4px 14px; font-size:10px; font-family:&apos;JetBrains Mono&apos;,monospace; }
+.histcov-db-stats .label{ color:rgba(255,255,255,0.45); }
+.histcov-db-stats .value{ color:rgba(255,255,255,0.85); text-align:right; }
+.histcov-db-extra{ margin-top:8px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.05); font-size:9px; font-family:&apos;JetBrains Mono&apos;,monospace; color:rgba(255,255,255,0.5); word-break:break-all; }
 .sigcov-source{ padding:14px 0; border-bottom:1px solid rgba(255,255,255,0.05); }
 .sigcov-source:last-child{ border-bottom:none; }
 .sigcov-source-head{ display:flex; align-items:center; gap:8px; margin-bottom:6px; }
@@ -2042,6 +2072,17 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
         <div class="sigcov-meta">
           <span id="sigcov-meta-sources">no scan yet</span>
           <span id="sigcov-meta-scan">—</span>
+        </div>
+      </div>
+      <div class="graph-card histcov-card" id="histcov-card" onclick="histcovOpenDrawer()" title="Click for full breakdown">
+        <div class="graph-card-title">History Mirror</div>
+        <div class="histcov-bar-wrap">
+          <div class="histcov-bar-fill" id="histcov-bar-fill"></div>
+          <div class="histcov-bar-pct" id="histcov-bar-pct">—</div>
+        </div>
+        <div class="histcov-meta">
+          <span id="histcov-meta-dbs">no scan yet</span>
+          <span id="histcov-meta-scan">—</span>
         </div>
       </div>
     </div>
@@ -4134,9 +4175,7 @@ function histcovBarClass(pct) {
 
 function histcovEscape(s) {
   if (s == null) return '';
-  return String(s).replace(/[&<>"']/g, function(c) {
-    return ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"})[c];
-  });
+  return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]);
 }
 
 function histcovFmtAge(hrs) {

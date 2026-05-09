@@ -80,6 +80,23 @@ COMPANY_DB = os.environ.get(
     str(_HERE / "data" / "company.db"),
 )
 
+# Only long-running agents are eligible for STALE→email escalation.
+# Cron- and timer-fired one-shots are EXPECTED to be silent between
+# their schedule windows — alerting on them every 10min would create
+# a firehose (e.g. weekly librarian → 144 alerts between Mon and Sun).
+# Source of truth: telemetry_agents.long_running in
+# synthos/synthos_build/data/system_architecture.json. Keep in sync.
+# (Agents marked deprecated are still alertable — if anyone re-enables
+# market_daemon or trade_daemon we want to know.)
+LONG_RUNNING_AGENTS = frozenset({
+    # pi5
+    "portal", "watchdog", "interrogation_listener", "price_poller",
+    "market_daemon", "trade_daemon",   # deprecated but wiring retained
+    "dispatcher", "trader_server",
+    # company / pi4b
+    "synthos_monitor", "archivist", "auditor", "mqtt_listener", "scoop",
+})
+
 # ── STATE ─────────────────────────────────────────────────────────────────
 _state_lock = Lock()
 _topic_counts: dict[str, int] = {}     # topic -> messages received this minute
@@ -221,9 +238,16 @@ def _summary_loop() -> None:
             # ── Admin-alert escalation: agents past HEARTBEAT_ALERT_S
             # we haven't already alerted on; recovery for agents we
             # alerted on that are now back inside the stale window.
+            # Gated on LONG_RUNNING_AGENTS — cron/timer-fired one-shots
+            # are expected to be silent between their schedule windows
+            # and alerting on them creates a firehose.
             new_alerts: list[tuple[str, int]] = []
             recoveries: list[tuple[str, int]] = []
             for k, ts in _last_heartbeat.items():
+                # k looks like "<node>/<agent>" — extract agent name
+                agent_name = k.rsplit("/", 1)[-1]
+                if agent_name not in LONG_RUNNING_AGENTS:
+                    continue
                 age = int(now - ts)
                 if age > HEARTBEAT_ALERT_S and k not in _alerted_stale:
                     _alerted_stale.add(k)

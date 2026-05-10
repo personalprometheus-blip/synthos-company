@@ -9926,6 +9926,118 @@ def api_signal_coverage_current():
         try: conn.close()
         except: pass
 
+# ── REALTIME SIGNAL COVERAGE ──────────────────────────────────────────────
+# Sibling of signal_coverage (above) — same schema, separate table,
+# separate endpoints, separate dashboard drawer. Receives every-60s
+# scans from the realtime subset of retail_signal_coverage_agent.
+# Created 2026-05-09 alongside the realtime drawer split.
+
+def signal_coverage_realtime_table_init():
+    """Idempotent CREATE TABLE for signal_coverage_realtime in auditor.db.
+    Mirrors signal_coverage shape — separate table because the realtime
+    sweep runs at 60s cadence vs the standard sweep's 5min, and pruning
+    windows differ (24h vs 7 days)."""
+    auditor_db = os.getenv("AUDITOR_DB_PATH", "/home/pi/synthos-company/data/auditor.db")
+    conn = sqlite3.connect(auditor_db, timeout=5)
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS signal_coverage_realtime (
+                node_id TEXT NOT NULL,
+                scan_at INTEGER NOT NULL,
+                payload TEXT NOT NULL,
+                overall_pct REAL,
+                PRIMARY KEY (node_id, scan_at)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_signal_coverage_realtime_node ON signal_coverage_realtime(node_id, scan_at DESC)")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+@app.route("/api/realtime-signal-coverage", methods=["POST"])
+def api_realtime_signal_coverage_report():
+    """Receive a realtime coverage scan from a retail node. Stores in
+    auditor.db.signal_coverage_realtime; prunes per-node to 24h.
+    Auth via X-Token (SECRET_TOKEN)."""
+    token = request.headers.get("X-Token", "")
+    if token != SECRET_TOKEN:
+        return jsonify({"error": "unauthorized"}), 401
+    try:
+        data = request.get_json(force=True)
+    except Exception:
+        return jsonify({"error": "invalid JSON"}), 400
+    node_id = data.get("node_id") or "unknown"
+    scan_iso = data.get("scan_at") or ""
+    overall = data.get("overall_pct")
+    try:
+        scan_epoch = int(__import__('datetime').datetime.strptime(
+            scan_iso, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=__import__('datetime').timezone.utc).timestamp())
+    except Exception:
+        scan_epoch = int(time.time())
+
+    signal_coverage_realtime_table_init()
+    auditor_db = os.getenv("AUDITOR_DB_PATH", "/home/pi/synthos-company/data/auditor.db")
+    conn = sqlite3.connect(auditor_db, timeout=5)
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO signal_coverage_realtime (node_id, scan_at, payload, overall_pct) VALUES (?, ?, ?, ?)",
+            (node_id, scan_epoch, json.dumps(data), overall),
+        )
+        # Prune to last 24h per node — realtime sweep runs at 60s cadence
+        # so 7 days would balloon to ~10k rows/node for no benefit.
+        cutoff = int(time.time()) - 86400
+        conn.execute(
+            "DELETE FROM signal_coverage_realtime WHERE node_id = ? AND scan_at < ?",
+            (node_id, cutoff),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return jsonify({"ok": True, "node_id": node_id, "scan_at": scan_iso}), 200
+
+
+@app.route("/api/realtime-signal-coverage", methods=["GET"])
+def api_realtime_signal_coverage_current():
+    """Latest realtime coverage scan(s). Same query-param shape as
+    /api/signal-coverage. Reuses _signal_coverage_enrich() to add the
+    is_updating flag from MQTT freshness."""
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    node = request.args.get("node", "").strip()
+    auditor_db = os.getenv("AUDITOR_DB_PATH", "/home/pi/synthos-company/data/auditor.db")
+    try:
+        conn = sqlite3.connect(auditor_db, timeout=5)
+        conn.row_factory = sqlite3.Row
+        if node:
+            row = conn.execute(
+                "SELECT node_id, scan_at, payload, overall_pct FROM signal_coverage_realtime "
+                "WHERE node_id = ? ORDER BY scan_at DESC LIMIT 1",
+                (node,),
+            ).fetchone()
+            payload = json.loads(row["payload"]) if row else None
+            return jsonify({"node": node, "scan": _signal_coverage_enrich(payload)}), 200
+        rows = conn.execute(
+            "SELECT node_id, MAX(scan_at) AS latest FROM signal_coverage_realtime GROUP BY node_id"
+        ).fetchall()
+        out = {}
+        for r in rows:
+            row = conn.execute(
+                "SELECT payload FROM signal_coverage_realtime WHERE node_id = ? AND scan_at = ?",
+                (r["node_id"], r["latest"]),
+            ).fetchone()
+            if row:
+                out[r["node_id"]] = _signal_coverage_enrich(json.loads(row["payload"]))
+        return jsonify({"nodes": out, "scan_count": len(out)}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        try: conn.close()
+        except: pass
+
+
+
 
 def history_coverage_table_init():
     """Idempotent CREATE TABLE for history_coverage in auditor.db.

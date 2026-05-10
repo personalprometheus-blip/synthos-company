@@ -3097,10 +3097,20 @@ function updateCommandState(pis) {
     peOff   += (pe.off   || 0);
     peTotal += (pe.total || 0);
   });
+  // 2026-05-09 fix: highlight the majority state, not just unanimous.
+  // Pre-fix: peOn === peTotal required ALL customers in one state. A
+  // single customer in shadow (or err) made BOTH buttons unhighlighted
+  // even though the fleet is clearly enforcing. Now highlights dominant
+  // state >= 50%; subtitle text below shows precise count for nuance.
+  var pctEnforcing = peTotal > 0 ? peOn  / peTotal : 0;
+  var pctShadow    = peTotal > 0 ? peOff / peTotal : 0;
+  var enforceMajority = peTotal > 0 && pctEnforcing >= 0.5;
+  var shadowMajority  = peTotal > 0 && pctShadow    >  0.5;
+  cls('cmd-policy-enforce', 'active-teal',  enforceMajority);
+  cls('cmd-policy-shadow',  'active-amber', shadowMajority);
+  // Keep allEnforcing / allShadow for the subtitle text below
   var allEnforcing = peTotal > 0 && peOn  === peTotal;
   var allShadow    = peTotal > 0 && peOff === peTotal;
-  cls('cmd-policy-enforce', 'active-teal',  allEnforcing);
-  cls('cmd-policy-shadow',  'active-amber', allShadow);
 
   // Subtitle text
   var gs = document.getElementById('adm-gate-sub');

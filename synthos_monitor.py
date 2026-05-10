@@ -4292,7 +4292,7 @@ function sigcovRtRenderDrawer(scan) {
   html += '<div style="padding:8px 12px; margin-bottom:10px; ';
   html +=   'background:rgba(0,245,212,0.04); ';
   html +=   'border:1px solid rgba(0,245,212,0.18); ';
-  html +=   'border-radius:6px; font-family:\'JetBrains Mono\',monospace; ';
+  html +=   'border-radius:6px; font-family:&apos;JetBrains Mono&apos;,monospace; ';
   html +=   'font-size:10px; color:rgba(0,245,212,0.85); line-height:1.45">';
   html +=   '<strong>window=' + sigcovEscape(window_) + '</strong> · thresholds widen ';
   html +=   'outside market hours (extended 600s, overnight 3600s).';

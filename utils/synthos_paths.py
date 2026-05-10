@@ -24,7 +24,7 @@ Exports:
   AGENTS_DIR   — synthos-company/agents/
   UTILS_DIR    — synthos-company/utils/
   DB_PATH      — synthos-company/data/company.db
-  ENV_PATH     — synthos-company/.env
+  ENV_PATH     — synthos-company/company.env
   RETAIL_DIR   — sibling synthos/ root (may not exist on all deployments)
   RETAIL_CORE  — synthos/core/ (retail Pi agent files)
 
@@ -119,7 +119,12 @@ AGENTS_DIR = BASE_DIR / "agents"
 UTILS_DIR  = BASE_DIR / "utils"
 
 DB_PATH  = DATA_DIR / "company.db"
-ENV_PATH = BASE_DIR / ".env"
+# 2026-05-08: was ".env" (which doesn't exist on the Pi); the actual file
+# is "company.env" mode 0600. The wrong path silently no-op'd
+# load_dotenv(ENV_PATH) in vault, sentinel, and librarian, so cron-fired
+# runs of those agents had no MQTT_USER/MQTT_PASSWORD and got rc=5
+# NOT_AUTHORIZED on every heartbeat connect.
+ENV_PATH = BASE_DIR / "company.env"
 
 # Retail Pi paths — may be None-equivalent if not installed
 RETAIL_DIR  = _resolve_retail_dir(BASE_DIR)

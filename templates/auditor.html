@@ -82,6 +82,27 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 .live-val.warn{color:var(--amber)}
 .live-val.crit{color:var(--pink)}
 
+/* ─── AUDITORS CARD GRID ─── added 2026-05-08 ─── */
+.auditors-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;padding:14px 16px}
+.audr-card{padding:14px;border-radius:12px;border:1px solid var(--border);background:var(--surface2);display:flex;flex-direction:column;gap:8px}
+.audr-name{font-size:11px;font-weight:600;font-family:var(--mono);color:var(--text);
+           display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;word-break:break-all}
+.audr-node{font-size:9px;font-weight:700;text-transform:uppercase;color:var(--muted);
+           background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px;letter-spacing:0.06em}
+.audr-status{display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
+.audr-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.audr-dot.ok{background:#4ade80;box-shadow:0 0 8px rgba(74,222,128,0.4)}
+.audr-dot.warn{background:var(--amber);box-shadow:0 0 8px rgba(255,179,71,0.4)}
+.audr-dot.crit{background:var(--pink);box-shadow:0 0 8px rgba(255,75,110,0.4)}
+.audr-dot.dim{background:rgba(255,255,255,0.2)}
+.audr-count{font-size:14px;font-weight:700;color:var(--text);font-family:var(--mono)}
+.audr-count.dim{color:var(--muted)}
+.audr-meta{font-size:10px;color:var(--muted);font-family:var(--mono);line-height:1.6}
+.audr-meta .row{display:flex;justify-content:space-between;gap:8px}
+.audr-meta .row .k{color:rgba(255,255,255,0.3)}
+.audr-meta .row .v{color:var(--muted);text-align:right}
+.audr-desc{font-size:10px;color:rgba(255,255,255,0.45);line-height:1.4;font-style:italic}
+
 /* ─── AI TRIAGE PANEL ─── moved from home dashboard 2026-05-08 ─── */
 .todo-count{font-size:9px;font-weight:700;padding:2px 8px;border-radius:99px;
             background:rgba(255,75,110,0.1);border:1px solid rgba(255,75,110,0.25);color:var(--pink)}
@@ -141,6 +162,18 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
       <div class="sm-label">Agents Down</div>
       <div class="sm-val crit" id="kpi-agents-down">—</div>
       <div class="sm-sub">&gt; 5m no heartbeat</div>
+    </div>
+  </div>
+
+  <!-- Auditors inventory — one card per audit agent across the fleet
+       (added 2026-05-08). Backed by /api/auditors/summary. -->
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title">Auditors</div>
+      <span class="panel-badge" id="auditors-updated">—</span>
+    </div>
+    <div class="auditors-grid" id="auditors-grid">
+      <div class="loading">Loading auditors&hellip;</div>
     </div>
   </div>
 
@@ -349,6 +382,67 @@ async function load() {
 
 load();
 setInterval(load, 60000);
+
+// ─── AUDITORS CARD GRID ─── added 2026-05-08 ───
+function _fmtAgo(iso) {
+  if (!iso) return '—';
+  try {
+    const t = new Date(iso);
+    const sec = (Date.now() - t.getTime()) / 1000;
+    if (sec < 60) return Math.floor(sec) + 's ago';
+    if (sec < 3600) return Math.floor(sec/60) + 'm ago';
+    if (sec < 86400) return Math.floor(sec/3600) + 'h ago';
+    return Math.floor(sec/86400) + 'd ago';
+  } catch(e) { return '—'; }
+}
+
+async function fetchAuditors() {
+  const grid    = document.getElementById('auditors-grid');
+  const updated = document.getElementById('auditors-updated');
+  if (!grid) return;
+  try {
+    const r = await fetch('/api/auditors/summary', {credentials:'same-origin'});
+    if (!r.ok) {
+      grid.innerHTML = '<div class="empty">Auditors API returned ' + r.status + '</div>';
+      return;
+    }
+    const d = await r.json();
+    const arr = d.auditors || [];
+    if (updated) updated.textContent = _fmtAgo(d.generated_at);
+    if (!arr.length) {
+      grid.innerHTML = '<div class="empty">No auditors registered</div>';
+      return;
+    }
+    grid.innerHTML = arr.map(a => {
+      const status   = a.status || 'dim';
+      const cnt      = (a.open_count == null) ? '—' : a.open_count;
+      const cntClass = (a.open_count == null) ? 'dim' : '';
+      const cntLabel = (a.open_count == null) ? '' : ' open';
+      const feeds    = a.feeds_panel || 'no portal feed';
+      return ''
+        + '<div class="audr-card">'
+        + '  <div class="audr-name">' + escHtml(a.name||'?')
+        + '    <span class="audr-node">' + escHtml(a.node||'?') + '</span>'
+        + '  </div>'
+        + '  <div class="audr-status">'
+        + '    <span class="audr-dot ' + status + '"></span>'
+        + '    <span class="audr-count ' + cntClass + '">' + cnt + cntLabel + '</span>'
+        + '  </div>'
+        + '  <div class="audr-meta">'
+        + '    <div class="row"><span class="k">schedule</span><span class="v">' + escHtml(a.schedule||'—') + '</span></div>'
+        + '    <div class="row"><span class="k">last run</span><span class="v">' + _fmtAgo(a.last_run) + '</span></div>'
+        + '    <div class="row"><span class="k">feeds</span><span class="v">' + escHtml(feeds) + '</span></div>'
+        + '  </div>'
+        + (a.desc ? '  <div class="audr-desc">' + escHtml(a.desc) + '</div>' : '')
+        + '</div>';
+    }).join('');
+  } catch(e) {
+    grid.innerHTML = '<div class="empty">Auditors unreachable: ' + escHtml(String(e)) + '</div>';
+  }
+}
+
+fetchAuditors();
+setInterval(fetchAuditors, 60000); // 60s — same cadence as Node Metrics
 
 // ─── AI TRIAGE ─── moved from home dashboard 2026-05-08 ───
 // Pulls findings from company_auditor (logs) + retail_ticker_state_auditor.

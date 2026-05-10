@@ -7320,6 +7320,132 @@ def api_auditor():
     return api_auditor_findings()
 
 
+@app.route("/api/auditors/summary")
+def api_auditors_summary():
+    """Per-auditor inventory + live status. Backs the Auditors card grid
+    on /auditor (added 2026-05-08). Three auditors today:
+
+      - company_auditor (pi4b, daemon) — local auditor.db
+      - retail_ticker_state_auditor (pi5, nightly 02:35 ET) — proxy to pi5
+      - retail_policy_auditor (pi5, manual / shadow) — no live data yet
+
+    Each card carries: name, node, schedule, status (ok/warn/crit/dim),
+    open_count (or null), last_run (ISO or null), feeds_panel (which
+    AI Triage filter, if any).
+    """
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+
+    out = []
+
+    # ── 1. company_auditor (local pi4b) ───────────────────────────────
+    try:
+        conn = sqlite3.connect(_AUDITOR_DB_PATH, timeout=5)
+        conn.row_factory = sqlite3.Row
+        open_count = conn.execute(
+            "SELECT COUNT(*) FROM detected_issues WHERE resolved = 0"
+        ).fetchone()[0]
+        last_row = conn.execute(
+            "SELECT MAX(last_scanned) AS ts FROM scan_state"
+        ).fetchone()
+        last_seen = last_row["ts"] if last_row else None
+        conn.close()
+        # Status: daemon polls every 5min — green if <10min, amber <1h, red older
+        status = 'dim'
+        if last_seen:
+            try:
+                lt = datetime.fromisoformat(last_seen.replace('Z','+00:00'))
+                age_s = (datetime.now(timezone.utc) - lt).total_seconds()
+                status = 'ok' if age_s < 600 else 'warn' if age_s < 3600 else 'crit'
+            except Exception:
+                pass
+        out.append({
+            'name': 'company_auditor',
+            'node': 'pi4b',
+            'role': 'auditor',
+            'schedule': 'daemon · 5min poll',
+            'feeds_panel': 'AI Triage › Logs',
+            'status': status,
+            'open_count': open_count,
+            'last_run': last_seen,
+            'desc': 'Cross-node log scanner; dedup\'d findings in auditor.db',
+        })
+    except Exception as e:
+        out.append({
+            'name': 'company_auditor', 'node': 'pi4b', 'role': 'auditor',
+            'schedule': 'daemon · 5min poll', 'feeds_panel': 'AI Triage › Logs',
+            'status': 'crit', 'open_count': None, 'last_run': None,
+            'desc': f'auditor.db query failed: {e}',
+        })
+
+    # ── 2. retail_ticker_state_auditor (proxy to pi5) ─────────────────
+    ts_card = {
+        'name': 'retail_ticker_state_auditor',
+        'node': 'pi5',
+        'role': 'auditor',
+        'schedule': 'systemd timer · 02:35 ET nightly',
+        'feeds_panel': 'AI Triage › Ticker State',
+        'status': 'dim',
+        'open_count': None,
+        'last_run': None,
+        'desc': 'NULL-field gap audit on shared ticker_state',
+    }
+    try:
+        retail_pi = None
+        with registry_lock:
+            for pid, p in pi_registry.items():
+                if 'retail' in str(p.get("pi_id", "")).lower() \
+                   or 'retail' in str(p.get("label", "")).lower():
+                    retail_pi = p
+                    break
+        pi_ip = (retail_pi or {}).get("ip") or (retail_pi or {}).get("pi_ip")
+        if pi_ip:
+            import requests as _req
+            r = _req.get(
+                f"http://{pi_ip}:5001/api/ticker-state-audit",
+                headers={"Authorization": f"Bearer {SECRET_TOKEN}"},
+                timeout=10,
+            )
+            if r.status_code == 200:
+                report = r.json()
+                anoms  = report.get('anomalies') or []
+                ts_card['open_count'] = len(anoms)
+                ts_card['last_run']   = report.get('ts')
+                # Nightly cadence — green if <25h, amber <49h, red older
+                if ts_card['last_run']:
+                    try:
+                        lt = datetime.fromisoformat(ts_card['last_run'].replace('Z','+00:00'))
+                        age_h = (datetime.now(timezone.utc) - lt).total_seconds() / 3600
+                        ts_card['status'] = 'ok' if age_h < 25 else 'warn' if age_h < 49 else 'crit'
+                    except Exception:
+                        ts_card['status'] = 'warn'
+            else:
+                ts_card['desc'] = f'pi5 returned {r.status_code}'
+                ts_card['status'] = 'crit'
+        else:
+            ts_card['desc'] = 'pi5 not in registry'
+            ts_card['status'] = 'crit'
+    except Exception as e:
+        ts_card['desc'] = f'pi5 unreachable: {e}'
+        ts_card['status'] = 'crit'
+    out.append(ts_card)
+
+    # ── 3. retail_policy_auditor (no live feed; shadow/manual) ────────
+    out.append({
+        'name': 'retail_policy_auditor',
+        'node': 'pi5',
+        'role': 'auditor',
+        'schedule': 'manual only · shadow mode',
+        'feeds_panel': None,
+        'status': 'dim',
+        'open_count': None,
+        'last_run': None,
+        'desc': 'Shadow Tier-80 policy audit; portal+timer deferred until Q-3 enforcement rollout',
+    })
+
+    return jsonify({'auditors': out, 'generated_at': datetime.now(timezone.utc).isoformat()})
+
+
 @app.route("/api/behavior-baseline")
 def api_behavior_baseline_proxy():
     """Proxy to the retail node's /api/behavior-baseline endpoint.

@@ -563,7 +563,14 @@ def scan_remote_logs(node_id: str, node_cfg: dict) -> list[dict]:
                         all_issues.append({
                             'source_file': source_key,
                             'severity':    severity,
-                            'pattern':     pat.pattern[:40],
+                            # 2026-05-08: was pat.pattern[:40]. That asymmetric
+                            # truncation (local-log path stored the full pattern)
+                            # broke Alerts Center's pattern-keyed dedup —
+                            # local-log findings on the same regex got grouped;
+                            # remote-log ones stayed split because the truncated
+                            # string didn't compare equal to the full one. Use
+                            # the full pattern.
+                            'pattern':     pat.pattern,
                             # Use 'context' so _dedup_and_store stores the line
                             # in the DB's context column (was 'line' before).
                             'context':     line[:300],

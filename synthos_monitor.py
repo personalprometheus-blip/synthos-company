@@ -10449,10 +10449,14 @@ async function fetchAuditors() {
     // Update Hero "stalest" KPI from this data — pick the worst-status auditor
     // among those that have a live feed; ignore dim (no live feed yet).
     const live = arr.filter(a => a.status && a.status !== 'dim');
+    const _rank = function(s) {
+      const M = {ok:0, warn:1, crit:2};
+      return Object.prototype.hasOwnProperty.call(M, s) ? M[s] : -1;
+    };
     let stalest = null;
     for (const a of live) {
-      const rank = {ok:0, warn:1, crit:2}[a.status] ?? -1;
-      if (!stalest || rank > ({ok:0, warn:1, crit:2}[stalest.status] ?? -1)) stalest = a;
+      const rank = _rank(a.status);
+      if (!stalest || rank > _rank(stalest.status)) stalest = a;
     }
     const heroStale    = document.getElementById('hero-stale');
     const heroStaleLab = document.getElementById('hero-stale-lab');
@@ -10549,7 +10553,8 @@ async function fetchTriage() {
     ts   = (rT.issues||[]).map(_fromTickerStateIssue);
   } catch(e){}
   triageItems = logs.concat(ts);
-  triageItems.sort((a,b) => (SEV_ORDER[a.severity]??9) - (SEV_ORDER[b.severity]??9));
+  function _sev(s) { return (s in SEV_ORDER) ? SEV_ORDER[s] : 9; }
+  triageItems.sort((a,b) => _sev(a.severity) - _sev(b.severity));
   renderTriage();
   updateHeroFromTriage();
 }
@@ -10579,7 +10584,7 @@ function renderTriage() {
     const sevCls = 'sev-' + t.severity;
     const hits = t.hits > 1 ? ' <span style="color:var(--dim)">×'+t.hits+'</span>' : '';
     const resolveBtn = t.canResolve
-      ? '<button class="auditor-resolve-btn" onclick="resolveAuditorIssue(\''+CSS.escape(String(t.id))+'\',event)">Resolve</button>'
+      ? '<button class="auditor-resolve-btn" data-issid="'+CSS.escape(String(t.id))+'" onclick="resolveAuditorIssue(this.dataset.issid,event)">Resolve</button>'
       : '';
     const suppressBtn = t.canSuppress
       ? '<button class="auditor-suppress-btn" data-tridx="'+idx+'" onclick="suppressTriagePattern(this.dataset.tridx,event)" title="Suppress all matches of this pattern in this file">Suppress</button>'

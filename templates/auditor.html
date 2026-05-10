@@ -82,6 +82,33 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 .live-val.warn{color:var(--amber)}
 .live-val.crit{color:var(--pink)}
 
+/* ─── AI TRIAGE PANEL ─── moved from home dashboard 2026-05-08 ─── */
+.todo-count{font-size:9px;font-weight:700;padding:2px 8px;border-radius:99px;
+            background:rgba(255,75,110,0.1);border:1px solid rgba(255,75,110,0.25);color:var(--pink)}
+.todo-count.clear{background:rgba(0,245,212,0.1);border-color:rgba(0,245,212,0.2);color:var(--teal)}
+.todo-scroll{max-height:520px;overflow-y:auto}
+.todo-item{padding:10px 14px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;gap:8px}
+.todo-item:last-child{border-bottom:none}
+.tsev{width:6px;height:6px;border-radius:50%;flex-shrink:0;margin-top:4px}
+.ts-crit{background:var(--pink);box-shadow:0 0 4px var(--pink)}
+.ts-high{background:var(--amber);box-shadow:0 0 4px var(--amber)}
+.ts-med{background:var(--purple)}
+.ts-low{background:var(--muted)}
+.todo-body{flex:1;min-width:0}
+.todo-title-t{font-size:11px;font-weight:600;color:var(--text);margin-bottom:2px}
+.todo-meta{font-size:9px;color:var(--muted);font-family:var(--mono)}
+.todo-action{font-size:10px;color:rgba(255,255,255,0.45);margin-top:3px;font-style:italic}
+.resolve-btn{font-size:9px;font-weight:700;padding:2px 8px;border-radius:6px;
+             background:transparent;border:1px solid var(--border);color:var(--muted);
+             cursor:pointer;font-family:var(--sans);transition:all 0.15s;flex-shrink:0}
+.resolve-btn:hover{border-color:rgba(0,245,212,0.4);color:var(--teal)}
+.todo-empty{padding:24px;text-align:center;font-size:11px;color:var(--muted)}
+.appr-filter{padding:3px 10px;border-radius:6px;font-size:10px;font-weight:600;
+             background:transparent;border:1px solid var(--border);color:var(--muted);
+             cursor:pointer;font-family:var(--sans);transition:all 0.15s}
+.appr-filter:hover{background:rgba(255,255,255,0.04);color:var(--text)}
+.appr-filter.active{background:rgba(245,166,35,0.08);border-color:rgba(245,166,35,0.25);color:var(--amber)}
+
 </style>
 </head>
 <body>
@@ -156,6 +183,24 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
     </div>
     <div class="agents-grid" id="agents-grid">
       <div class="loading">Loading agents...</div>
+    </div>
+  </div>
+
+  <!-- AI Triage — moved from home dashboard 2026-05-08 so all auditor
+       findings (company_auditor + retail_ticker_state_auditor) live on
+       this page. Backend: /api/auditor/findings + /api/auditor/ticker-state. -->
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title">AI Triage &mdash; Open Issues</div>
+      <span class="panel-badge todo-count clear" id="todo-badge">Loading</span>
+    </div>
+    <div style="display:flex;gap:6px;padding:10px 16px;border-bottom:1px solid var(--border)">
+      <button class="appr-filter active" id="aud-f-ALL"  onclick="filterAudit(null)">All</button>
+      <button class="appr-filter"        id="aud-f-LOGS" onclick="filterAudit('logs')">Logs</button>
+      <button class="appr-filter"        id="aud-f-TS"   onclick="filterAudit('ticker_state')">Ticker State</button>
+    </div>
+    <div class="todo-scroll" id="todo-list">
+      <div class="todo-empty">Loading issues&hellip;</div>
     </div>
   </div>
 </div>
@@ -304,6 +349,107 @@ async function load() {
 
 load();
 setInterval(load, 60000);
+
+// ─── AI TRIAGE ─── moved from home dashboard 2026-05-08 ───
+// Pulls findings from company_auditor (logs) + retail_ticker_state_auditor.
+// Auth: same-origin session cookie (page is gated by _authorized()).
+const SEV_ORDER = {CRITICAL:0,HIGH:1,MEDIUM:2,LOW:3};
+let allTodos = [];
+let _auditFilter = null;
+
+function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function _todoFromIssue(i, source) {
+  return {
+    id: i.id, title: i.context ? i.context.substring(0, 120) : 'Unknown',
+    severity: (i.severity || 'low').toUpperCase(),
+    category: i.source_file || '', pi_id: '',
+    date: i.last_seen ? i.last_seen.substring(0,10) : '',
+    action: 'Hits: ' + (i.hit_count || 1),
+    source: source,
+    resolved: false
+  };
+}
+
+async function fetchTodos() {
+  let logsTodos = [];
+  let tsTodos   = [];
+  try {
+    const [rLogs, rTs] = await Promise.all([
+      fetch('/api/auditor/findings').then(r=>r.ok?r.json():{issues:[]}).catch(()=>({issues:[]})),
+      fetch('/api/auditor/ticker-state').then(r=>r.ok?r.json():{issues:[]}).catch(()=>({issues:[]})),
+    ]);
+    logsTodos = (rLogs.issues || []).map(i => _todoFromIssue(i, 'logs'));
+    tsTodos   = (rTs.issues   || []).map(i => _todoFromIssue(i, 'ticker_state'));
+  } catch(e) {}
+  allTodos = logsTodos.concat(tsTodos);
+  allTodos.sort((a,b) => (SEV_ORDER[a.severity]??9) - (SEV_ORDER[b.severity]??9));
+  renderTodos();
+}
+
+function filterAudit(source) {
+  _auditFilter = source;
+  document.querySelectorAll('[id^="aud-f-"]').forEach(b=>b.classList.remove('active'));
+  const target = source==='logs' ? 'aud-f-LOGS'
+               : source==='ticker_state' ? 'aud-f-TS' : 'aud-f-ALL';
+  document.getElementById(target)?.classList.add('active');
+  renderTodos();
+}
+
+function renderTodos() {
+  const el    = document.getElementById('todo-list');
+  const badge = document.getElementById('todo-badge');
+  if (!el || !badge) return;
+  const allOpen = allTodos.filter(t=>!t.resolved);
+  badge.textContent = allOpen.length > 0 ? allOpen.length + ' open' : 'All clear';
+  badge.className   = 'panel-badge todo-count ' + (allOpen.length > 0 ? '' : 'clear');
+  const open = _auditFilter
+    ? allOpen.filter(t => t.source === _auditFilter)
+    : allOpen;
+  if (!open.length) {
+    const msg = _auditFilter
+      ? '✓ No ' + (_auditFilter==='ticker_state'?'ticker state':'logs') + ' issues'
+      : '✓ No open issues';
+    el.innerHTML = '<div class="todo-empty">' + msg + '</div>';
+    return;
+  }
+  const sevDot = {CRITICAL:'ts-crit',HIGH:'ts-high',MEDIUM:'ts-med',LOW:'ts-low'};
+  el.innerHTML = open.slice(0,50).map(t =>
+    '<div class="todo-item">'
+      + '<div class="tsev ' + (sevDot[t.severity]||'ts-low') + '"></div>'
+      + '<div class="todo-body">'
+        + '<div class="todo-title-t">' + escHtml(t.title||'') + '</div>'
+        + '<div class="todo-meta">' + (t.pi_id||'') + ' · ' + (t.date||'') + ' · ' + (t.category||'') + '</div>'
+        + (t.action ? '<div class="todo-action">→ ' + escHtml(t.action) + '</div>' : '')
+      + '</div>'
+      + '<button class="resolve-btn" data-todoid="' + CSS.escape(String(t.id)) + '" onclick="resolveTodo(this.dataset.todoid,event)">Done</button>'
+    + '</div>'
+  ).join('');
+}
+
+async function resolveTodo(id, e) {
+  e.stopPropagation();
+  // Use the same body-style call that other code paths use; the path-style
+  // /api/auditor/resolve/<id> 404s. Session cookie handles auth.
+  const idNum = Number(id);
+  try {
+    const r = await fetch('/api/auditor/resolve', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      credentials: 'same-origin',
+      body: JSON.stringify({ids: [idNum]}),
+    });
+    const d = await r.json().catch(() => ({ok:false}));
+    if (!r.ok || !d.ok) {
+      alert('Resolve failed: ' + (d.error || r.statusText || 'unknown'));
+      return;
+    }
+    await fetchTodos();
+  } catch(err) { alert('Resolve failed: ' + err.message); }
+}
+
+fetchTodos();
+setInterval(fetchTodos, 300000); // 5 min — auditor data shifts slowly
 </script>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>

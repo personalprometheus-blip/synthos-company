@@ -2132,21 +2132,10 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
         </div>
       </div>
 
-      <div class="sec-title">Open Issues</div>
-      <div class="todo-panel">
-        <div class="todo-header">
-          <span class="todo-title">AI Triage</span>
-          <span class="todo-count clear" id="todo-badge">Loading</span>
-        </div>
-        <div style="display:flex;gap:6px;padding:6px 14px 8px;border-bottom:1px solid var(--border)">
-          <button class="appr-filter active" id="aud-f-ALL" onclick="filterAudit(null)">All</button>
-          <button class="appr-filter" id="aud-f-LOGS" onclick="filterAudit('logs')">Logs</button>
-          <button class="appr-filter" id="aud-f-TS" onclick="filterAudit('ticker_state')">Ticker State</button>
-        </div>
-        <div class="todo-scroll" id="todo-list">
-          <div class="todo-empty">Loading issues...</div>
-        </div>
-      </div>
+      <!-- AI Triage panel moved to /auditor page on 2026-05-08 so all
+           auditor-surfaced findings live in one place. fetchTodos() polling
+           below still runs on this page so Fleet Stats counter stays live;
+           renderTodos() bails when #todo-list isn't present. -->
 
       <!-- AGENT FLEET OVERVIEW -->
       <div class="aft-panel">
@@ -3251,6 +3240,9 @@ function filterAudit(source) {
 function renderTodos() {
   const el    = document.getElementById('todo-list');
   const badge = document.getElementById('todo-badge');
+  // Panel was moved to /auditor on 2026-05-08; bail if not on a page that
+  // hosts it. allTodos is still populated for Fleet Stats counter.
+  if (!el || !badge) return;
   const allOpen = allTodos.filter(t=>!t.resolved);
   // Badge always reflects total open across all sources, so the filter
   // doesn't hide the existence of issues in the other tab.
@@ -3991,8 +3983,9 @@ async function setAdmOverride(field, val) {
 
 // Behavior baseline counter (Phase 7L+ 2026-04-26) — calls
 // /api/behavior-baseline which proxies to pi5. Populates the small
-// panel above the AI Triage list. Operator-only — moved off the
-// customer portal because it doesn't help end users.
+// panel in the right column. Operator-only — moved off the customer
+// portal because it doesn't help end users. (AI Triage that used to
+// sit below this was moved to /auditor on 2026-05-08.)
 async function fetchBehaviorBaseline() {
   try {
     const r = await fetch('/api/behavior-baseline');

@@ -1575,6 +1575,19 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 .sigcov-bar-pct{ position:absolute; right:10px; top:50%; transform:translateY(-50%); font-family:'JetBrains Mono',monospace; font-weight:700; font-size:13px; color:#fff; text-shadow:0 1px 3px rgba(0,0,0,0.5); }
 .sigcov-meta{ display:flex; justify-content:space-between; font-size:9px; color:var(--muted); margin-top:4px; font-family:'JetBrains Mono',monospace; }
 
+/* REALTIME drawer — sibling of sigcov-drawer, slides from same side. */
+#sigcov-rt-drawer{ position:fixed; top:0; right:0; bottom:0; width:480px; max-width:100vw; background:rgba(13,17,32,0.97); border-left:1px solid rgba(0,245,212,0.25); backdrop-filter:blur(16px); z-index:9999; transform:translateX(100%); transition:transform 0.32s ease-out; box-shadow:-12px 0 40px rgba(0,0,0,0.5); display:flex; flex-direction:column; }
+#sigcov-rt-drawer.open{ transform:translateX(0); }
+#sigcov-rt-drawer-header{ padding:18px 20px; border-bottom:1px solid rgba(255,255,255,0.07); display:flex; align-items:center; gap:10px; flex-shrink:0; }
+#sigcov-rt-drawer-title{ font-size:15px; font-weight:700; color:#fff; flex:1; letter-spacing:0.04em; }
+#sigcov-rt-drawer-close{ background:transparent; border:1px solid rgba(255,255,255,0.13); color:rgba(255,255,255,0.55); width:28px; height:28px; border-radius:6px; cursor:pointer; padding:0; font-size:16px; line-height:1; }
+#sigcov-rt-drawer-close:hover{ color:#ff4b6e; border-color:rgba(255,75,110,0.4); }
+#sigcov-rt-drawer-body{ flex:1; overflow-y:auto; padding:14px 20px; }
+/* Window pill on the realtime card — shows current market session. */
+.sigcov-window-pill{ font-family:'JetBrains Mono',monospace; font-size:9px; padding:1px 7px; border-radius:99px; background:rgba(255,255,255,0.04); color:rgba(255,255,255,0.6); border:1px solid rgba(255,255,255,0.10); margin-left:6px; }
+.sigcov-window-pill.market{ background:rgba(0,245,212,0.10); color:#00f5d4; border-color:rgba(0,245,212,0.30); }
+.sigcov-window-pill.extended{ background:rgba(245,166,35,0.08); color:#f5a623; border-color:rgba(245,166,35,0.25); }
+.sigcov-window-pill.overnight{ background:rgba(120,120,160,0.08); color:rgba(160,160,200,0.8); border-color:rgba(160,160,200,0.20); }
 #sigcov-drawer{ position:fixed; top:0; right:0; bottom:0; width:480px; max-width:100vw; background:rgba(13,17,32,0.97); border-left:1px solid rgba(0,245,212,0.25); backdrop-filter:blur(16px); z-index:9999; transform:translateX(100%); transition:transform 0.32s ease-out; box-shadow:-12px 0 40px rgba(0,0,0,0.5); display:flex; flex-direction:column; }
 #sigcov-drawer.open{ transform:translateX(0); }
 #sigcov-drawer-header{ padding:18px 20px; border-bottom:1px solid rgba(255,255,255,0.07); display:flex; align-items:center; gap:10px; flex-shrink:0; }
@@ -2062,6 +2075,17 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
       <div class="graph-card">
         <div class="graph-card-title">Memory Usage %</div>
         <div class="graph-canvas-wrap"><canvas id="ram-chart"></canvas></div>
+      </div>
+      <div class="graph-card sigcov-card" id="sigcov-rt-card" onclick="sigcovRtOpenDrawer()" title="Realtime feed pulse (every 60s during market hours)">
+        <div class="graph-card-title">Realtime Coverage <span id="sigcov-rt-window-pill" class="sigcov-window-pill">—</span></div>
+        <div class="sigcov-bar-wrap">
+          <div class="sigcov-bar-fill" id="sigcov-rt-bar-fill"></div>
+          <div class="sigcov-bar-pct" id="sigcov-rt-bar-pct">—</div>
+        </div>
+        <div class="sigcov-meta">
+          <span id="sigcov-rt-meta-sources">no scan yet</span>
+          <span id="sigcov-rt-meta-scan">—</span>
+        </div>
       </div>
       <div class="graph-card sigcov-card" id="sigcov-card" onclick="sigcovOpenDrawer()" title="Click for full breakdown">
         <div class="graph-card-title">Signal Coverage</div>
@@ -4024,6 +4048,17 @@ document.addEventListener('click',function(e){if(!document.getElementById('hbtn'
   </div>
 </div>
 
+<div id="sigcov-rt-drawer">
+  <div id="sigcov-rt-drawer-header">
+    <div id="sigcov-rt-drawer-title">Realtime Coverage</div>
+    <span id="sigcov-rt-drawer-meta" style="font-size:10px;color:var(--muted);font-family:'JetBrains Mono',monospace">—</span>
+    <button id="sigcov-rt-drawer-close" onclick="sigcovRtCloseDrawer()" title="Close">&times;</button>
+  </div>
+  <div id="sigcov-rt-drawer-body">
+    <div style="padding:20px;color:var(--muted);font-size:11px">Loading scan&hellip;</div>
+  </div>
+</div>
+
 <div id="histcov-drawer">
   <div id="histcov-drawer-header">
     <div id="histcov-drawer-title">History Mirror</div>
@@ -4172,6 +4207,146 @@ document.addEventListener('keydown', function(ev) {
 // Initial + 60s refresh
 sigcovLoad();
 setInterval(sigcovLoad, 60000);
+
+/* SIGCOV-RT — Realtime hero card + drawer, sibling of SIGCOV.
+   Different drawer behavior:
+     * No 100%-green hide filter — every check is shown, sorted
+       red → amber → green so problems land at top, healthy at
+       bottom (per user 2026-05-09).
+     * Each row surfaces the windowed threshold + actual age so
+       the operator reads "47s / 120s" at a glance.
+     * Bar/header show the current market window pill so the operator
+       knows whether they're looking at the tight market-hours
+       threshold (120s) or the loose overnight threshold (3600s). */
+let _SIGCOV_RT_LAST = null;
+
+function sigcovRtSeverityRank(c) {
+  // Red (lowest pct) sorts first; green (100%) sorts last.
+  const pct = c.coverage_pct == null ? -1 : c.coverage_pct;
+  if (pct < 80) return 0;   // red
+  if (pct < 95) return 1;   // amber
+  return 2;                  // green
+}
+
+async function sigcovRtLoad() {
+  try {
+    const r = await fetch('/api/realtime-signal-coverage');
+    if (!r.ok) return;
+    const data = await r.json();
+    const nodes = data.nodes || {};
+    const ids = Object.keys(nodes);
+    if (ids.length === 0) {
+      const fill = document.getElementById('sigcov-rt-bar-fill');
+      const pct = document.getElementById('sigcov-rt-bar-pct');
+      const meta = document.getElementById('sigcov-rt-meta-sources');
+      if (fill) fill.style.width = '0%';
+      if (pct) pct.textContent = '—';
+      if (meta) meta.textContent = 'no scans yet';
+      return;
+    }
+    const scan = nodes[ids[0]];
+    _SIGCOV_RT_LAST = scan;
+    const overall = scan.overall_pct;
+    const fill = document.getElementById('sigcov-rt-bar-fill');
+    const pctEl = document.getElementById('sigcov-rt-bar-pct');
+    const metaSources = document.getElementById('sigcov-rt-meta-sources');
+    const metaScan = document.getElementById('sigcov-rt-meta-scan');
+    const windowPill = document.getElementById('sigcov-rt-window-pill');
+    if (fill) {
+      fill.style.width = (overall != null ? overall : 0) + '%';
+      fill.className = 'sigcov-bar-fill ' + sigcovBarClass(overall);
+    }
+    if (pctEl) pctEl.textContent = overall != null ? overall.toFixed(1) + '%' : '—';
+    const checks = scan.checks || [];
+    const missingTotal = checks.reduce((a, c) => a + (c.missing_count || 0), 0);
+    if (metaSources) metaSources.textContent = checks.length + ' realtime · ' + missingTotal + ' stale';
+    if (metaScan) metaScan.textContent = sigcovFmtAge(scan.scan_at);
+    if (windowPill) {
+      const w = scan.window || 'unknown';
+      windowPill.textContent = w;
+      windowPill.className = 'sigcov-window-pill ' + (w === 'market' ? 'market' : (w === 'extended' ? 'extended' : 'overnight'));
+    }
+    sigcovRtRenderDrawer(scan);
+  } catch (e) { /* silent */ }
+}
+
+function sigcovRtRenderDrawer(scan) {
+  const body = document.getElementById('sigcov-rt-drawer-body');
+  const meta = document.getElementById('sigcov-rt-drawer-meta');
+  if (!body) return;
+  const window_ = scan.window || 'unknown';
+  if (meta) meta.textContent = scan.node_id + ' · window=' + window_ + ' · ' + sigcovFmtAge(scan.scan_at);
+  // Severity sort: red → amber → green; within each, lower pct first.
+  const checks = (scan.checks || []).slice().sort((a, b) => {
+    const ra = sigcovRtSeverityRank(a);
+    const rb = sigcovRtSeverityRank(b);
+    if (ra !== rb) return ra - rb;
+    return (a.coverage_pct || 0) - (b.coverage_pct || 0);
+  });
+  if (checks.length === 0) {
+    body.innerHTML = '<div style="padding:20px;color:var(--muted)">No realtime checks reported.</div>';
+    return;
+  }
+  let html = '';
+  // Header note: thresholds are windowed.
+  html += '<div style="padding:8px 12px; margin-bottom:10px; ';
+  html +=   'background:rgba(0,245,212,0.04); ';
+  html +=   'border:1px solid rgba(0,245,212,0.18); ';
+  html +=   'border-radius:6px; font-family:\'JetBrains Mono\',monospace; ';
+  html +=   'font-size:10px; color:rgba(0,245,212,0.85); line-height:1.45">';
+  html +=   '<strong>window=' + sigcovEscape(window_) + '</strong> · thresholds widen ';
+  html +=   'outside market hours (extended 600s, overnight 3600s).';
+  html += '</div>';
+  for (const c of checks) {
+    const pct = c.coverage_pct;
+    const cls = sigcovBarClass(pct);
+    const sample = (c.missing_sample || []);
+    const thr = c.threshold_secs;
+    html += '<div class="sigcov-source">';
+    html +=   '<div class="sigcov-source-head">';
+    html +=     '<span class="sigcov-source-name">' + sigcovEscape(c.name) + '</span>';
+    html +=     '<span class="sigcov-source-ext">' + sigcovEscape(c.external) + '</span>';
+    html +=     '<span class="sigcov-source-pct ' + cls + '">' + (pct != null ? pct.toFixed(1) + '%' : '—') + '</span>';
+    if (c.is_updating) {
+      html += '<span class="sigcov-updating-badge" title="Owner agent is publishing fresh MQTT heartbeats">● updating</span>';
+    } else if (c.owner_agent) {
+      html += '<span class="sigcov-owner-badge" title="Owner: ' + sigcovEscape(c.owner_agent) + ' (no recent heartbeat)">' + sigcovEscape(c.owner_agent) + '</span>';
+    }
+    html +=   '</div>';
+    if (c.purpose) html += '<div class="sigcov-source-purpose">' + sigcovEscape(c.purpose) + '</div>';
+    html +=   '<div class="sigcov-source-bar">';
+    html +=     '<div class="sigcov-source-bar-fill ' + cls + '" style="width:' + (pct != null ? pct : 0) + '%"></div>';
+    html +=   '</div>';
+    let counts = (c.field || '') + ' · ' + c.present + '/' + c.total + ' fresh · ' + c.missing_count + ' stale';
+    if (thr) counts += ' · threshold ' + thr + 's';
+    html +=   '<div class="sigcov-source-counts">' + counts + '</div>';
+    if (sample.length > 0) {
+      html += '<div class="sigcov-source-missing"><strong>stale:</strong> ' + sample.map(sigcovEscape).join(', ');
+      if (c.missing_count > sample.length) html += ', <span style="color:var(--muted)">+' + (c.missing_count - sample.length) + ' more</span>';
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+  body.innerHTML = html;
+}
+
+function sigcovRtOpenDrawer() {
+  if (_SIGCOV_RT_LAST) sigcovRtRenderDrawer(_SIGCOV_RT_LAST);
+  document.getElementById('sigcov-rt-drawer').classList.add('open');
+}
+function sigcovRtCloseDrawer() {
+  document.getElementById('sigcov-rt-drawer').classList.remove('open');
+}
+document.addEventListener('keydown', function(ev) {
+  if (ev.key === 'Escape') sigcovRtCloseDrawer();
+});
+
+// Initial + 30s refresh — twice as fast as the standard sigcov drawer
+// because the realtime sweep runs every 60s during market hours and
+// we want the dashboard to reflect that cadence.
+sigcovRtLoad();
+setInterval(sigcovRtLoad, 30000);
+
 
 // HISTCOV — sibling of SIGCOV but for the history-mirror DBs
 let _HISTCOV_LAST = null;

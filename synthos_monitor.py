@@ -7320,6 +7320,41 @@ def api_auditor():
     return api_auditor_findings()
 
 
+def _compute_drift(last_run_iso, expected_s, warn_mult=2.0, crit_mult=6.0):
+    """Compute (status, drift_state, drift_message) for a scheduled auditor.
+
+    Args:
+      last_run_iso: ISO-8601 timestamp string or None
+      expected_s:   expected cadence in seconds (e.g. 300 for 5min daemon)
+      warn_mult:    if age > expected*warn_mult → 'overdue' / 'warn'
+      crit_mult:    if age > expected*crit_mult → 'stale'  / 'crit'
+
+    Returns:
+      ('ok'|'warn'|'crit'|'dim', 'on_schedule'|'overdue'|'stale'|'unknown', message)
+    """
+    if not last_run_iso:
+        return ('dim', 'unknown', 'No runs recorded')
+    try:
+        lt = datetime.fromisoformat(str(last_run_iso).replace('Z','+00:00'))
+        age_s = (datetime.now(timezone.utc) - lt).total_seconds()
+    except Exception:
+        return ('dim', 'unknown', 'Could not parse last-run timestamp')
+
+    def _fmt(s):
+        s = max(int(s), 0)
+        if s < 60:    return f'{s}s'
+        if s < 3600:  return f'{s//60}m'
+        if s < 86400: return f'{s//3600}h'
+        return f'{s//86400}d'
+
+    overdue_by = age_s - expected_s
+    if age_s <= expected_s * warn_mult:
+        return ('ok', 'on_schedule', f'On schedule · last run {_fmt(age_s)} ago')
+    if age_s <= expected_s * crit_mult:
+        return ('warn', 'overdue', f'Overdue by {_fmt(overdue_by)} · expected every {_fmt(expected_s)}')
+    return ('crit', 'stale', f'Stale · {_fmt(age_s)} since last run (expected every {_fmt(expected_s)})')
+
+
 @app.route("/api/auditors/summary")
 def api_auditors_summary():
     """Per-auditor inventory + live status. Backs the Auditors card grid
@@ -7350,22 +7385,18 @@ def api_auditors_summary():
         ).fetchone()
         last_seen = last_row["ts"] if last_row else None
         conn.close()
-        # Status: daemon polls every 5min — green if <10min, amber <1h, red older
-        status = 'dim'
-        if last_seen:
-            try:
-                lt = datetime.fromisoformat(last_seen.replace('Z','+00:00'))
-                age_s = (datetime.now(timezone.utc) - lt).total_seconds()
-                status = 'ok' if age_s < 600 else 'warn' if age_s < 3600 else 'crit'
-            except Exception:
-                pass
+        # company_auditor polls every 5min — drift bands per _compute_drift()
+        status, drift_state, drift_msg = _compute_drift(last_seen, expected_s=300, warn_mult=2.0, crit_mult=6.0)
         out.append({
             'name': 'company_auditor',
             'node': 'pi4b',
             'role': 'auditor',
             'schedule': 'daemon · 5min poll',
+            'expected_cadence_s': 300,
             'feeds_panel': 'AI Triage › Logs',
             'status': status,
+            'drift_state': drift_state,
+            'drift_message': drift_msg,
             'open_count': open_count,
             'last_run': last_seen,
             'desc': 'Cross-node log scanner; dedup\'d findings in auditor.db',
@@ -7373,8 +7404,10 @@ def api_auditors_summary():
     except Exception as e:
         out.append({
             'name': 'company_auditor', 'node': 'pi4b', 'role': 'auditor',
-            'schedule': 'daemon · 5min poll', 'feeds_panel': 'AI Triage › Logs',
-            'status': 'crit', 'open_count': None, 'last_run': None,
+            'schedule': 'daemon · 5min poll', 'expected_cadence_s': 300,
+            'feeds_panel': 'AI Triage › Logs',
+            'status': 'crit', 'drift_state': 'unknown', 'drift_message': 'auditor.db query failed',
+            'open_count': None, 'last_run': None,
             'desc': f'auditor.db query failed: {e}',
         })
 
@@ -7384,8 +7417,11 @@ def api_auditors_summary():
         'node': 'pi5',
         'role': 'auditor',
         'schedule': 'systemd timer · 02:35 ET nightly',
+        'expected_cadence_s': 86400,  # 24h
         'feeds_panel': 'AI Triage › Ticker State',
         'status': 'dim',
+        'drift_state': 'unknown',
+        'drift_message': '',
         'open_count': None,
         'last_run': None,
         'desc': 'NULL-field gap audit on shared ticker_state',
@@ -7411,23 +7447,25 @@ def api_auditors_summary():
                 anoms  = report.get('anomalies') or []
                 ts_card['open_count'] = len(anoms)
                 ts_card['last_run']   = report.get('ts')
-                # Nightly cadence — green if <25h, amber <49h, red older
-                if ts_card['last_run']:
-                    try:
-                        lt = datetime.fromisoformat(ts_card['last_run'].replace('Z','+00:00'))
-                        age_h = (datetime.now(timezone.utc) - lt).total_seconds() / 3600
-                        ts_card['status'] = 'ok' if age_h < 25 else 'warn' if age_h < 49 else 'crit'
-                    except Exception:
-                        ts_card['status'] = 'warn'
+                # Nightly: warn at >25h (4% over schedule), crit at >49h (>2 missed runs)
+                ts_card['status'], ts_card['drift_state'], ts_card['drift_message'] = \
+                    _compute_drift(ts_card['last_run'], expected_s=86400,
+                                   warn_mult=25/24, crit_mult=49/24)
             else:
                 ts_card['desc'] = f'pi5 returned {r.status_code}'
                 ts_card['status'] = 'crit'
+                ts_card['drift_state'] = 'unknown'
+                ts_card['drift_message'] = f'pi5 returned {r.status_code}'
         else:
             ts_card['desc'] = 'pi5 not in registry'
             ts_card['status'] = 'crit'
+            ts_card['drift_state'] = 'unknown'
+            ts_card['drift_message'] = 'pi5 not reachable'
     except Exception as e:
         ts_card['desc'] = f'pi5 unreachable: {e}'
         ts_card['status'] = 'crit'
+        ts_card['drift_state'] = 'unknown'
+        ts_card['drift_message'] = 'pi5 unreachable'
     out.append(ts_card)
 
     # ── 3. retail_policy_auditor (no live feed; shadow/manual) ────────
@@ -7436,8 +7474,11 @@ def api_auditors_summary():
         'node': 'pi5',
         'role': 'auditor',
         'schedule': 'manual only · shadow mode',
+        'expected_cadence_s': None,
         'feeds_panel': None,
         'status': 'dim',
+        'drift_state': 'manual',
+        'drift_message': 'Manual run only',
         'open_count': None,
         'last_run': None,
         'desc': 'Shadow Tier-80 policy audit; portal+timer deferred until Q-3 enforcement rollout',
@@ -9666,15 +9707,19 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 /* Auditor fleet rail (collapsed horizontal version) */
 .auditor-rail{display:flex;gap:10px;padding:0;margin-bottom:16px;flex-wrap:wrap}
 .audr-pill{flex:1 1 240px;padding:10px 12px;border-radius:10px;border:1px solid var(--border);
-           background:var(--surface);display:flex;align-items:center;gap:10px;cursor:pointer;transition:all 0.15s}
+           background:var(--surface);display:flex;flex-direction:column;gap:4px;cursor:pointer;transition:all 0.15s}
 .audr-pill:hover{border-color:var(--border2)}
 .audr-pill.active{border-color:rgba(0,245,212,0.3);background:rgba(0,245,212,0.04)}
+.audr-pill-row{display:flex;align-items:center;gap:10px}
 .audr-pill .audr-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
 .audr-pill .audr-pill-name{font-size:10px;font-weight:600;font-family:var(--mono);color:var(--text);flex:1;min-width:0;
                             white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .audr-pill .audr-pill-count{font-size:13px;font-weight:700;color:var(--text);font-family:var(--mono)}
 .audr-pill .audr-pill-count.dim{color:var(--muted)}
 .audr-pill .audr-pill-age{font-size:9px;color:var(--muted);font-family:var(--mono)}
+.audr-pill-drift{font-size:9px;color:var(--muted);font-family:var(--mono);padding-left:18px;line-height:1.4}
+.audr-pill-drift.warn{color:var(--amber)}
+.audr-pill-drift.crit{color:var(--pink)}
 
 /* Strip (one-line panel) */
 .strip{display:flex;align-items:center;gap:12px;padding:10px 16px;border-radius:10px;
@@ -10107,13 +10152,19 @@ async function fetchAuditors() {
       const cnt    = (a.open_count == null) ? '—' : a.open_count;
       const cntCls = (a.open_count == null) ? 'dim' : '';
       const shortName = (a.name||'').replace(/^retail_/,'').replace(/_auditor[.]py$/,'').replace(/^company_/,'');
-      const tooltip = (a.desc||'') + '\nschedule: ' + (a.schedule||'—') + '\nlast run: ' + ageSince(a.last_run);
+      const driftLine = (a.drift_state && a.drift_state !== 'on_schedule' && a.drift_state !== 'manual')
+        ? '<div class="audr-pill-drift ' + (a.drift_state==='stale'?'crit':a.drift_state==='overdue'?'warn':'dim') + '">' + escHtml(a.drift_message||'') + '</div>'
+        : '';
+      const tooltip = (a.desc||'') + '\nschedule: ' + (a.schedule||'—') + '\nlast run: ' + ageSince(a.last_run) + (a.drift_message?'\n' + a.drift_message:'');
       return ''
         + '<div class="audr-pill" title="' + escHtml(tooltip) + '">'
-        + '  <span class="audr-dot ' + status + '"></span>'
-        + '  <span class="audr-pill-name">' + escHtml(shortName) + ' <span style="color:var(--dim);font-weight:400">· ' + escHtml(a.node||'') + '</span></span>'
-        + '  <span class="audr-pill-count ' + cntCls + '">' + cnt + '</span>'
-        + '  <span class="audr-pill-age">' + ageSince(a.last_run) + '</span>'
+        + '  <div class="audr-pill-row">'
+        + '    <span class="audr-dot ' + status + '"></span>'
+        + '    <span class="audr-pill-name">' + escHtml(shortName) + ' <span style="color:var(--dim);font-weight:400">· ' + escHtml(a.node||'') + '</span></span>'
+        + '    <span class="audr-pill-count ' + cntCls + '">' + cnt + '</span>'
+        + '    <span class="audr-pill-age">' + ageSince(a.last_run) + '</span>'
+        + '  </div>'
+        + driftLine
         + '</div>';
     }).join('');
   } catch(e) {

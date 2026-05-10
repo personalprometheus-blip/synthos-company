@@ -7355,22 +7355,11 @@ def _compute_drift(last_run_iso, expected_s, warn_mult=2.0, crit_mult=6.0):
     return ('crit', 'stale', f'Stale · {_fmt(age_s)} since last run (expected every {_fmt(expected_s)})')
 
 
-@app.route("/api/auditors/summary")
-def api_auditors_summary():
-    """Per-auditor inventory + live status. Backs the Auditors card grid
-    on /auditor (added 2026-05-08). Three auditors today:
-
-      - company_auditor (pi4b, daemon) — local auditor.db
-      - retail_ticker_state_auditor (pi5, nightly 02:35 ET) — proxy to pi5
-      - retail_policy_auditor (pi5, manual / shadow) — no live data yet
-
-    Each card carries: name, node, schedule, status (ok/warn/crit/dim),
-    open_count (or null), last_run (ISO or null), feeds_panel (which
-    AI Triage filter, if any).
+def _build_auditors_summary():
+    """Return the list of per-auditor dicts. Pure-data version of
+    /api/auditors/summary so background recorder + endpoint share one
+    code path.
     """
-    if not _authorized():
-        return jsonify({"error": "unauthorized"}), 401
-
     out = []
 
     # ── 1. company_auditor (local pi4b) ───────────────────────────────
@@ -7484,7 +7473,134 @@ def api_auditors_summary():
         'desc': 'Shadow Tier-80 policy audit; portal+timer deferred until Q-3 enforcement rollout',
     })
 
+    return out
+
+
+@app.route("/api/auditors/summary")
+def api_auditors_summary():
+    """Per-auditor inventory + live status. Backs the Auditor fleet rail
+    on /audit. Three auditors today:
+
+      - company_auditor (pi4b, daemon) — local auditor.db
+      - retail_ticker_state_auditor (pi5, nightly 02:35 ET) — proxy to pi5
+      - retail_policy_auditor (pi5, manual / shadow) — no live data yet
+
+    Each entry carries: name, node, schedule, expected_cadence_s, status
+    (ok/warn/crit/dim), drift_state, drift_message, open_count, last_run,
+    feeds_panel. Refactored 2026-05-08 to share its body with the
+    background snapshot recorder that powers the 24h sparkline.
+    """
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    out = _build_auditors_summary()
     return jsonify({'auditors': out, 'generated_at': datetime.now(timezone.utc).isoformat()})
+
+
+# ─── Auditor snapshot recorder (V2.5 phase B — 24h sparkline) ─────────
+def _ensure_auditor_snapshot_schema():
+    """Lazy CREATE TABLE for auditor_snapshots in auditor.db. Idempotent."""
+    try:
+        conn = sqlite3.connect(_AUDITOR_DB_PATH, timeout=5)
+        conn.execute("""CREATE TABLE IF NOT EXISTS auditor_snapshots (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            taken_at     TEXT    NOT NULL,
+            auditor_name TEXT    NOT NULL,
+            open_count   INTEGER,
+            status       TEXT,
+            drift_state  TEXT)""")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_audit_snap_name_ts "
+            "ON auditor_snapshots(auditor_name, taken_at DESC)"
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[auditor-snapshot] schema init failed: {e}")
+
+
+_AUDITOR_SNAPSHOT_INTERVAL_S = 300       # 5min — matches company_auditor cadence
+_AUDITOR_SNAPSHOT_RETENTION_DAYS = 7     # keep 7 days of history; trim on each cycle
+
+
+def _write_auditor_snapshot():
+    """Sample current auditor state and append one row per auditor."""
+    rows = _build_auditors_summary()
+    if not rows:
+        return
+    now_iso = datetime.now(timezone.utc).isoformat()
+    cutoff_iso = (datetime.now(timezone.utc) - timedelta(days=_AUDITOR_SNAPSHOT_RETENTION_DAYS)).isoformat()
+    try:
+        conn = sqlite3.connect(_AUDITOR_DB_PATH, timeout=10)
+        for a in rows:
+            conn.execute(
+                "INSERT INTO auditor_snapshots(taken_at, auditor_name, open_count, status, drift_state) "
+                "VALUES (?,?,?,?,?)",
+                (now_iso, a.get('name'), a.get('open_count'),
+                 a.get('status'), a.get('drift_state')),
+            )
+        # Retention prune
+        conn.execute("DELETE FROM auditor_snapshots WHERE taken_at < ?", (cutoff_iso,))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[auditor-snapshot] write failed: {e}")
+
+
+def auditor_snapshot_recorder():
+    """Background thread: write a snapshot row per auditor every 5min."""
+    _ensure_auditor_snapshot_schema()
+    time.sleep(30)  # let the app finish booting
+    while True:
+        try:
+            _write_auditor_snapshot()
+        except Exception as e:
+            print(f"[auditor-snapshot] cycle err: {e}")
+        time.sleep(_AUDITOR_SNAPSHOT_INTERVAL_S)
+
+
+@app.route("/api/auditors/history")
+def api_auditors_history():
+    """Return the last N hours of (taken_at, open_count, status) tuples
+    grouped by auditor_name. Powers the per-auditor sparklines on the
+    /audit fleet rail.
+
+    Query params:
+      hours: int, default 24, max 168 (7 days)
+    """
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    try:
+        hours = int(request.args.get('hours', 24))
+    except Exception:
+        hours = 24
+    hours = max(1, min(hours, 168))
+    cutoff_iso = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    try:
+        conn = sqlite3.connect(_AUDITOR_DB_PATH, timeout=5)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT auditor_name, taken_at, open_count, status, drift_state "
+            "FROM auditor_snapshots WHERE taken_at >= ? "
+            "ORDER BY auditor_name, taken_at",
+            (cutoff_iso,),
+        ).fetchall()
+        conn.close()
+    except Exception as e:
+        return jsonify({"error": f"history query failed: {e}", "auditors": {}}), 200
+
+    grouped = {}
+    for r in rows:
+        nm = r["auditor_name"]
+        grouped.setdefault(nm, []).append({
+            't': r["taken_at"],
+            'open': r["open_count"],
+            'status': r["status"],
+        })
+    return jsonify({
+        'auditors': grouped,
+        'window_hours': hours,
+        'generated_at': datetime.now(timezone.utc).isoformat(),
+    })
 
 
 @app.route("/api/behavior-baseline")
@@ -9720,6 +9836,9 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 .audr-pill-drift{font-size:9px;color:var(--muted);font-family:var(--mono);padding-left:18px;line-height:1.4}
 .audr-pill-drift.warn{color:var(--amber)}
 .audr-pill-drift.crit{color:var(--pink)}
+.audr-pill-spark{display:flex;align-items:center;gap:6px;padding-left:18px;margin-top:2px}
+.audr-pill-spark svg{display:block}
+.audr-pill-spark-lab{font-size:8px;color:var(--dim);font-family:var(--mono);letter-spacing:0.04em;text-transform:uppercase}
 
 /* Strip (one-line panel) */
 .strip{display:flex;align-items:center;gap:12px;padding:10px 16px;border-radius:10px;
@@ -10103,9 +10222,42 @@ loadNode('company');
 setInterval(() => loadNode(currentNode, {silent:true}), 300000);   // 5 min
 
 // ─── AUDITORS FLEET RAIL ─── horizontal collapsed pills (V2 2026-05-08) ───
+// V2.5 phase B: 24h sparkline per auditor, fed by /api/auditors/history.
+let _auditorHistory = {};
+
+function _renderSparkline(points, statusNow) {
+  // points: [{t, open, status}, ...] in chrono order
+  if (!points || points.length < 2) return '';
+  const W = 70, H = 14, PAD = 1;
+  const opens = points.map(p => (p.open == null ? 0 : p.open));
+  const min = Math.min.apply(null, opens), max = Math.max.apply(null, opens);
+  const range = (max - min) || 1;
+  const xs = points.map((_, i) => PAD + i * (W - 2*PAD) / (points.length - 1));
+  const ys = opens.map(v => H - PAD - ((v - min) / range) * (H - 2*PAD));
+  const d  = xs.map((x, i) => (i ? 'L' : 'M') + x.toFixed(1) + ',' + ys[i].toFixed(1)).join(' ');
+  const stroke = statusNow === 'crit' ? 'var(--pink)' : statusNow === 'warn' ? 'var(--amber)' : 'var(--teal)';
+  // Last-point dot
+  const lx = xs[xs.length-1], ly = ys[ys.length-1];
+  return '<svg width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '">'
+    + '<path d="' + d + '" fill="none" stroke="' + stroke + '" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round" opacity="0.85"/>'
+    + '<circle cx="' + lx.toFixed(1) + '" cy="' + ly.toFixed(1) + '" r="1.6" fill="' + stroke + '"/>'
+    + '</svg>';
+}
+
+async function fetchAuditorHistory() {
+  try {
+    const r = await fetch('/api/auditors/history?hours=24', {credentials:'same-origin'});
+    if (!r.ok) return;
+    const d = await r.json();
+    _auditorHistory = d.auditors || {};
+  } catch(e) {}
+}
+
 async function fetchAuditors() {
   const rail = document.getElementById('auditor-rail');
   if (!rail) return;
+  // Fetch history first so the rail render below has data; both small.
+  await fetchAuditorHistory();
   try {
     const r = await fetch('/api/auditors/summary', {credentials:'same-origin'});
     if (!r.ok) {
@@ -10155,6 +10307,12 @@ async function fetchAuditors() {
       const driftLine = (a.drift_state && a.drift_state !== 'on_schedule' && a.drift_state !== 'manual')
         ? '<div class="audr-pill-drift ' + (a.drift_state==='stale'?'crit':a.drift_state==='overdue'?'warn':'dim') + '">' + escHtml(a.drift_message||'') + '</div>'
         : '';
+      const hist = _auditorHistory[a.name] || [];
+      const sparkline = (hist.length >= 2)
+        ? '<div class="audr-pill-spark">' + _renderSparkline(hist, a.status) + '<span class="audr-pill-spark-lab">24h · ' + hist.length + 'pt</span></div>'
+        : (hist.length === 1
+           ? '<div class="audr-pill-spark"><span class="audr-pill-spark-lab">24h · 1 sample, sparkline at next cycle</span></div>'
+           : '<div class="audr-pill-spark"><span class="audr-pill-spark-lab">24h · awaiting first samples</span></div>');
       const tooltip = (a.desc||'') + '\nschedule: ' + (a.schedule||'—') + '\nlast run: ' + ageSince(a.last_run) + (a.drift_message?'\n' + a.drift_message:'');
       return ''
         + '<div class="audr-pill" title="' + escHtml(tooltip) + '">'
@@ -10165,6 +10323,7 @@ async function fetchAuditors() {
         + '    <span class="audr-pill-age">' + ageSince(a.last_run) + '</span>'
         + '  </div>'
         + driftLine
+        + sparkline
         + '</div>';
     }).join('');
   } catch(e) {
@@ -11085,6 +11244,9 @@ if __name__ == "__main__":
     t.start()
     mt = threading.Thread(target=metrics_recorder, daemon=True)
     mt.start()
+    # Auditor snapshot recorder (V2.5 phase B — 5min cadence, 7d retention)
+    asr = threading.Thread(target=auditor_snapshot_recorder, daemon=True)
+    asr.start()
 
     # ── Self-heartbeat: monitor node reports its own metrics to itself ─────────
     def _self_heartbeat_loop():

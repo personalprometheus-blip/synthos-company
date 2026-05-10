@@ -9619,6 +9619,84 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 .audr-meta .row .k{color:rgba(255,255,255,0.3)}
 .audr-meta .row .v{color:var(--muted);text-align:right}
 .audr-desc{font-size:10px;color:rgba(255,255,255,0.45);line-height:1.4;font-style:italic}
+
+/* ─── V2 LAYOUT ─── 2026-05-08 ─── */
+/* Page title + Hero KPI bar */
+.title-v2{font-size:20px;font-weight:700;letter-spacing:-0.3px;margin-bottom:14px}
+.title-v2 span{background:linear-gradient(90deg,var(--purple),var(--teal));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.hero-strip{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px}
+.hero-kpi{padding:16px 18px;border-radius:12px;border:1px solid var(--border);background:var(--surface);
+          display:flex;flex-direction:column;gap:4px;transition:all 0.15s}
+.hero-kpi.clickable{cursor:pointer}
+.hero-kpi.clickable:hover{border-color:var(--border2)}
+.hero-kpi.crit{border-left:3px solid var(--pink)}
+.hero-kpi.warn{border-left:3px solid var(--amber)}
+.hero-kpi.ok{border-left:3px solid var(--teal)}
+.hk-num{font-size:30px;font-weight:800;letter-spacing:-1.5px;color:var(--text);font-family:var(--sans);line-height:1.05}
+.hk-num.crit{color:var(--pink)}
+.hk-num.warn{color:var(--amber)}
+.hk-num.ok{color:var(--teal)}
+.hk-num.dim{color:var(--muted);font-size:18px}
+.hk-lab{font-size:10px;font-weight:600;color:var(--muted);letter-spacing:0.04em;text-transform:uppercase}
+
+/* Filter row (AI Triage) */
+.filter-row{display:flex;gap:6px;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--border);align-items:center}
+.filter{padding:4px 10px;border-radius:6px;font-size:10px;font-weight:600;
+        background:transparent;border:1px solid var(--border);color:var(--muted);
+        cursor:pointer;font-family:var(--sans);transition:all 0.15s}
+.filter:hover:not(:disabled){background:rgba(255,255,255,0.04);color:var(--text)}
+.filter.active{background:rgba(0,245,212,0.08);border-color:rgba(0,245,212,0.3);color:var(--teal)}
+.filter:disabled{opacity:0.35;cursor:not-allowed}
+.filter-divider{width:1px;height:14px;background:var(--border);margin:0 4px}
+
+/* Triage row — like issue-row but with source pill */
+.triage-row{padding:10px 14px;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:flex-start}
+.triage-row:last-child{border-bottom:none}
+.triage-row.resolving{opacity:0.5}
+.tr-source{flex-shrink:0;padding:2px 7px;border-radius:5px;font-size:9px;font-weight:700;
+           letter-spacing:0.06em;text-transform:uppercase;margin-top:1px;font-family:var(--mono);
+           background:rgba(255,255,255,0.04);border:1px solid var(--border);color:var(--muted)}
+.tr-source.logs{background:rgba(123,97,255,0.1);border-color:rgba(123,97,255,0.25);color:var(--purple)}
+.tr-source.ticker_state{background:rgba(255,179,71,0.1);border-color:rgba(255,179,71,0.25);color:var(--amber)}
+.tr-source.policy{background:rgba(0,245,212,0.08);border-color:rgba(0,245,212,0.2);color:var(--teal)}
+.tr-body{flex:1;min-width:0}
+.tr-title{font-size:11px;color:var(--text);line-height:1.45;word-break:break-all}
+.tr-meta{font-size:9px;color:var(--dim);font-family:var(--mono);margin-top:3px}
+
+/* Auditor fleet rail (collapsed horizontal version) */
+.auditor-rail{display:flex;gap:10px;padding:0;margin-bottom:16px;flex-wrap:wrap}
+.audr-pill{flex:1 1 240px;padding:10px 12px;border-radius:10px;border:1px solid var(--border);
+           background:var(--surface);display:flex;align-items:center;gap:10px;cursor:pointer;transition:all 0.15s}
+.audr-pill:hover{border-color:var(--border2)}
+.audr-pill.active{border-color:rgba(0,245,212,0.3);background:rgba(0,245,212,0.04)}
+.audr-pill .audr-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.audr-pill .audr-pill-name{font-size:10px;font-weight:600;font-family:var(--mono);color:var(--text);flex:1;min-width:0;
+                            white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.audr-pill .audr-pill-count{font-size:13px;font-weight:700;color:var(--text);font-family:var(--mono)}
+.audr-pill .audr-pill-count.dim{color:var(--muted)}
+.audr-pill .audr-pill-age{font-size:9px;color:var(--muted);font-family:var(--mono)}
+
+/* Strip (one-line panel) */
+.strip{display:flex;align-items:center;gap:12px;padding:10px 16px;border-radius:10px;
+       border:1px solid var(--border);background:var(--surface);margin-bottom:10px;font-size:11px}
+.strip-icon{font-size:13px;opacity:0.6}
+.strip-text{flex:1;color:var(--muted);font-family:var(--mono);font-size:11px}
+.strip-text.warn{color:var(--amber)}
+.strip-text.crit{color:var(--pink)}
+.strip-toggle{padding:4px 10px;border-radius:6px;font-size:10px;font-weight:600;
+              background:transparent;border:1px solid var(--border);color:var(--muted);
+              cursor:pointer;font-family:var(--sans);transition:all 0.15s}
+.strip-toggle:hover{border-color:rgba(0,245,212,0.3);color:var(--teal)}
+.strip-drawer{margin-top:-6px;margin-bottom:14px;border-radius:10px;border:1px solid var(--border);
+              background:var(--surface);overflow:hidden}
+
+/* By-node section (demoted) */
+.by-node-divider{display:flex;align-items:center;gap:12px;margin:24px 0 12px}
+.by-node-title{font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted)}
+.by-node-divider::after{content:'';flex:1;height:1px;background:var(--border)}
+.stats-row-small{grid-template-columns:repeat(4,1fr);margin-bottom:14px}
+.stats-row-small .stat-mini{padding:10px 12px}
+.stats-row-small .sm-val{font-size:18px}
 </style>
 </head>
 <body>
@@ -9627,19 +9705,73 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 
 
 <div class="page">
-  <div class="title">Auditor &#x2014; <span>All Nodes</span></div>
-  <div class="subtitle" id="page-sub">Loading nodes...</div>
+  <div class="title-v2">Auditor <span>&mdash; All Nodes</span></div>
 
-  <!-- Auditors inventory — one card per audit agent across the fleet
-       (added 2026-05-08). Backed by /api/auditors/summary. -->
+  <!-- ── V2 Hero KPI bar ── 4 numbers above the fold ── -->
+  <div class="hero-strip">
+    <div class="hero-kpi crit"><span class="hk-num crit" id="hero-crit">&mdash;</span><span class="hk-lab">Critical unresolved</span></div>
+    <div class="hero-kpi warn"><span class="hk-num warn" id="hero-high">&mdash;</span><span class="hk-lab">High unresolved</span></div>
+    <div class="hero-kpi" id="hero-stale-card"><span class="hk-num ok" id="hero-stale">&mdash;</span><span class="hk-lab" id="hero-stale-lab">All scans current</span></div>
+    <div class="hero-kpi clickable" onclick="toggleYesterdayDrawer()"><span class="hk-num" id="hero-yesterday">&mdash;</span><span class="hk-lab">Yesterday &mdash; click for breakdown</span></div>
+  </div>
+  <div class="strip-drawer" id="yesterday-drawer" style="display:none">
+    <div class="panel-header">
+      <span class="panel-title">Last Morning Report</span>
+      <span class="panel-badge pb-purple" id="report-badge">&mdash;</span>
+    </div>
+    <div id="report-body"><div class="empty" style="padding:20px">No reports yet</div></div>
+  </div>
+
+  <!-- ── V2 AI Triage hero panel ── unified cross-source severity-sorted findings ── -->
   <div class="panel">
     <div class="panel-header">
-      <span class="panel-title">Auditors</span>
-      <span class="panel-badge pb-teal" id="auditors-updated">&#x2014;</span>
+      <span class="panel-title">AI Triage &mdash; All Sources</span>
+      <span class="panel-badge pb-pink" id="triage-badge">Loading</span>
     </div>
-    <div class="auditors-grid" id="auditors-grid">
-      <div class="empty" style="padding:20px">Loading auditors&hellip;</div>
+    <div class="filter-row">
+      <button class="filter active" id="tf-all"     onclick="setTriageFilter('all')">All</button>
+      <button class="filter"        id="tf-logs"    onclick="setTriageFilter('logs')">Logs</button>
+      <button class="filter"        id="tf-ts"      onclick="setTriageFilter('ticker_state')">Ticker State</button>
+      <button class="filter"        id="tf-policy"  onclick="setTriageFilter('policy')" disabled>Policy &middot; shadow</button>
     </div>
+    <div class="panel-scroll" id="triage-list">
+      <div class="empty" style="padding:20px">Loading findings&hellip;</div>
+    </div>
+  </div>
+
+  <!-- ── V2 Auditor fleet rail ── horizontal collapsed status pills ── -->
+  <div class="auditor-rail" id="auditor-rail">
+    <div class="empty" style="padding:14px;flex:1">Loading auditors&hellip;</div>
+  </div>
+
+  <!-- ── V2 Coverage exceptions strip ── -->
+  <div class="strip">
+    <span class="strip-icon">&#x1F4C2;</span>
+    <span class="strip-text" id="coverage-summary">Coverage: loading&hellip;</span>
+    <span class="panel-badge pb-teal" id="scan-badge" style="display:none">&mdash;</span>
+    <button class="strip-toggle" onclick="toggleCoverageDrawer()">Show all</button>
+  </div>
+  <div class="strip-drawer" id="coverage-drawer" style="display:none">
+    <div id="scan-list"><div class="empty" style="padding:16px">Loading...</div></div>
+  </div>
+
+  <!-- ── V2 Backup Health strip ── -->
+  <div class="strip">
+    <span class="strip-icon">&#x1F4BE;</span>
+    <span class="strip-text" id="backup-summary">Backup: loading&hellip;</span>
+    <span class="panel-badge pb-teal" id="bh-badge" style="display:none">Loading</span>
+    <button class="strip-toggle" onclick="toggleBackupDrawer()">Details</button>
+  </div>
+  <div class="strip-drawer" id="backup-drawer" style="display:none">
+    <div id="bh-body" style="padding:12px 16px;font-family:var(--mono);font-size:11px;color:var(--muted)">
+      Fetching backup status&hellip;
+    </div>
+  </div>
+
+  <!-- ── V2 By-Node drilldown ── demoted; for when you want per-node context ── -->
+  <div class="by-node-divider">
+    <span class="by-node-title">By Node</span>
+    <span style="font-size:10px;color:var(--muted);font-family:var(--mono)" id="page-sub">drilldown</span>
   </div>
 
   <div class="node-tabs" id="node-tabs">
@@ -9648,52 +9780,20 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
     </button>
   </div>
 
-  <div class="stats-row">
-    <div class="stat-mini"><div class="sm-label">Critical</div><div class="sm-val" id="stat-crit" style="color:var(--pink)">&#x2014;</div><div class="sm-sub">Unresolved</div></div>
-    <div class="stat-mini"><div class="sm-label">High</div><div class="sm-val" id="stat-high" style="color:var(--amber)">&#x2014;</div><div class="sm-sub">Unresolved</div></div>
-    <div class="stat-mini"><div class="sm-label">Medium</div><div class="sm-val" id="stat-med" style="color:var(--purple)">&#x2014;</div><div class="sm-sub">Unresolved</div></div>
-    <div class="stat-mini"><div class="sm-label">Total</div><div class="sm-val" id="stat-total" style="color:var(--text)">&#x2014;</div><div class="sm-sub">Unresolved</div></div>
+  <div class="stats-row stats-row-small">
+    <div class="stat-mini"><div class="sm-label">Critical</div><div class="sm-val" id="stat-crit" style="color:var(--pink)">&#x2014;</div></div>
+    <div class="stat-mini"><div class="sm-label">High</div><div class="sm-val" id="stat-high" style="color:var(--amber)">&#x2014;</div></div>
+    <div class="stat-mini"><div class="sm-label">Medium</div><div class="sm-val" id="stat-med" style="color:var(--purple)">&#x2014;</div></div>
+    <div class="stat-mini"><div class="sm-label">Total</div><div class="sm-val" id="stat-total" style="color:var(--text)">&#x2014;</div></div>
   </div>
 
-  <!-- Backup health widget (v2 backup pipeline) -->
-  <div class="panel" id="backup-health-panel" style="margin-bottom:16px">
+  <div class="panel">
     <div class="panel-header">
-      <span class="panel-title">Backup Health (Strongbox)</span>
-      <span class="panel-badge pb-teal" id="bh-badge">Loading</span>
+      <span class="panel-title">Unresolved Issues &mdash; <span id="issues-node-label">selected node</span></span>
+      <span class="panel-badge pb-pink" id="issues-badge">Loading</span>
     </div>
-    <div id="bh-body" style="padding:12px 16px;font-family:var(--mono);font-size:11px;color:var(--muted)">
-      Fetching backup status…
-    </div>
-  </div>
-
-  <div class="two-col">
-    <div>
-      <div class="panel">
-        <div class="panel-header">
-          <span class="panel-title">Unresolved Issues</span>
-          <span class="panel-badge pb-pink" id="issues-badge">Loading</span>
-        </div>
-        <div class="panel-scroll" id="issues-list">
-          <div class="empty"><div class="empty-icon">&#x23F3;</div>Fetching findings...</div>
-        </div>
-      </div>
-    </div>
-
-    <div>
-      <div class="panel">
-        <div class="panel-header">
-          <span class="panel-title">Scan Coverage</span>
-          <span class="panel-badge pb-teal" id="scan-badge">&#x2014;</span>
-        </div>
-        <div class="panel-scroll" id="scan-list"><div class="empty" style="padding:20px">Loading...</div></div>
-      </div>
-      <div class="panel" id="report-panel">
-        <div class="panel-header">
-          <span class="panel-title">Last Morning Report</span>
-          <span class="panel-badge pb-purple" id="report-badge">&#x2014;</span>
-        </div>
-        <div id="report-body"><div class="empty" style="padding:20px">No reports yet</div></div>
-      </div>
+    <div class="panel-scroll" id="issues-list">
+      <div class="empty"><div class="empty-icon">&#x23F3;</div>Fetching findings...</div>
     </div>
   </div>
 </div>
@@ -9957,53 +10057,242 @@ loadNode('company');
 // on user tab-click via loadNode(node) without opts.
 setInterval(() => loadNode(currentNode, {silent:true}), 300000);   // 5 min
 
-// ─── AUDITORS CARD GRID ─── added 2026-05-08 ───
+// ─── AUDITORS FLEET RAIL ─── horizontal collapsed pills (V2 2026-05-08) ───
 async function fetchAuditors() {
-  const grid    = document.getElementById('auditors-grid');
-  const updated = document.getElementById('auditors-updated');
-  if (!grid) return;
+  const rail = document.getElementById('auditor-rail');
+  if (!rail) return;
   try {
     const r = await fetch('/api/auditors/summary', {credentials:'same-origin'});
     if (!r.ok) {
-      grid.innerHTML = '<div class="empty" style="padding:20px">Auditors API returned ' + r.status + '</div>';
+      rail.innerHTML = '<div class="empty" style="padding:14px;flex:1">Auditors API returned ' + r.status + '</div>';
       return;
     }
     const d = await r.json();
     const arr = d.auditors || [];
-    if (updated) updated.textContent = ageSince(d.generated_at);
     if (!arr.length) {
-      grid.innerHTML = '<div class="empty" style="padding:20px">No auditors registered</div>';
+      rail.innerHTML = '<div class="empty" style="padding:14px;flex:1">No auditors registered</div>';
       return;
     }
-    grid.innerHTML = arr.map(a => {
-      const status   = a.status || 'dim';
-      const cnt      = (a.open_count == null) ? '—' : a.open_count;
-      const cntClass = (a.open_count == null) ? 'dim' : '';
-      const cntLabel = (a.open_count == null) ? '' : ' open';
-      const feeds    = a.feeds_panel || 'no portal feed';
+    // Update Hero "stalest" KPI from this data — pick the worst-status auditor
+    // among those that have a live feed; ignore dim (no live feed yet).
+    const live = arr.filter(a => a.status && a.status !== 'dim');
+    let stalest = null;
+    for (const a of live) {
+      const rank = {ok:0, warn:1, crit:2}[a.status] ?? -1;
+      if (!stalest || rank > ({ok:0, warn:1, crit:2}[stalest.status] ?? -1)) stalest = a;
+    }
+    const heroStale    = document.getElementById('hero-stale');
+    const heroStaleLab = document.getElementById('hero-stale-lab');
+    const heroStaleCard= document.getElementById('hero-stale-card');
+    if (heroStale) {
+      if (!stalest || stalest.status === 'ok') {
+        heroStale.textContent = '✓';
+        heroStale.className = 'hk-num ok';
+        heroStaleLab.textContent = 'All scans current';
+        heroStaleCard.classList.remove('crit','warn');
+      } else if (stalest.status === 'warn') {
+        heroStale.textContent = stalest.name.replace(/^retail_|_auditor[.]py$|^company_/g,'').slice(0,12);
+        heroStale.className = 'hk-num warn';
+        heroStaleLab.textContent = 'Auditor overdue';
+        heroStaleCard.classList.add('warn'); heroStaleCard.classList.remove('crit');
+      } else {
+        heroStale.textContent = stalest.name.replace(/^retail_|_auditor[.]py$|^company_/g,'').slice(0,12);
+        heroStale.className = 'hk-num crit';
+        heroStaleLab.textContent = 'Auditor stale';
+        heroStaleCard.classList.add('crit'); heroStaleCard.classList.remove('warn');
+      }
+    }
+    rail.innerHTML = arr.map(a => {
+      const status = a.status || 'dim';
+      const cnt    = (a.open_count == null) ? '—' : a.open_count;
+      const cntCls = (a.open_count == null) ? 'dim' : '';
+      const shortName = (a.name||'').replace(/^retail_/,'').replace(/_auditor[.]py$/,'').replace(/^company_/,'');
+      const tooltip = (a.desc||'') + '\nschedule: ' + (a.schedule||'—') + '\nlast run: ' + ageSince(a.last_run);
       return ''
-        + '<div class="audr-card">'
-        + '  <div class="audr-name">' + escHtml(a.name||'?')
-        + '    <span class="audr-node-pill">' + escHtml(a.node||'?') + '</span>'
-        + '  </div>'
-        + '  <div class="audr-status">'
-        + '    <span class="audr-dot ' + status + '"></span>'
-        + '    <span class="audr-count ' + cntClass + '">' + cnt + cntLabel + '</span>'
-        + '  </div>'
-        + '  <div class="audr-meta">'
-        + '    <div class="row"><span class="k">schedule</span><span class="v">' + escHtml(a.schedule||'—') + '</span></div>'
-        + '    <div class="row"><span class="k">last run</span><span class="v">' + ageSince(a.last_run) + '</span></div>'
-        + '    <div class="row"><span class="k">feeds</span><span class="v">' + escHtml(feeds) + '</span></div>'
-        + '  </div>'
-        + (a.desc ? '  <div class="audr-desc">' + escHtml(a.desc) + '</div>' : '')
+        + '<div class="audr-pill" title="' + escHtml(tooltip) + '">'
+        + '  <span class="audr-dot ' + status + '"></span>'
+        + '  <span class="audr-pill-name">' + escHtml(shortName) + ' <span style="color:var(--dim);font-weight:400">· ' + escHtml(a.node||'') + '</span></span>'
+        + '  <span class="audr-pill-count ' + cntCls + '">' + cnt + '</span>'
+        + '  <span class="audr-pill-age">' + ageSince(a.last_run) + '</span>'
         + '</div>';
     }).join('');
   } catch(e) {
-    grid.innerHTML = '<div class="empty" style="padding:20px">Auditors unreachable: ' + escHtml(String(e)) + '</div>';
+    rail.innerHTML = '<div class="empty" style="padding:14px;flex:1">Auditors unreachable: ' + escHtml(String(e)) + '</div>';
   }
 }
+
+// ─── AI TRIAGE ─── unified cross-source severity-sorted findings (V2) ───
+const SEV_ORDER = {critical:0,high:1,medium:2,low:3};
+let triageItems = [];
+let triageFilter = 'all';
+
+function _fromCompanyIssue(i) {
+  return {
+    id: i.id, source: 'logs', node: 'pi4b',
+    severity: (i.severity||'low').toLowerCase(),
+    title: i.context || '(no context)',
+    file: i.source_file || '',
+    last_seen: i.last_seen,
+    hits: i.hit_count || 1,
+    canResolve: true,
+  };
+}
+function _fromTickerStateIssue(i) {
+  // /api/auditor/ticker-state already returns {context, severity, source_file, last_seen, hit_count}
+  return {
+    id: i.id, source: 'ticker_state', node: 'pi5',
+    severity: (i.severity||'low').toLowerCase(),
+    title: i.context || '(no context)',
+    file: i.source_file || 'ticker_state',
+    last_seen: i.last_seen,
+    hits: i.hit_count || 1,
+    canResolve: false,
+  };
+}
+
+async function fetchTriage() {
+  let logs = [], ts = [];
+  try {
+    const [rL, rT] = await Promise.all([
+      fetch('/api/auditor', {headers:{'X-Token':TOKEN}}).then(r=>r.ok?r.json():{issues:[]}).catch(()=>({issues:[]})),
+      fetch('/api/auditor/ticker-state', {headers:{'X-Token':TOKEN}}).then(r=>r.ok?r.json():{issues:[]}).catch(()=>({issues:[]})),
+    ]);
+    logs = (rL.issues||[]).map(_fromCompanyIssue);
+    ts   = (rT.issues||[]).map(_fromTickerStateIssue);
+  } catch(e){}
+  triageItems = logs.concat(ts);
+  triageItems.sort((a,b) => (SEV_ORDER[a.severity]??9) - (SEV_ORDER[b.severity]??9));
+  renderTriage();
+  updateHeroFromTriage();
+}
+
+function setTriageFilter(f) {
+  triageFilter = f;
+  ['all','logs','ticker_state','policy'].forEach(name => {
+    const el = document.getElementById('tf-' + (name==='ticker_state'?'ts':name));
+    if (el) el.classList.toggle('active', name === f);
+  });
+  renderTriage();
+}
+
+function renderTriage() {
+  const list  = document.getElementById('triage-list');
+  const badge = document.getElementById('triage-badge');
+  if (!list || !badge) return;
+  const filtered = triageFilter === 'all' ? triageItems : triageItems.filter(t => t.source === triageFilter);
+  badge.textContent = triageItems.length > 0 ? triageItems.length + ' open' : 'All clear';
+  badge.className = 'panel-badge ' + (triageItems.length === 0 ? 'pb-teal' : (triageItems.some(t=>t.severity==='critical')?'pb-pink':triageItems.some(t=>t.severity==='high')?'pb-amber':'pb-purple'));
+  if (!filtered.length) {
+    const msg = triageFilter==='all' ? '✓ No open findings — system healthy' : '✓ No ' + triageFilter.replace('_',' ') + ' findings';
+    list.innerHTML = '<div class="empty" style="padding:24px"><div class="empty-icon">✓</div>' + msg + '</div>';
+    return;
+  }
+  list.innerHTML = filtered.slice(0, 50).map(t => {
+    const sevCls = 'sev-' + t.severity;
+    const hits = t.hits > 1 ? ' <span style="color:var(--dim)">×'+t.hits+'</span>' : '';
+    const resolveBtn = t.canResolve
+      ? '<button class="auditor-resolve-btn" onclick="resolveAuditorIssue(\''+CSS.escape(String(t.id))+'\',event)">Resolve</button>'
+      : '';
+    return '<div class="triage-row" data-issue-id="'+CSS.escape(String(t.id||''))+'">'
+      + '<div class="sev-badge '+sevCls+'">'+escHtml(t.severity)+'</div>'
+      + '<div class="tr-source '+t.source+'">'+t.source.replace('_',' ')+' &middot; '+t.node+'</div>'
+      + '<div class="tr-body">'
+        + '<div class="tr-title">'+escHtml(t.title)+hits+'</div>'
+        + '<div class="tr-meta">'+escHtml(t.file)+' &middot; '+ageSince(t.last_seen)+'</div>'
+      + '</div>'
+      + resolveBtn
+    + '</div>';
+  }).join('');
+}
+
+function updateHeroFromTriage() {
+  let crit = 0, high = 0;
+  for (const t of triageItems) {
+    if (t.severity === 'critical') crit++;
+    else if (t.severity === 'high') high++;
+  }
+  const c = document.getElementById('hero-crit'); if (c) c.textContent = crit;
+  const h = document.getElementById('hero-high'); if (h) h.textContent = high;
+}
+
+// ─── STRIP UPDATERS ─── coverage / backup / yesterday ───
+function updateCoverageStrip(scanState) {
+  const el = document.getElementById('coverage-summary');
+  if (!el) return;
+  if (!scanState || !scanState.length) { el.textContent = 'Coverage: no scan data yet'; return; }
+  let stale = 0, total = scanState.length;
+  const now = Date.now();
+  for (const s of scanState) {
+    const lt = s.last_scanned ? new Date(s.last_scanned).getTime() : 0;
+    if (!lt || (now - lt) > 30 * 60 * 1000) stale++;  // >30min = stale
+  }
+  el.className = 'strip-text' + (stale ? ' warn' : '');
+  el.textContent = total + '/' + total + ' log files monitored · ' + stale + ' stale (>30m)';
+}
+
+function updateBackupStrip() {
+  // Read state from existing bh-body content (populated by refreshBackupHealth).
+  // We'll also read the badge text to summarize.
+  const badge = document.getElementById('bh-badge');
+  const summary = document.getElementById('backup-summary');
+  if (!badge || !summary) return;
+  const txt = badge.textContent || '';
+  let cls = 'strip-text';
+  if (txt.toLowerCase().includes('failure')) cls += ' crit';
+  else if (txt.toLowerCase().includes('stale')) cls += ' warn';
+  summary.className = cls;
+  summary.textContent = 'Backup: ' + txt;
+}
+
+function updateYesterdayKpi(report) {
+  const el = document.getElementById('hero-yesterday');
+  if (!el) return;
+  if (!report) { el.textContent = '—'; return; }
+  const last24 = report.last_24h || {};
+  const total = (last24.critical && last24.critical.unique != null ? last24.critical.unique : (last24.critical||0))
+              + (last24.high && last24.high.unique != null ? last24.high.unique : (last24.high||0))
+              + (last24.medium && last24.medium.unique != null ? last24.medium.unique : (last24.medium||0));
+  const resolved = report.resolved_count || 0;
+  el.textContent = total + (resolved ? ' / ' + resolved + ' fixed' : '');
+}
+
+// ─── DRAWER TOGGLES ───
+function toggleCoverageDrawer() {
+  const d = document.getElementById('coverage-drawer');
+  if (d) d.style.display = d.style.display === 'none' ? '' : 'none';
+}
+function toggleBackupDrawer() {
+  const d = document.getElementById('backup-drawer');
+  if (d) d.style.display = d.style.display === 'none' ? '' : 'none';
+}
+function toggleYesterdayDrawer() {
+  const d = document.getElementById('yesterday-drawer');
+  if (d) d.style.display = d.style.display === 'none' ? '' : 'none';
+}
+
+// Hook: after refreshBackupHealth runs, also update the strip.
+const _origRefreshBackup = refreshBackupHealth;
+refreshBackupHealth = async function() {
+  await _origRefreshBackup.apply(this, arguments);
+  updateBackupStrip();
+};
+
+// Hook: after render() runs (per-node), also update coverage strip + yesterday from company data.
+const _origRender = render;
+render = function(d) {
+  _origRender.apply(this, arguments);
+  if (currentNode === 'company') {
+    updateCoverageStrip(d.scan_state);
+    updateYesterdayKpi(d.morning_report);
+  }
+  const lab = document.getElementById('issues-node-label');
+  if (lab) lab.textContent = currentNode === 'company' ? 'pi4b' : currentNode;
+};
+
 fetchAuditors();
+fetchTriage();
 setInterval(fetchAuditors, 60000); // 60s
+setInterval(fetchTriage, 60000);   // 60s
 </script>
 </body>
 </html>

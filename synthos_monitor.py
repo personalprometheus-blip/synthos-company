@@ -4493,6 +4493,82 @@ document.addEventListener('keydown', function(ev) {
 histcovLoad();
 setInterval(histcovLoad, 60000);
 </script>
+
+<script>
+/* DRAWER-DISMISS — global click-outside + mutual-exclusion for slide-out
+   drawers and side panels. Added 2026-05-09.
+
+   Behavior:
+     1. Click anywhere outside every currently-open drawer  → closes them all.
+     2. Click on a different drawer's open-trigger          → existing drawer
+        closes via #1, then the trigger's own onclick opens the new drawer.
+        (No more stacking.)
+     3. Esc                                                  → closes all open
+        drawers (alongside existing per-drawer Esc handlers; idempotent).
+
+   Targeting: any element whose id ends in "-drawer" or "-panel" plus
+   "#sidebar". Excludes "*-overlay", "*-drop" (dropdowns), and anything with
+   "modal" in the id.
+
+   Mechanism: capture-phase document click handler. Runs BEFORE any
+   onclick="..." attribute fires, so it can close stale drawers without
+   blocking a legitimate trigger that's about to open a new one.
+
+   Safety:
+     * Click inside an open drawer is ignored (so buttons inside drawers
+       work normally).
+     * Existing overlay-click handlers (e.g. agent-drawer-overlay onclick)
+       still run; close becomes idempotent.
+     * Existing per-drawer Esc handlers still run.
+*/
+(function() {
+  function isDrawerLike(el) {
+    if (!el || !el.id) return false;
+    var id = el.id;
+    if (id === 'sidebar') return true;
+    if (/-overlay$/.test(id)) return false;
+    if (/-drop$/.test(id)) return false;
+    if (/modal/i.test(id)) return false;
+    return /-drawer$|-panel$/.test(id);
+  }
+
+  function findOpenDrawers() {
+    var out = [];
+    var nodes = document.querySelectorAll(
+      '[id$="-drawer"], [id$="-panel"], #sidebar'
+    );
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i];
+      if (!isDrawerLike(n)) continue;
+      if (!n.classList.contains('open')) continue;
+      out.push(n);
+    }
+    return out;
+  }
+
+  function closeDrawer(el) {
+    el.classList.remove('open');
+    // Some drawers pair with an overlay element that also takes .open
+    var ovl = document.getElementById(el.id + '-overlay');
+    if (ovl) ovl.classList.remove('open');
+  }
+
+  document.addEventListener('click', function(ev) {
+    var open = findOpenDrawers();
+    if (open.length === 0) return;
+    for (var i = 0; i < open.length; i++) {
+      if (open[i].contains(ev.target)) return;  // click is inside a drawer
+    }
+    open.forEach(closeDrawer);
+  }, true);  // capture phase — runs before per-element onclick
+
+  document.addEventListener('keydown', function(ev) {
+    if (ev.key !== 'Escape') return;
+    findOpenDrawers().forEach(closeDrawer);
+  });
+})();
+</script>
+
 </body>
 </html>"""
 

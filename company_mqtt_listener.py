@@ -199,15 +199,28 @@ def _notify_scoop_for_stale(agent_key: str, stale_s: int, *, recovery: bool = Fa
             severity = 'high'
         priority = 0 if severity in ('critical', 'high') else 1
 
+        # 2026-05-08 — scoop_queue.payload is NOT NULL with no default; the
+        # original INSERT here omitted it and silently dropped 49 stale-agent
+        # alerts between 2026-05-09 and 2026-05-10. Pass a structured JSON
+        # payload so downstream consumers (scoop dispatcher, audit drilldown)
+        # have the typed event data, not just the prose body.
+        payload = json.dumps({
+            'agent_key':   agent_key,
+            'stale_s':     stale_s,
+            'threshold_s': HEARTBEAT_ALERT_S,
+            'recovery':    recovery,
+            'severity':    severity,
+        })
+
         conn = sqlite3.connect(COMPANY_DB, timeout=30)
         try:
             conn.execute(
                 "INSERT INTO scoop_queue "
                 "(id, event_type, priority, subject, body, source_agent, "
-                " audience, status, queued_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " audience, status, queued_at, payload) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (eid, 'mqtt_listener_stale', priority, subject, body,
-                 'mqtt_listener', 'ops', 'queued', queued_at),
+                 'mqtt_listener', 'ops', 'queued', queued_at, payload),
             )
             conn.commit()
         finally:

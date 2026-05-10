@@ -6591,6 +6591,24 @@ def api_auditor_findings():
             "         WHEN 'medium' THEN 2 ELSE 3 END, hit_count DESC LIMIT 200"
         ).fetchall()
 
+        # V2.5 phase C: filter against active suppressed_patterns. We
+        # could SQL-JOIN but the table is small and Python-side keeps
+        # the filter explicit + auditable.
+        try:
+            supp_rows = conn.execute(
+                "SELECT pattern, source_file FROM suppressed_patterns WHERE active=1"
+            ).fetchall()
+            supp_set      = {(r['pattern'], r['source_file']) for r in supp_rows if r['source_file']}
+            supp_pat_only = {r['pattern'] for r in supp_rows if not r['source_file']}
+            if supp_set or supp_pat_only:
+                issues = [
+                    i for i in issues
+                    if i['pattern'] not in supp_pat_only
+                    and (i['pattern'], i['source_file']) not in supp_set
+                ]
+        except sqlite3.OperationalError:
+            pass  # table may not exist yet — first deploy
+
         by_sev: dict = {}
         for row in issues:
             by_sev[row['severity']] = by_sev.get(row['severity'], 0) + 1
@@ -7601,6 +7619,135 @@ def api_auditors_history():
         'window_hours': hours,
         'generated_at': datetime.now(timezone.utc).isoformat(),
     })
+
+
+# ─── Suppressed-pattern affordance (V2.5 phase C) ─────────────────────
+# Operator marks a noisy auditor pattern as "suppressed"; future
+# detected_issues matching (pattern, source_file) are auto-resolved on
+# write, and existing open ones are resolved at suppression time. Live
+# query path also filters them so they disappear from AI Triage
+# immediately. Unsuppress reverts (active=0) but doesn't un-resolve
+# already-resolved issues — that's intentional, the user can re-fire by
+# letting the auditor pick them up again.
+
+def _ensure_suppressed_patterns_schema():
+    """Lazy CREATE TABLE for suppressed_patterns. Idempotent."""
+    try:
+        conn = sqlite3.connect(_AUDITOR_DB_PATH, timeout=5)
+        conn.execute("""CREATE TABLE IF NOT EXISTS suppressed_patterns (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            pattern       TEXT    NOT NULL,
+            source_file   TEXT,
+            reason        TEXT,
+            suppressed_at TEXT    NOT NULL,
+            suppressed_by TEXT,
+            active        INTEGER NOT NULL DEFAULT 1)""")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_supp_active "
+            "ON suppressed_patterns(pattern, source_file, active)"
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[suppress] schema init failed: {e}")
+
+
+def _active_suppressions():
+    """Return list of {id, pattern, source_file, reason, suppressed_at} for active rows."""
+    try:
+        _ensure_suppressed_patterns_schema()
+        conn = sqlite3.connect(_AUDITOR_DB_PATH, timeout=5)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT id, pattern, source_file, reason, suppressed_at, suppressed_by "
+            "FROM suppressed_patterns WHERE active=1 ORDER BY suppressed_at DESC"
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        print(f"[suppress] list failed: {e}")
+        return []
+
+
+@app.route("/api/auditor/suppress", methods=["POST"])
+def api_auditor_suppress():
+    """Suppress all current+future matches of (pattern, source_file).
+
+    Body: {"pattern": str, "source_file": str?, "reason": str?}
+    Effect:
+      1. INSERT into suppressed_patterns (active=1)
+      2. UPDATE detected_issues SET resolved=1 for matching rows
+    """
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    data = request.get_json(force=True, silent=True) or {}
+    pattern     = (data.get('pattern') or '').strip()
+    source_file = (data.get('source_file') or '').strip() or None
+    reason      = (data.get('reason') or '').strip()
+    if not pattern:
+        return jsonify({"ok": False, "error": "pattern is required"}), 400
+    _ensure_suppressed_patterns_schema()
+    try:
+        conn = sqlite3.connect(_AUDITOR_DB_PATH, timeout=10)
+        # Skip duplicate suppressions silently
+        existing = conn.execute(
+            "SELECT id FROM suppressed_patterns WHERE pattern=? "
+            "AND COALESCE(source_file,'')=COALESCE(?,'') AND active=1",
+            (pattern, source_file),
+        ).fetchone()
+        if existing:
+            conn.close()
+            return jsonify({"ok": True, "id": existing[0], "duplicate": True})
+        conn.execute(
+            "INSERT INTO suppressed_patterns(pattern, source_file, reason, "
+            "suppressed_at, suppressed_by, active) VALUES(?,?,?,?,?,1)",
+            (pattern, source_file, reason or None,
+             datetime.now(timezone.utc).isoformat(), 'operator'),
+        )
+        new_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        # Auto-resolve any matching open issues
+        if source_file:
+            res = conn.execute(
+                "UPDATE detected_issues SET resolved=1 WHERE resolved=0 "
+                "AND pattern=? AND source_file=?",
+                (pattern, source_file),
+            )
+        else:
+            res = conn.execute(
+                "UPDATE detected_issues SET resolved=1 WHERE resolved=0 AND pattern=?",
+                (pattern,),
+            )
+        resolved_count = res.rowcount
+        conn.commit()
+        conn.close()
+        return jsonify({"ok": True, "id": new_id, "resolved_count": resolved_count})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/auditor/suppressions")
+def api_auditor_suppressions():
+    """List active suppressions."""
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    return jsonify({"suppressions": _active_suppressions()})
+
+
+@app.route("/api/auditor/suppressions/<int:supp_id>", methods=["DELETE"])
+def api_auditor_unsuppress(supp_id):
+    """Unsuppress (set active=0). Already-resolved issues stay resolved
+    until the auditor re-fires them organically."""
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    try:
+        _ensure_suppressed_patterns_schema()
+        conn = sqlite3.connect(_AUDITOR_DB_PATH, timeout=5)
+        conn.execute("UPDATE suppressed_patterns SET active=0 WHERE id=?", (supp_id,))
+        conn.commit()
+        conn.close()
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.route("/api/behavior-baseline")
@@ -9840,6 +9987,23 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 .audr-pill-spark svg{display:block}
 .audr-pill-spark-lab{font-size:8px;color:var(--dim);font-family:var(--mono);letter-spacing:0.04em;text-transform:uppercase}
 
+/* V2.5 phase C — suppress button + suppressions drawer */
+.tr-actions{display:flex;flex-direction:column;gap:4px;flex-shrink:0}
+.auditor-suppress-btn{padding:4px 10px;border-radius:6px;border:1px solid var(--border2);
+  background:transparent;color:var(--muted);font-family:var(--sans);font-size:10px;font-weight:600;
+  letter-spacing:0.04em;cursor:pointer;transition:all 0.15s}
+.auditor-suppress-btn:hover{background:rgba(255,179,71,0.06);border-color:rgba(255,179,71,0.3);color:var(--amber)}
+.suppressed-link{font-size:10px;color:var(--muted);text-decoration:none;cursor:pointer;
+  padding:2px 8px;border-radius:6px;border:1px solid var(--border);transition:all 0.15s;
+  font-family:var(--sans)}
+.suppressed-link:hover{border-color:var(--border2);color:var(--text)}
+.supp-row{padding:10px 14px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;gap:10px}
+.supp-row:last-child{border-bottom:none}
+.supp-body{flex:1;min-width:0}
+.supp-pattern{font-size:11px;font-family:var(--mono);color:var(--text);word-break:break-all}
+.supp-meta{font-size:9px;color:var(--muted);font-family:var(--mono);margin-top:3px}
+.supp-reason{font-size:10px;color:rgba(255,255,255,0.45);margin-top:4px;font-style:italic;line-height:1.4}
+
 /* Strip (one-line panel) */
 .strip{display:flex;align-items:center;gap:12px;padding:10px 16px;border-radius:10px;
        border:1px solid var(--border);background:var(--surface);margin-bottom:10px;font-size:11px}
@@ -9890,6 +10054,7 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
   <div class="panel">
     <div class="panel-header">
       <span class="panel-title">AI Triage &mdash; All Sources</span>
+      <a class="suppressed-link" id="suppressed-link" onclick="toggleSuppressionsDrawer()" style="opacity:0.45">Suppressed (0)</a>
       <span class="panel-badge pb-pink" id="triage-badge">Loading</span>
     </div>
     <div class="filter-row">
@@ -9900,6 +10065,17 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
     </div>
     <div class="panel-scroll" id="triage-list">
       <div class="empty" style="padding:20px">Loading findings&hellip;</div>
+    </div>
+  </div>
+
+  <!-- ── V2.5 Suppressions management drawer ── -->
+  <div class="strip-drawer" id="suppressions-drawer" style="display:none">
+    <div class="panel-header">
+      <span class="panel-title">Suppressed Patterns</span>
+      <span style="font-size:10px;color:var(--muted);font-family:var(--mono)">click Unsuppress to restore</span>
+    </div>
+    <div id="suppressions-list">
+      <div class="empty" style="padding:20px">Loading suppressions&hellip;</div>
     </div>
   </div>
 
@@ -10342,9 +10518,11 @@ function _fromCompanyIssue(i) {
     severity: (i.severity||'low').toLowerCase(),
     title: i.context || '(no context)',
     file: i.source_file || '',
+    pattern: i.pattern || '',     // needed for V2.5 suppress
     last_seen: i.last_seen,
     hits: i.hit_count || 1,
     canResolve: true,
+    canSuppress: !!i.pattern,     // suppress requires a pattern
   };
 }
 function _fromTickerStateIssue(i) {
@@ -10397,11 +10575,14 @@ function renderTriage() {
     list.innerHTML = '<div class="empty" style="padding:24px"><div class="empty-icon">✓</div>' + msg + '</div>';
     return;
   }
-  list.innerHTML = filtered.slice(0, 50).map(t => {
+  list.innerHTML = filtered.slice(0, 50).map((t, idx) => {
     const sevCls = 'sev-' + t.severity;
     const hits = t.hits > 1 ? ' <span style="color:var(--dim)">×'+t.hits+'</span>' : '';
     const resolveBtn = t.canResolve
       ? '<button class="auditor-resolve-btn" onclick="resolveAuditorIssue(\''+CSS.escape(String(t.id))+'\',event)">Resolve</button>'
+      : '';
+    const suppressBtn = t.canSuppress
+      ? '<button class="auditor-suppress-btn" data-tridx="'+idx+'" onclick="suppressTriagePattern(this.dataset.tridx,event)" title="Suppress all matches of this pattern in this file">Suppress</button>'
       : '';
     return '<div class="triage-row" data-issue-id="'+CSS.escape(String(t.id||''))+'">'
       + '<div class="sev-badge '+sevCls+'">'+escHtml(t.severity)+'</div>'
@@ -10410,9 +10591,90 @@ function renderTriage() {
         + '<div class="tr-title">'+escHtml(t.title)+hits+'</div>'
         + '<div class="tr-meta">'+escHtml(t.file)+' &middot; '+ageSince(t.last_seen)+'</div>'
       + '</div>'
-      + resolveBtn
+      + '<div class="tr-actions">' + resolveBtn + suppressBtn + '</div>'
     + '</div>';
   }).join('');
+}
+
+// Suppress acts on the rendered (filtered) array — recover the row by index.
+let _renderedTriage = [];
+async function suppressTriagePattern(idx, ev) {
+  if (ev && ev.stopPropagation) ev.stopPropagation();
+  const filtered = triageFilter === 'all' ? triageItems : triageItems.filter(t => t.source === triageFilter);
+  const t = filtered[parseInt(idx, 10)];
+  if (!t || !t.pattern) return;
+  const reason = prompt('Reason for suppressing this pattern? (optional)\n\nPattern: ' + t.pattern + '\nFile: ' + t.file, '');
+  if (reason === null) return; // cancelled
+  try {
+    const r = await fetch('/api/auditor/suppress', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json','X-Token':TOKEN},
+      credentials: 'same-origin',
+      body: JSON.stringify({pattern: t.pattern, source_file: t.file, reason: reason || ''}),
+    });
+    const d = await r.json();
+    if (!r.ok || !d.ok) { alert('Suppress failed: ' + (d.error || r.statusText)); return; }
+    await fetchTriage();          // matches disappear from list
+    await fetchSuppressions();    // refresh drawer count
+  } catch(e) { alert('Suppress failed: ' + e.message); }
+}
+
+let _suppressions = [];
+async function fetchSuppressions() {
+  try {
+    const r = await fetch('/api/auditor/suppressions', {credentials:'same-origin'});
+    if (!r.ok) return;
+    const d = await r.json();
+    _suppressions = d.suppressions || [];
+    const link = document.getElementById('suppressed-link');
+    if (link) {
+      link.textContent = _suppressions.length > 0
+        ? 'Suppressed (' + _suppressions.length + ')'
+        : 'Suppressed (0)';
+      link.style.opacity = _suppressions.length > 0 ? '1' : '0.45';
+    }
+    renderSuppressionsDrawer();
+  } catch(e) {}
+}
+
+function renderSuppressionsDrawer() {
+  const body = document.getElementById('suppressions-list');
+  if (!body) return;
+  if (!_suppressions.length) {
+    body.innerHTML = '<div class="empty" style="padding:20px">No active suppressions</div>';
+    return;
+  }
+  body.innerHTML = _suppressions.map(s => {
+    const fileBit = s.source_file ? escHtml(s.source_file) : '<span style="color:var(--dim)">(any file)</span>';
+    const reasonBit = s.reason ? '<div class="supp-reason">' + escHtml(s.reason) + '</div>' : '';
+    return '<div class="supp-row">'
+      + '<div class="supp-body">'
+        + '<div class="supp-pattern">' + escHtml(s.pattern) + '</div>'
+        + '<div class="supp-meta">' + fileBit + ' &middot; suppressed ' + ageSince(s.suppressed_at) + (s.suppressed_by ? ' by ' + escHtml(s.suppressed_by) : '') + '</div>'
+        + reasonBit
+      + '</div>'
+      + '<button class="auditor-resolve-btn" onclick="unsuppressPattern(' + s.id + ',event)">Unsuppress</button>'
+    + '</div>';
+  }).join('');
+}
+
+async function unsuppressPattern(id, ev) {
+  if (ev && ev.stopPropagation) ev.stopPropagation();
+  if (!confirm('Unsuppress this pattern? Future matches will start showing up again.')) return;
+  try {
+    const r = await fetch('/api/auditor/suppressions/' + id, {
+      method:'DELETE', headers:{'X-Token':TOKEN}, credentials:'same-origin',
+    });
+    const d = await r.json();
+    if (!r.ok || !d.ok) { alert('Unsuppress failed: ' + (d.error || r.statusText)); return; }
+    await fetchSuppressions();
+    await fetchTriage();
+  } catch(e) { alert('Unsuppress failed: ' + e.message); }
+}
+
+function toggleSuppressionsDrawer() {
+  const d = document.getElementById('suppressions-drawer');
+  if (d) d.style.display = d.style.display === 'none' ? '' : 'none';
 }
 
 function updateHeroFromTriage() {
@@ -10501,8 +10763,10 @@ render = function(d) {
 
 fetchAuditors();
 fetchTriage();
-setInterval(fetchAuditors, 60000); // 60s
-setInterval(fetchTriage, 60000);   // 60s
+fetchSuppressions();
+setInterval(fetchAuditors, 60000);     // 60s
+setInterval(fetchTriage, 60000);       // 60s
+setInterval(fetchSuppressions, 60000); // 60s
 </script>
 </body>
 </html>

@@ -10489,7 +10489,7 @@ async function fetchAuditors() {
         : (hist.length === 1
            ? '<div class="audr-pill-spark"><span class="audr-pill-spark-lab">24h · 1 sample, sparkline at next cycle</span></div>'
            : '<div class="audr-pill-spark"><span class="audr-pill-spark-lab">24h · awaiting first samples</span></div>');
-      const tooltip = (a.desc||'') + '\nschedule: ' + (a.schedule||'—') + '\nlast run: ' + ageSince(a.last_run) + (a.drift_message?'\n' + a.drift_message:'');
+      const tooltip = (a.desc||'') + '\\nschedule: ' + (a.schedule||'—') + '\\nlast run: ' + ageSince(a.last_run) + (a.drift_message?'\\n' + a.drift_message:'');
       return ''
         + '<div class="audr-pill" title="' + escHtml(tooltip) + '">'
         + '  <div class="audr-pill-row">'
@@ -10603,7 +10603,7 @@ async function suppressTriagePattern(idx, ev) {
   const filtered = triageFilter === 'all' ? triageItems : triageItems.filter(t => t.source === triageFilter);
   const t = filtered[parseInt(idx, 10)];
   if (!t || !t.pattern) return;
-  const reason = prompt('Reason for suppressing this pattern? (optional)\n\nPattern: ' + t.pattern + '\nFile: ' + t.file, '');
+  const reason = prompt('Reason for suppressing this pattern? (optional)\\n\\nPattern: ' + t.pattern + '\\nFile: ' + t.file, '');
   if (reason === null) return; // cancelled
   try {
     const r = await fetch('/api/auditor/suppress', {

@@ -82,54 +82,6 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 .live-val.warn{color:var(--amber)}
 .live-val.crit{color:var(--pink)}
 
-/* ─── AUDITORS CARD GRID ─── added 2026-05-08 ─── */
-.auditors-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;padding:14px 16px}
-.audr-card{padding:14px;border-radius:12px;border:1px solid var(--border);background:var(--surface2);display:flex;flex-direction:column;gap:8px}
-.audr-name{font-size:11px;font-weight:600;font-family:var(--mono);color:var(--text);
-           display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;word-break:break-all}
-.audr-node{font-size:9px;font-weight:700;text-transform:uppercase;color:var(--muted);
-           background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px;letter-spacing:0.06em}
-.audr-status{display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
-.audr-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-.audr-dot.ok{background:#4ade80;box-shadow:0 0 8px rgba(74,222,128,0.4)}
-.audr-dot.warn{background:var(--amber);box-shadow:0 0 8px rgba(255,179,71,0.4)}
-.audr-dot.crit{background:var(--pink);box-shadow:0 0 8px rgba(255,75,110,0.4)}
-.audr-dot.dim{background:rgba(255,255,255,0.2)}
-.audr-count{font-size:14px;font-weight:700;color:var(--text);font-family:var(--mono)}
-.audr-count.dim{color:var(--muted)}
-.audr-meta{font-size:10px;color:var(--muted);font-family:var(--mono);line-height:1.6}
-.audr-meta .row{display:flex;justify-content:space-between;gap:8px}
-.audr-meta .row .k{color:rgba(255,255,255,0.3)}
-.audr-meta .row .v{color:var(--muted);text-align:right}
-.audr-desc{font-size:10px;color:rgba(255,255,255,0.45);line-height:1.4;font-style:italic}
-
-/* ─── AI TRIAGE PANEL ─── moved from home dashboard 2026-05-08 ─── */
-.todo-count{font-size:9px;font-weight:700;padding:2px 8px;border-radius:99px;
-            background:rgba(255,75,110,0.1);border:1px solid rgba(255,75,110,0.25);color:var(--pink)}
-.todo-count.clear{background:rgba(0,245,212,0.1);border-color:rgba(0,245,212,0.2);color:var(--teal)}
-.todo-scroll{max-height:520px;overflow-y:auto}
-.todo-item{padding:10px 14px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;gap:8px}
-.todo-item:last-child{border-bottom:none}
-.tsev{width:6px;height:6px;border-radius:50%;flex-shrink:0;margin-top:4px}
-.ts-crit{background:var(--pink);box-shadow:0 0 4px var(--pink)}
-.ts-high{background:var(--amber);box-shadow:0 0 4px var(--amber)}
-.ts-med{background:var(--purple)}
-.ts-low{background:var(--muted)}
-.todo-body{flex:1;min-width:0}
-.todo-title-t{font-size:11px;font-weight:600;color:var(--text);margin-bottom:2px}
-.todo-meta{font-size:9px;color:var(--muted);font-family:var(--mono)}
-.todo-action{font-size:10px;color:rgba(255,255,255,0.45);margin-top:3px;font-style:italic}
-.resolve-btn{font-size:9px;font-weight:700;padding:2px 8px;border-radius:6px;
-             background:transparent;border:1px solid var(--border);color:var(--muted);
-             cursor:pointer;font-family:var(--sans);transition:all 0.15s;flex-shrink:0}
-.resolve-btn:hover{border-color:rgba(0,245,212,0.4);color:var(--teal)}
-.todo-empty{padding:24px;text-align:center;font-size:11px;color:var(--muted)}
-.appr-filter{padding:3px 10px;border-radius:6px;font-size:10px;font-weight:600;
-             background:transparent;border:1px solid var(--border);color:var(--muted);
-             cursor:pointer;font-family:var(--sans);transition:all 0.15s}
-.appr-filter:hover{background:rgba(255,255,255,0.04);color:var(--text)}
-.appr-filter.active{background:rgba(245,166,35,0.08);border-color:rgba(245,166,35,0.25);color:var(--amber)}
-
 </style>
 </head>
 <body>
@@ -162,18 +114,6 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
       <div class="sm-label">Agents Down</div>
       <div class="sm-val crit" id="kpi-agents-down">—</div>
       <div class="sm-sub">&gt; 5m no heartbeat</div>
-    </div>
-  </div>
-
-  <!-- Auditors inventory — one card per audit agent across the fleet
-       (added 2026-05-08). Backed by /api/auditors/summary. -->
-  <div class="panel">
-    <div class="panel-header">
-      <div class="panel-title">Auditors</div>
-      <span class="panel-badge" id="auditors-updated">—</span>
-    </div>
-    <div class="auditors-grid" id="auditors-grid">
-      <div class="loading">Loading auditors&hellip;</div>
     </div>
   </div>
 
@@ -216,24 +156,6 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
     </div>
     <div class="agents-grid" id="agents-grid">
       <div class="loading">Loading agents...</div>
-    </div>
-  </div>
-
-  <!-- AI Triage — moved from home dashboard 2026-05-08 so all auditor
-       findings (company_auditor + retail_ticker_state_auditor) live on
-       this page. Backend: /api/auditor/findings + /api/auditor/ticker-state. -->
-  <div class="panel">
-    <div class="panel-header">
-      <div class="panel-title">AI Triage &mdash; Open Issues</div>
-      <span class="panel-badge todo-count clear" id="todo-badge">Loading</span>
-    </div>
-    <div style="display:flex;gap:6px;padding:10px 16px;border-bottom:1px solid var(--border)">
-      <button class="appr-filter active" id="aud-f-ALL"  onclick="filterAudit(null)">All</button>
-      <button class="appr-filter"        id="aud-f-LOGS" onclick="filterAudit('logs')">Logs</button>
-      <button class="appr-filter"        id="aud-f-TS"   onclick="filterAudit('ticker_state')">Ticker State</button>
-    </div>
-    <div class="todo-scroll" id="todo-list">
-      <div class="todo-empty">Loading issues&hellip;</div>
     </div>
   </div>
 </div>
@@ -382,168 +304,6 @@ async function load() {
 
 load();
 setInterval(load, 60000);
-
-// ─── AUDITORS CARD GRID ─── added 2026-05-08 ───
-function _fmtAgo(iso) {
-  if (!iso) return '—';
-  try {
-    const t = new Date(iso);
-    const sec = (Date.now() - t.getTime()) / 1000;
-    if (sec < 60) return Math.floor(sec) + 's ago';
-    if (sec < 3600) return Math.floor(sec/60) + 'm ago';
-    if (sec < 86400) return Math.floor(sec/3600) + 'h ago';
-    return Math.floor(sec/86400) + 'd ago';
-  } catch(e) { return '—'; }
-}
-
-async function fetchAuditors() {
-  const grid    = document.getElementById('auditors-grid');
-  const updated = document.getElementById('auditors-updated');
-  if (!grid) return;
-  try {
-    const r = await fetch('/api/auditors/summary', {credentials:'same-origin'});
-    if (!r.ok) {
-      grid.innerHTML = '<div class="empty">Auditors API returned ' + r.status + '</div>';
-      return;
-    }
-    const d = await r.json();
-    const arr = d.auditors || [];
-    if (updated) updated.textContent = _fmtAgo(d.generated_at);
-    if (!arr.length) {
-      grid.innerHTML = '<div class="empty">No auditors registered</div>';
-      return;
-    }
-    grid.innerHTML = arr.map(a => {
-      const status   = a.status || 'dim';
-      const cnt      = (a.open_count == null) ? '—' : a.open_count;
-      const cntClass = (a.open_count == null) ? 'dim' : '';
-      const cntLabel = (a.open_count == null) ? '' : ' open';
-      const feeds    = a.feeds_panel || 'no portal feed';
-      return ''
-        + '<div class="audr-card">'
-        + '  <div class="audr-name">' + escHtml(a.name||'?')
-        + '    <span class="audr-node">' + escHtml(a.node||'?') + '</span>'
-        + '  </div>'
-        + '  <div class="audr-status">'
-        + '    <span class="audr-dot ' + status + '"></span>'
-        + '    <span class="audr-count ' + cntClass + '">' + cnt + cntLabel + '</span>'
-        + '  </div>'
-        + '  <div class="audr-meta">'
-        + '    <div class="row"><span class="k">schedule</span><span class="v">' + escHtml(a.schedule||'—') + '</span></div>'
-        + '    <div class="row"><span class="k">last run</span><span class="v">' + _fmtAgo(a.last_run) + '</span></div>'
-        + '    <div class="row"><span class="k">feeds</span><span class="v">' + escHtml(feeds) + '</span></div>'
-        + '  </div>'
-        + (a.desc ? '  <div class="audr-desc">' + escHtml(a.desc) + '</div>' : '')
-        + '</div>';
-    }).join('');
-  } catch(e) {
-    grid.innerHTML = '<div class="empty">Auditors unreachable: ' + escHtml(String(e)) + '</div>';
-  }
-}
-
-fetchAuditors();
-setInterval(fetchAuditors, 60000); // 60s — same cadence as Node Metrics
-
-// ─── AI TRIAGE ─── moved from home dashboard 2026-05-08 ───
-// Pulls findings from company_auditor (logs) + retail_ticker_state_auditor.
-// Auth: same-origin session cookie (page is gated by _authorized()).
-const SEV_ORDER = {CRITICAL:0,HIGH:1,MEDIUM:2,LOW:3};
-let allTodos = [];
-let _auditFilter = null;
-
-function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-
-function _todoFromIssue(i, source) {
-  return {
-    id: i.id, title: i.context ? i.context.substring(0, 120) : 'Unknown',
-    severity: (i.severity || 'low').toUpperCase(),
-    category: i.source_file || '', pi_id: '',
-    date: i.last_seen ? i.last_seen.substring(0,10) : '',
-    action: 'Hits: ' + (i.hit_count || 1),
-    source: source,
-    resolved: false
-  };
-}
-
-async function fetchTodos() {
-  let logsTodos = [];
-  let tsTodos   = [];
-  try {
-    const [rLogs, rTs] = await Promise.all([
-      fetch('/api/auditor/findings').then(r=>r.ok?r.json():{issues:[]}).catch(()=>({issues:[]})),
-      fetch('/api/auditor/ticker-state').then(r=>r.ok?r.json():{issues:[]}).catch(()=>({issues:[]})),
-    ]);
-    logsTodos = (rLogs.issues || []).map(i => _todoFromIssue(i, 'logs'));
-    tsTodos   = (rTs.issues   || []).map(i => _todoFromIssue(i, 'ticker_state'));
-  } catch(e) {}
-  allTodos = logsTodos.concat(tsTodos);
-  allTodos.sort((a,b) => (SEV_ORDER[a.severity]??9) - (SEV_ORDER[b.severity]??9));
-  renderTodos();
-}
-
-function filterAudit(source) {
-  _auditFilter = source;
-  document.querySelectorAll('[id^="aud-f-"]').forEach(b=>b.classList.remove('active'));
-  const target = source==='logs' ? 'aud-f-LOGS'
-               : source==='ticker_state' ? 'aud-f-TS' : 'aud-f-ALL';
-  document.getElementById(target)?.classList.add('active');
-  renderTodos();
-}
-
-function renderTodos() {
-  const el    = document.getElementById('todo-list');
-  const badge = document.getElementById('todo-badge');
-  if (!el || !badge) return;
-  const allOpen = allTodos.filter(t=>!t.resolved);
-  badge.textContent = allOpen.length > 0 ? allOpen.length + ' open' : 'All clear';
-  badge.className   = 'panel-badge todo-count ' + (allOpen.length > 0 ? '' : 'clear');
-  const open = _auditFilter
-    ? allOpen.filter(t => t.source === _auditFilter)
-    : allOpen;
-  if (!open.length) {
-    const msg = _auditFilter
-      ? '✓ No ' + (_auditFilter==='ticker_state'?'ticker state':'logs') + ' issues'
-      : '✓ No open issues';
-    el.innerHTML = '<div class="todo-empty">' + msg + '</div>';
-    return;
-  }
-  const sevDot = {CRITICAL:'ts-crit',HIGH:'ts-high',MEDIUM:'ts-med',LOW:'ts-low'};
-  el.innerHTML = open.slice(0,50).map(t =>
-    '<div class="todo-item">'
-      + '<div class="tsev ' + (sevDot[t.severity]||'ts-low') + '"></div>'
-      + '<div class="todo-body">'
-        + '<div class="todo-title-t">' + escHtml(t.title||'') + '</div>'
-        + '<div class="todo-meta">' + (t.pi_id||'') + ' · ' + (t.date||'') + ' · ' + (t.category||'') + '</div>'
-        + (t.action ? '<div class="todo-action">→ ' + escHtml(t.action) + '</div>' : '')
-      + '</div>'
-      + '<button class="resolve-btn" data-todoid="' + CSS.escape(String(t.id)) + '" onclick="resolveTodo(this.dataset.todoid,event)">Done</button>'
-    + '</div>'
-  ).join('');
-}
-
-async function resolveTodo(id, e) {
-  e.stopPropagation();
-  // Use the same body-style call that other code paths use; the path-style
-  // /api/auditor/resolve/<id> 404s. Session cookie handles auth.
-  const idNum = Number(id);
-  try {
-    const r = await fetch('/api/auditor/resolve', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      credentials: 'same-origin',
-      body: JSON.stringify({ids: [idNum]}),
-    });
-    const d = await r.json().catch(() => ({ok:false}));
-    if (!r.ok || !d.ok) {
-      alert('Resolve failed: ' + (d.error || r.statusText || 'unknown'));
-      return;
-    }
-    await fetchTodos();
-  } catch(err) { alert('Resolve failed: ' + err.message); }
-}
-
-fetchTodos();
-setInterval(fetchTodos, 300000); // 5 min — auditor data shifts slowly
 </script>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>

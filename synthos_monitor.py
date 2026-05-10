@@ -9598,6 +9598,27 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 .auditor-resolve-btn:hover{background:rgba(0,245,212,0.06);border-color:rgba(0,245,212,0.3);color:var(--teal)}
 .auditor-resolve-btn:disabled{opacity:0.4;cursor:wait}
 .issue-row.resolving{opacity:0.5}
+
+/* ─── AUDITORS CARD GRID ─── added 2026-05-08 ─── */
+.auditors-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;padding:14px 16px}
+.audr-card{padding:14px;border-radius:12px;border:1px solid var(--border);background:var(--surface2);display:flex;flex-direction:column;gap:8px}
+.audr-name{font-size:11px;font-weight:600;font-family:var(--mono);color:var(--text);
+           display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;word-break:break-all}
+.audr-node-pill{font-size:9px;font-weight:700;text-transform:uppercase;color:var(--muted);
+                background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px;letter-spacing:0.06em}
+.audr-status{display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
+.audr-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.audr-dot.ok{background:#4ade80;box-shadow:0 0 8px rgba(74,222,128,0.4)}
+.audr-dot.warn{background:var(--amber);box-shadow:0 0 8px rgba(255,179,71,0.4)}
+.audr-dot.crit{background:var(--pink);box-shadow:0 0 8px rgba(255,75,110,0.4)}
+.audr-dot.dim{background:rgba(255,255,255,0.2)}
+.audr-count{font-size:14px;font-weight:700;color:var(--text);font-family:var(--mono)}
+.audr-count.dim{color:var(--muted)}
+.audr-meta{font-size:10px;color:var(--muted);font-family:var(--mono);line-height:1.6}
+.audr-meta .row{display:flex;justify-content:space-between;gap:8px}
+.audr-meta .row .k{color:rgba(255,255,255,0.3)}
+.audr-meta .row .v{color:var(--muted);text-align:right}
+.audr-desc{font-size:10px;color:rgba(255,255,255,0.45);line-height:1.4;font-style:italic}
 </style>
 </head>
 <body>
@@ -9608,6 +9629,18 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 <div class="page">
   <div class="title">Auditor &#x2014; <span>All Nodes</span></div>
   <div class="subtitle" id="page-sub">Loading nodes...</div>
+
+  <!-- Auditors inventory — one card per audit agent across the fleet
+       (added 2026-05-08). Backed by /api/auditors/summary. -->
+  <div class="panel">
+    <div class="panel-header">
+      <span class="panel-title">Auditors</span>
+      <span class="panel-badge pb-teal" id="auditors-updated">&#x2014;</span>
+    </div>
+    <div class="auditors-grid" id="auditors-grid">
+      <div class="empty" style="padding:20px">Loading auditors&hellip;</div>
+    </div>
+  </div>
 
   <div class="node-tabs" id="node-tabs">
     <button class="node-tab active" data-node="company" onclick="selectNode('company',this)">
@@ -9652,7 +9685,7 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
           <span class="panel-title">Scan Coverage</span>
           <span class="panel-badge pb-teal" id="scan-badge">&#x2014;</span>
         </div>
-        <div id="scan-list"><div class="empty" style="padding:20px">Loading...</div></div>
+        <div class="panel-scroll" id="scan-list"><div class="empty" style="padding:20px">Loading...</div></div>
       </div>
       <div class="panel" id="report-panel">
         <div class="panel-header">
@@ -9923,6 +9956,54 @@ loadNode('company');
 // blanking the display. The loading bar still shows on initial load and
 // on user tab-click via loadNode(node) without opts.
 setInterval(() => loadNode(currentNode, {silent:true}), 300000);   // 5 min
+
+// ─── AUDITORS CARD GRID ─── added 2026-05-08 ───
+async function fetchAuditors() {
+  const grid    = document.getElementById('auditors-grid');
+  const updated = document.getElementById('auditors-updated');
+  if (!grid) return;
+  try {
+    const r = await fetch('/api/auditors/summary', {credentials:'same-origin'});
+    if (!r.ok) {
+      grid.innerHTML = '<div class="empty" style="padding:20px">Auditors API returned ' + r.status + '</div>';
+      return;
+    }
+    const d = await r.json();
+    const arr = d.auditors || [];
+    if (updated) updated.textContent = ageSince(d.generated_at);
+    if (!arr.length) {
+      grid.innerHTML = '<div class="empty" style="padding:20px">No auditors registered</div>';
+      return;
+    }
+    grid.innerHTML = arr.map(a => {
+      const status   = a.status || 'dim';
+      const cnt      = (a.open_count == null) ? '—' : a.open_count;
+      const cntClass = (a.open_count == null) ? 'dim' : '';
+      const cntLabel = (a.open_count == null) ? '' : ' open';
+      const feeds    = a.feeds_panel || 'no portal feed';
+      return ''
+        + '<div class="audr-card">'
+        + '  <div class="audr-name">' + escHtml(a.name||'?')
+        + '    <span class="audr-node-pill">' + escHtml(a.node||'?') + '</span>'
+        + '  </div>'
+        + '  <div class="audr-status">'
+        + '    <span class="audr-dot ' + status + '"></span>'
+        + '    <span class="audr-count ' + cntClass + '">' + cnt + cntLabel + '</span>'
+        + '  </div>'
+        + '  <div class="audr-meta">'
+        + '    <div class="row"><span class="k">schedule</span><span class="v">' + escHtml(a.schedule||'—') + '</span></div>'
+        + '    <div class="row"><span class="k">last run</span><span class="v">' + ageSince(a.last_run) + '</span></div>'
+        + '    <div class="row"><span class="k">feeds</span><span class="v">' + escHtml(feeds) + '</span></div>'
+        + '  </div>'
+        + (a.desc ? '  <div class="audr-desc">' + escHtml(a.desc) + '</div>' : '')
+        + '</div>';
+    }).join('');
+  } catch(e) {
+    grid.innerHTML = '<div class="empty" style="padding:20px">Auditors unreachable: ' + escHtml(String(e)) + '</div>';
+  }
+}
+fetchAuditors();
+setInterval(fetchAuditors, 60000); // 60s
 </script>
 </body>
 </html>

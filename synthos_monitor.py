@@ -6052,12 +6052,14 @@ def admin_fleet_status():
         payload_raw = (row["last_payload"] or "").strip()
         is_offline  = payload_raw == "offline"
 
-        # Drop zombie test/scratch agents that haven't pulsed in >24h. Real
-        # production agents publish every 30s; anything 24h cold is either
+        # Drop zombie test/scratch agents that haven't pulsed in >6h. Real
+        # production agents publish every 30s; anything 6h cold is either
         # decommissioned or an old test session that left a row behind.
-        # Genuine outages will still show within the 24h window as red
-        # cards — this only filters long-dead entries from the dashboard.
-        if age_s > 86400:
+        # 6h gives a reasonable overnight-outage window — if the user shut
+        # the system down for the night and the topic is still in the
+        # observations table, it'll still show as a red card the next
+        # morning. But true test-detritus (multi-day-old) falls off.
+        if age_s > 21600:
             continue
 
         # Severity ladder driven first by liveness, then overridden by

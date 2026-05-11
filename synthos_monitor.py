@@ -1850,6 +1850,146 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
     </div>
   </div>
 
+  <!-- FLEET STATUS CARDS (2026-05-11) — one square per dispatcher /
+       trader-server agent. Row auto-grows as the fleet expands; today
+       it's just dispatcher + 1 trader-server. Severity-colored border
+       glow ties to MQTT heartbeat freshness + per-agent last_error.
+       Polls /api/admin/fleet-status every 5s. -->
+  <style>
+    .fleet-section{margin-bottom:20px}
+    .fleet-row{display:flex;flex-wrap:wrap;gap:12px;align-items:stretch}
+    .fleet-card{
+      width:180px;height:180px;flex:0 0 180px;
+      background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.10);
+      border-radius:10px;padding:13px 14px;display:flex;flex-direction:column;
+      font-family:'Inter',system-ui,sans-serif;color:rgba(255,255,255,0.88);
+      position:relative;overflow:hidden;transition:box-shadow 0.18s, border-color 0.18s;
+    }
+    .fleet-card.sev-green   { border-color:rgba(0,245,212,0.32); box-shadow:0 0 0 1px rgba(0,245,212,0.16) inset, 0 0 14px rgba(0,245,212,0.10); }
+    .fleet-card.sev-orange  { border-color:rgba(245,166,35,0.42); box-shadow:0 0 0 1px rgba(245,166,35,0.22) inset, 0 0 18px rgba(245,166,35,0.18); }
+    .fleet-card.sev-red     { border-color:rgba(255,75,110,0.55); box-shadow:0 0 0 1px rgba(255,75,110,0.30) inset, 0 0 22px rgba(255,75,110,0.24); animation:fleet-pulse 1.6s ease-in-out infinite; }
+    @keyframes fleet-pulse{0%,100%{box-shadow:0 0 0 1px rgba(255,75,110,0.30) inset, 0 0 22px rgba(255,75,110,0.24)}50%{box-shadow:0 0 0 1px rgba(255,75,110,0.40) inset, 0 0 32px rgba(255,75,110,0.36)}}
+    .fleet-head{display:flex;align-items:center;gap:7px;margin-bottom:6px}
+    .fleet-dot{width:8px;height:8px;border-radius:99px;flex-shrink:0;box-shadow:0 0 6px currentColor}
+    .sev-green  .fleet-dot{background:#00f5d4;color:#00f5d4}
+    .sev-orange .fleet-dot{background:#f5a623;color:#f5a623}
+    .sev-red    .fleet-dot{background:#ff4b6e;color:#ff4b6e}
+    .sev-green  .fleet-dot{animation:fleet-blink 2s ease-in-out infinite}
+    @keyframes fleet-blink{0%,100%{opacity:1}50%{opacity:0.45}}
+    .fleet-name{font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:rgba(255,255,255,0.92);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .fleet-node{font-size:9px;color:rgba(255,255,255,0.4);font-family:'JetBrains Mono',monospace;letter-spacing:0}
+    .fleet-action{
+      font-size:11.5px;line-height:1.4;color:rgba(255,255,255,0.78);
+      margin:4px 0 6px;min-height:40px;overflow:hidden;
+      display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;
+    }
+    .fleet-stats{margin-top:auto;font-size:10px;font-family:'JetBrains Mono',monospace;color:rgba(255,255,255,0.55);line-height:1.5}
+    .fleet-stat-row{display:flex;justify-content:space-between;gap:8px}
+    .fleet-stat-row span:first-child{color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.04em;font-size:9px}
+    .fleet-stat-row span:last-child{color:rgba(255,255,255,0.85)}
+    .fleet-err{
+      margin-top:5px;padding:4px 6px;border-radius:5px;font-size:10px;line-height:1.35;
+      background:rgba(255,75,110,0.10);border:1px solid rgba(255,75,110,0.28);color:#ff7a90;
+      overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+      font-family:'JetBrains Mono',monospace;
+    }
+    .fleet-empty{padding:18px;color:rgba(255,255,255,0.35);font-size:11px;font-style:italic}
+  </style>
+  <div class="fleet-section">
+    <div class="sec-title">Fleet
+      <span id="fleet-ts-label" style="font-size:9px;color:var(--dim);font-weight:400;margin-left:6px">—</span>
+    </div>
+    <div class="fleet-row" id="fleet-row">
+      <div class="fleet-empty" id="fleet-loading">Loading fleet status…</div>
+    </div>
+  </div>
+  <script>
+  (function(){
+    // Polls /api/admin/fleet-status every 5s. Auto-grows as new
+    // dispatcher* / trader_server* agents appear in the MQTT
+    // observations table — no UI rewiring needed.
+    function fmtAge(s){
+      if (s == null) return '—';
+      if (s < 60)   return Math.round(s) + 's ago';
+      if (s < 3600) return Math.round(s/60) + 'm ago';
+      if (s < 86400) return Math.round(s/3600) + 'h ago';
+      return Math.round(s/86400) + 'd ago';
+    }
+    function fmtUptime(s){
+      if (s == null) return '—';
+      if (s < 60)   return s + 's';
+      if (s < 3600) return Math.round(s/60) + 'm';
+      if (s < 86400) return (s/3600).toFixed(1) + 'h';
+      return (s/86400).toFixed(1) + 'd';
+    }
+    function esc(s){
+      return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+    }
+    function prettyAgent(agent){
+      // dispatcher        -> "Dispatcher"
+      // trader_server     -> "Trader Server"
+      // trader_server_2   -> "Trader Server 2"
+      return agent.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase());
+    }
+    function renderCard(c){
+      const ex = c.extra || {};
+      const action = ex.last_action || (c.offline ? 'Offline' : (c.severity === 'red' ? 'No heartbeat' : 'Idle'));
+      // Per-agent stat lines. We pick what's meaningful for each shape.
+      let statLines = '';
+      if (c.agent.indexOf('dispatcher') === 0) {
+        statLines += '<div class="fleet-stat-row"><span>Cycles today</span><span>' + esc(ex.cycles_today != null ? ex.cycles_today : '—') + '</span></div>';
+        if (ex.last_cycle_duration_s != null) {
+          statLines += '<div class="fleet-stat-row"><span>Last cycle</span><span>' + esc(ex.last_cycle_duration_s) + 's</span></div>';
+        }
+        statLines += '<div class="fleet-stat-row"><span>Heartbeat</span><span>' + esc(fmtAge(c.age_s)) + '</span></div>';
+      } else {
+        statLines += '<div class="fleet-stat-row"><span>Requests today</span><span>' + esc(ex.requests_today != null ? ex.requests_today : '—') + '</span></div>';
+        statLines += '<div class="fleet-stat-row"><span>In flight</span><span>' + esc(ex.in_flight != null ? ex.in_flight : '—') + '</span></div>';
+        statLines += '<div class="fleet-stat-row"><span>Heartbeat</span><span>' + esc(fmtAge(c.age_s)) + '</span></div>';
+      }
+      const errBlock = ex.last_error ? '<div class="fleet-err" title="' + esc(ex.last_error_at || '') + '">' + esc(ex.last_error) + '</div>' : '';
+      return (
+        '<div class="fleet-card sev-' + c.severity + '" data-cid="' + esc(c.id) + '" title="' + esc(c.agent) + ' on ' + esc(c.node) + (c.uptime_s != null ? ' · up ' + fmtUptime(c.uptime_s) : '') + '">'
+          + '<div class="fleet-head">'
+            + '<span class="fleet-dot"></span>'
+            + '<span class="fleet-name">' + esc(prettyAgent(c.agent)) + '</span>'
+            + '<span class="fleet-node">' + esc(c.node) + '</span>'
+          + '</div>'
+          + '<div class="fleet-action">' + esc(action) + '</div>'
+          + '<div class="fleet-stats">' + statLines + errBlock + '</div>'
+        + '</div>'
+      );
+    }
+    async function loadFleet(){
+      try {
+        const r = await fetch('/api/admin/fleet-status', {credentials:'same-origin'});
+        const d = await r.json();
+        const row = document.getElementById('fleet-row');
+        const lbl = document.getElementById('fleet-ts-label');
+        if (!r.ok || !d.ok) {
+          row.innerHTML = '<div class="fleet-empty" style="color:#ff4b6e">Fleet status unavailable — ' + esc(d.error || ('HTTP ' + r.status)) + '</div>';
+          return;
+        }
+        const cards = d.cards || [];
+        if (!cards.length) {
+          row.innerHTML = '<div class="fleet-empty">No dispatcher / trader-server heartbeats observed in MQTT yet.</div>';
+        } else {
+          row.innerHTML = cards.map(renderCard).join('');
+        }
+        if (lbl) {
+          const now = new Date();
+          lbl.textContent = 'updated ' + now.toLocaleTimeString();
+        }
+      } catch(e) {
+        const row = document.getElementById('fleet-row');
+        row.innerHTML = '<div class="fleet-empty" style="color:#ff4b6e">Fleet status error: ' + esc(String(e.message || e)) + '</div>';
+      }
+    }
+    loadFleet();
+    setInterval(loadFleet, 5000);
+  })();
+  </script>
+
   <!-- USER SESSIONS CHART — 24h rolling by default, prior-day when
        the market card's date nav is on a previous session -->
   <div class="mkt-section">
@@ -5863,6 +6003,109 @@ def proxy_market_activity():
             },
             "trading_modes": {"PAPER": 0, "LIVE": 0, "total": 0},
         }), 502
+
+
+# ── FLEET STATUS — dispatcher + trader-server cards ──────────────────────
+# Pi4B-local read from auditor.db.mqtt_observations (which company_mqtt_listener
+# already populates from every agent's process/heartbeat/<node>/<agent> topic).
+# Prefix-match on agent name so trader_server_2, dispatcher_west, etc. auto-
+# appear when they come online — zero rewiring needed for the post-hardware-
+# refactor fleet expansion.
+@app.route("/api/admin/fleet-status")
+def admin_fleet_status():
+    """One card per dispatcher* or trader_server* agent observed in MQTT.
+    Returns severity classification + parsed extras from each agent's
+    last heartbeat payload. Snappy — no Pi5 call required (survives Pi5
+    outages, the very state the cards exist to expose)."""
+    if not _authorized():
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+
+    auditor_db = os.getenv("AUDITOR_DB_PATH",
+                           "/home/pi/synthos-company/data/auditor.db")
+    cards: list[dict] = []
+    try:
+        conn = sqlite3.connect(auditor_db, timeout=5)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT topic, last_seen_ts, last_payload FROM mqtt_observations "
+            "WHERE topic LIKE 'process/heartbeat/%/%'"
+        ).fetchall()
+        conn.close()
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"auditor.db read: {e}"}), 500
+
+    now_ts = time.time()
+    for row in rows:
+        topic = row["topic"] or ""
+        parts = topic.split("/")
+        if len(parts) != 4:
+            continue
+        node, agent = parts[2], parts[3]
+
+        # Fleet filter: dispatcher* + trader_server* only. This is the row
+        # that auto-grows when a future "trader_server_2" lands.
+        if not (agent.startswith("dispatcher") or agent.startswith("trader_server")):
+            continue
+
+        last_seen   = float(row["last_seen_ts"] or 0)
+        age_s       = max(0.0, now_ts - last_seen)
+        payload_raw = (row["last_payload"] or "").strip()
+        is_offline  = payload_raw == "offline"
+
+        # Severity ladder driven first by liveness, then overridden by
+        # explicit errors. Heartbeat cadence is 30s, so >60s stale = warn,
+        # >180s stale = critical.
+        if is_offline or age_s > 180:
+            severity = "red"
+        elif age_s > 60:
+            severity = "orange"
+        else:
+            severity = "green"
+
+        # Parse JSON heartbeat payload to extract `extra` (agent-published
+        # activity state). Bad JSON / "offline" → no extras.
+        extra: dict = {}
+        uptime_s = None
+        if not is_offline and payload_raw:
+            try:
+                obj = json.loads(payload_raw)
+                if isinstance(obj, dict):
+                    extra = obj.get("extra") or {}
+                    uptime_s = obj.get("uptime_s")
+            except Exception:
+                pass
+
+        # Fresh error escalates severity to red. "Fresh" = within last 5 min.
+        err_at = extra.get("last_error_at") if isinstance(extra, dict) else None
+        if err_at:
+            try:
+                err_dt = datetime.fromisoformat(err_at.replace("Z", "+00:00"))
+                if (datetime.now(timezone.utc) - err_dt).total_seconds() < 300:
+                    severity = "red"
+            except Exception:
+                pass
+
+        cards.append({
+            "id":           f"{node}-{agent}",
+            "agent":        agent,
+            "node":         node,
+            "last_seen_ts": last_seen,
+            "age_s":        round(age_s, 1),
+            "severity":     severity,
+            "offline":      is_offline,
+            "uptime_s":     uptime_s,
+            "extra":        extra,
+        })
+
+    # Stable ordering: dispatchers first, then trader-servers, alpha within.
+    def _order(c: dict):
+        a = c["agent"]
+        if a.startswith("dispatcher"):    return (0, a)
+        if a.startswith("trader_server"): return (1, a)
+        return (2, a)
+    cards.sort(key=_order)
+
+    return jsonify({"ok": True, "cards": cards, "ts": now_ts})
 
 
 # ── Admin → customer messaging proxy (Activity Phase B, 2026-05-05) ──

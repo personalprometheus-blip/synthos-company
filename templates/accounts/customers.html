@@ -171,6 +171,27 @@
   letter-spacing:0;text-transform:none;font-weight:500;
 }
 .ac-iss-secH::after{content:'';flex:1;height:1px;background:rgba(255,255,255,0.06)}
+/* CAPACITY CARD — top of modal, answers "is this customer just capped?" */
+.ac-iss-cap-card{
+  display:flex;align-items:flex-start;gap:12px;padding:12px 14px;border-radius:9px;
+  border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02);
+  margin-bottom:14px;
+}
+.ac-iss-cap-card.over{border-color:rgba(255,75,110,0.4);background:rgba(255,75,110,0.06)}
+.ac-iss-cap-card.at  {border-color:rgba(245,166,35,0.32);background:rgba(245,166,35,0.05)}
+.ac-iss-cap-card.room{border-color:rgba(0,245,212,0.28);background:rgba(0,245,212,0.04)}
+.ac-iss-cap-dot{font-size:11px;line-height:1.6;flex-shrink:0}
+.ac-iss-cap-card.over .ac-iss-cap-dot{color:#ff4b6e;text-shadow:0 0 6px rgba(255,75,110,0.5)}
+.ac-iss-cap-card.at   .ac-iss-cap-dot{color:#ffb347;text-shadow:0 0 6px rgba(255,179,71,0.5)}
+.ac-iss-cap-card.room .ac-iss-cap-dot{color:#00f5d4;text-shadow:0 0 6px rgba(0,245,212,0.5)}
+.ac-iss-cap-main{flex:1;min-width:0}
+.ac-iss-cap-headline{font-size:13px;font-weight:700;color:rgba(255,255,255,0.95);margin-bottom:3px;letter-spacing:0.01em}
+.ac-iss-cap-card.over .ac-iss-cap-headline{color:#ff7a90}
+.ac-iss-cap-card.at   .ac-iss-cap-headline{color:#ffc97a}
+.ac-iss-cap-card.room .ac-iss-cap-headline{color:#5fffd9}
+.ac-iss-cap-sub{font-size:11px;color:rgba(255,255,255,0.7);line-height:1.4;margin-bottom:4px}
+.ac-iss-cap-meta{font-size:10px;color:rgba(255,255,255,0.4);font-family:'JetBrains Mono',monospace}
+
 .ac-iss-verdict-card{
   display:flex;align-items:center;gap:14px;padding:12px 14px;border-radius:9px;
   border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02);
@@ -537,6 +558,46 @@
       return '<div class="ac-iss-empty">Failed to load issues — ' + escHtml((d && d.error) || 'unknown error') + '</div>';
     }
 
+    // 2026-05-11: capacity card at TOP — first-glance answer to
+    // "is this customer just capped or is there a real issue?"
+    // status: 'over_cap' (red) | 'at_cap' (amber) | 'room' (teal) | null=unavailable
+    let capHtml = '';
+    const cap = d.capacity;
+    if (cap && cap.status) {
+      const cls = cap.status === 'over_cap' ? 'over' : cap.status === 'at_cap' ? 'at' : 'room';
+      const dotChar = cap.status === 'over_cap' ? '●' : cap.status === 'at_cap' ? '●' : '●';
+      let headline, sub;
+      if (cap.status === 'over_cap') {
+        const by = cap.open - cap.effective_cap;
+        headline = cap.open + '/' + cap.effective_cap + ' positions — OVER CAP by ' + by;
+        sub = 'No new entries until ' + by + ' position' + (by===1?'':'s') + ' close. Trader correctly HOLDing.';
+      } else if (cap.status === 'at_cap') {
+        headline = cap.open + '/' + cap.effective_cap + ' positions — AT CAP';
+        sub = 'No new entries until an existing position closes (trail-stop, target, or SG-6 exit).';
+      } else {
+        const slots = cap.effective_cap - cap.open;
+        headline = cap.open + '/' + cap.effective_cap + ' positions — ' + slots + ' slot' + (slots===1?'':'s') + ' available';
+        sub = 'Trader can take new entries.';
+      }
+      const todayBits = [];
+      if (cap.new_today)    todayBits.push('+' + cap.new_today + ' new');
+      if (cap.closed_today) todayBits.push('−' + cap.closed_today + ' closed');
+      const todayStr = todayBits.length ? todayBits.join(' · ') : 'no activity today';
+      const capSrc = cap.cap_source === 'settings_override'
+        ? 'cap from per-customer override'
+        : 'cap from tier ' + (cap.tier_label || '?');
+      capHtml =
+        '<div class="ac-iss-cap-card ' + cls + '">'
+        + '  <span class="ac-iss-cap-dot">' + dotChar + '</span>'
+        + '  <div class="ac-iss-cap-main">'
+        + '    <div class="ac-iss-cap-headline">' + escHtml(headline) + '</div>'
+        + '    <div class="ac-iss-cap-sub">' + escHtml(sub) + '</div>'
+        + '    <div class="ac-iss-cap-meta">Today: ' + escHtml(todayStr)
+        +        ' · ' + escHtml(capSrc) + ' · portfolio ~$' + cap.portfolio_total.toLocaleString() + '</div>'
+        + '  </div>'
+        + '</div>';
+    }
+
     const v = d.validator || {};
     const verdict = (v.verdict || 'UNKNOWN').toUpperCase();
     const vcls = verdict === 'NO_GO' ? 'nogo'
@@ -627,7 +688,7 @@
     }
     eventsHtml += '</div>';
 
-    return validatorHtml + alertsHtml + eventsHtml;
+    return capHtml + validatorHtml + alertsHtml + eventsHtml;
   }
 
   async function rowClick(ev, customerId, customerName){

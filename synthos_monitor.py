@@ -6052,6 +6052,14 @@ def admin_fleet_status():
         payload_raw = (row["last_payload"] or "").strip()
         is_offline  = payload_raw == "offline"
 
+        # Drop zombie test/scratch agents that haven't pulsed in >24h. Real
+        # production agents publish every 30s; anything 24h cold is either
+        # decommissioned or an old test session that left a row behind.
+        # Genuine outages will still show within the 24h window as red
+        # cards — this only filters long-dead entries from the dashboard.
+        if age_s > 86400:
+            continue
+
         # Severity ladder driven first by liveness, then overridden by
         # explicit errors. Heartbeat cadence is 30s, so >60s stale = warn,
         # >180s stale = critical.

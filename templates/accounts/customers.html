@@ -558,27 +558,36 @@
       return '<div class="ac-iss-empty">Failed to load issues — ' + escHtml((d && d.error) || 'unknown error') + '</div>';
     }
 
-    // 2026-05-11: capacity card at TOP — first-glance answer to
-    // "is this customer just capped or is there a real issue?"
-    // status: 'over_cap' (red) | 'at_cap' (amber) | 'room' (teal) | null=unavailable
+    // 2026-05-11 v2: capacity card uses Gate-11-equivalent `counted` value
+    // (bot-managed, dust-filtered) — not raw open. Previously the raw
+    // count made 2 stuck dust positions look like "OVER CAP" even though
+    // the trader correctly saw open slots. Surfaces dust + user-managed
+    // separately so the operator sees the full picture.
     let capHtml = '';
     const cap = d.capacity;
     if (cap && cap.status) {
       const cls = cap.status === 'over_cap' ? 'over' : cap.status === 'at_cap' ? 'at' : 'room';
-      const dotChar = cap.status === 'over_cap' ? '●' : cap.status === 'at_cap' ? '●' : '●';
+      const dotChar = '●';
       let headline, sub;
       if (cap.status === 'over_cap') {
-        const by = cap.open - cap.effective_cap;
-        headline = cap.open + '/' + cap.effective_cap + ' positions — OVER CAP by ' + by;
-        sub = 'No new entries until ' + by + ' position' + (by===1?'':'s') + ' close. Trader correctly HOLDing.';
+        const by = cap.counted - cap.effective_cap;
+        headline = cap.counted + '/' + cap.effective_cap + ' bot positions — OVER CAP by ' + by;
+        sub = 'No new entries until ' + by + ' position' + (by===1?'':'s') + ' close.';
       } else if (cap.status === 'at_cap') {
-        headline = cap.open + '/' + cap.effective_cap + ' positions — AT CAP';
+        headline = cap.counted + '/' + cap.effective_cap + ' bot positions — AT CAP';
         sub = 'No new entries until an existing position closes (trail-stop, target, or SG-6 exit).';
       } else {
-        const slots = cap.effective_cap - cap.open;
-        headline = cap.open + '/' + cap.effective_cap + ' positions — ' + slots + ' slot' + (slots===1?'':'s') + ' available';
-        sub = 'Trader can take new entries.';
+        const slots = cap.effective_cap - cap.counted;
+        headline = cap.counted + '/' + cap.effective_cap + ' bot positions — ' + slots + ' slot' + (slots===1?'':'s') + ' available';
+        sub = 'Trader can take new entries on the next high-score signal.';
       }
+      // Composition line: counted + dust + user-managed = total open
+      const compBits = [];
+      if (cap.dust)         compBits.push(cap.dust + ' dust (masked)');
+      if (cap.user_managed) compBits.push(cap.user_managed + ' user-managed');
+      const compStr = compBits.length
+        ? cap.open + ' total = ' + cap.counted + ' counted + ' + compBits.join(' + ')
+        : cap.open + ' total (all counted)';
       const todayBits = [];
       if (cap.new_today)    todayBits.push('+' + cap.new_today + ' new');
       if (cap.closed_today) todayBits.push('−' + cap.closed_today + ' closed');
@@ -592,6 +601,7 @@
         + '  <div class="ac-iss-cap-main">'
         + '    <div class="ac-iss-cap-headline">' + escHtml(headline) + '</div>'
         + '    <div class="ac-iss-cap-sub">' + escHtml(sub) + '</div>'
+        + '    <div class="ac-iss-cap-meta">' + escHtml(compStr) + '</div>'
         + '    <div class="ac-iss-cap-meta">Today: ' + escHtml(todayStr)
         +        ' · ' + escHtml(capSrc) + ' · portfolio ~$' + cap.portfolio_total.toLocaleString() + '</div>'
         + '  </div>'

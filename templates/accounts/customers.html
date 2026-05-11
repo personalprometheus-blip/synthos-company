@@ -18,8 +18,35 @@
   background:rgba(255,255,255,0.02);position:sticky;top:0;white-space:nowrap;
 }
 .ac-dir-table tbody td{padding:9px 9px;border-bottom:1px solid rgba(255,255,255,0.04);vertical-align:middle}
+.ac-dir-table tbody tr{cursor:pointer;transition:background 0.12s, box-shadow 0.18s}
 .ac-dir-table tbody tr:hover td{background:rgba(255,255,255,0.025)}
 .ac-dir-table tbody tr:last-child td{border-bottom:none}
+
+/* Validator flag — row glows red when validator verdict != 'GO' or unresolved
+   admin_alerts exist for this customer. Severity ladder:
+     NO_GO          → strong red                (trader blocked)
+     DEGRADED       → muted red                 (partial restrictions)
+     CAUTION        → amber/warning             (advisory only)
+     restrictions/alerts but verdict GO/UNKNOWN → soft red
+   Clicking the row opens the issue-detail modal. */
+.ac-dir-table tbody tr.flagged-nogo td   { background: rgba(255,75,110,0.07); box-shadow: inset 3px 0 0 #ff4b6e; }
+.ac-dir-table tbody tr.flagged-degraded td{ background: rgba(255,75,110,0.04); box-shadow: inset 3px 0 0 rgba(255,75,110,0.6); }
+.ac-dir-table tbody tr.flagged-caution td { background: rgba(245,166,35,0.05); box-shadow: inset 3px 0 0 var(--amber,#f5a623); }
+.ac-dir-table tbody tr.flagged-soft td    { background: rgba(255,75,110,0.025); box-shadow: inset 3px 0 0 rgba(255,75,110,0.35); }
+.ac-dir-table tbody tr.flagged-nogo:hover td   { background: rgba(255,75,110,0.12); }
+.ac-dir-table tbody tr.flagged-degraded:hover td{ background: rgba(255,75,110,0.08); }
+.ac-dir-table tbody tr.flagged-caution:hover td { background: rgba(245,166,35,0.09); }
+.ac-dir-table tbody tr.flagged-soft:hover td    { background: rgba(255,75,110,0.05); }
+
+/* Glow badge in the validator column (only shows for non-GO rows) */
+.ac-flag-badge{
+  display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:99px;
+  font-size:9px;font-weight:700;letter-spacing:0.06em;font-family:'JetBrains Mono',monospace;
+  background:rgba(255,75,110,0.08);border:1px solid rgba(255,75,110,0.3);color:#ff4b6e;
+}
+.ac-flag-badge.amber{background:rgba(245,166,35,0.08);border-color:rgba(245,166,35,0.32);color:#f5a623}
+.ac-flag-badge.mute{background:rgba(255,255,255,0.04);border-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.45)}
+.ac-flag-badge .dot{width:5px;height:5px;border-radius:99px;background:currentColor;box-shadow:0 0 6px currentColor}
 .ac-dir-table th.col-email,.ac-dir-table td.col-email{max-width:240px}
 .ac-dir-table th.col-uuid,.ac-dir-table td.col-uuid{white-space:nowrap;min-width:108px}
 .ac-dir-table th.col-joined,.ac-dir-table td.col-joined{white-space:nowrap;min-width:90px}
@@ -100,6 +127,104 @@
   border-radius:99px;animation:ac-spin 0.7s linear infinite;margin-right:10px;
 }
 @keyframes ac-spin{to{transform:rotate(360deg)}}
+
+/* ── ISSUES MODAL ──────────────────────────────────────────────────────
+   Row-click opens this. Shows validator state + restrictions + open
+   admin_alerts + last 20 customer-scoped log events. Narrower than the
+   view-as modal because it's mostly text. */
+.ac-iss-backdrop{
+  position:fixed;inset:0;background:rgba(5,7,12,0.74);backdrop-filter:blur(4px);
+  display:none;align-items:center;justify-content:center;z-index:1000;
+}
+.ac-iss-backdrop.open{display:flex}
+.ac-iss-card{
+  width:min(820px,94vw);max-height:90vh;background:#0a0c14;
+  border:1px solid rgba(255,255,255,0.10);border-radius:12px;
+  box-shadow:0 30px 80px rgba(0,0,0,0.6);display:flex;flex-direction:column;overflow:hidden;
+}
+.ac-iss-card.has-flag{border-color:rgba(255,75,110,0.32)}
+.ac-iss-head{
+  display:flex;align-items:flex-start;gap:14px;padding:14px 18px;
+  border-bottom:1px solid rgba(255,255,255,0.06);
+}
+.ac-iss-titlewrap{flex:1;min-width:0}
+.ac-iss-eye{font-size:18px;line-height:1}
+.ac-iss-name{font-size:14px;font-weight:700;color:rgba(255,255,255,0.95);margin-bottom:2px}
+.ac-iss-meta{font-size:11px;color:rgba(255,255,255,0.5);font-family:'JetBrains Mono',monospace}
+.ac-iss-close{
+  background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);
+  color:rgba(255,255,255,0.7);padding:5px 11px;border-radius:6px;
+  font-size:10px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;
+  cursor:pointer;font-family:inherit;
+}
+.ac-iss-close:hover{background:rgba(255,255,255,0.08);color:#fff}
+.ac-iss-body{padding:14px 18px;overflow-y:auto;flex:1}
+.ac-iss-loading{padding:28px;text-align:center;color:rgba(255,255,255,0.4);font-size:12px}
+.ac-iss-section{margin-bottom:18px}
+.ac-iss-section:last-child{margin-bottom:0}
+.ac-iss-secH{
+  font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;
+  color:rgba(255,255,255,0.45);margin-bottom:8px;display:flex;align-items:center;gap:8px;
+}
+.ac-iss-secH .ac-iss-secH-count{
+  font-family:'JetBrains Mono',monospace;font-size:10px;color:rgba(255,255,255,0.35);
+  letter-spacing:0;text-transform:none;font-weight:500;
+}
+.ac-iss-secH::after{content:'';flex:1;height:1px;background:rgba(255,255,255,0.06)}
+.ac-iss-verdict-card{
+  display:flex;align-items:center;gap:14px;padding:12px 14px;border-radius:9px;
+  border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02);
+}
+.ac-iss-verdict-card.go     { border-color:rgba(0,245,212,0.28);background:rgba(0,245,212,0.04); }
+.ac-iss-verdict-card.nogo   { border-color:rgba(255,75,110,0.4);background:rgba(255,75,110,0.06); }
+.ac-iss-verdict-card.degraded{border-color:rgba(255,75,110,0.28);background:rgba(255,75,110,0.04);}
+.ac-iss-verdict-card.caution{border-color:rgba(245,166,35,0.32);background:rgba(245,166,35,0.04);}
+.ac-iss-verdict-card.unknown{border-color:rgba(255,255,255,0.10);background:rgba(255,255,255,0.02);}
+.ac-iss-verdict-pill{
+  font-size:11px;font-weight:700;letter-spacing:0.08em;font-family:'JetBrains Mono',monospace;
+  padding:4px 11px;border-radius:99px;
+}
+.ac-iss-verdict-pill.go     {background:rgba(0,245,212,0.14);color:#00f5d4}
+.ac-iss-verdict-pill.nogo   {background:rgba(255,75,110,0.18);color:#ff4b6e}
+.ac-iss-verdict-pill.degraded{background:rgba(255,75,110,0.10);color:#ff7a90}
+.ac-iss-verdict-pill.caution{background:rgba(245,166,35,0.14);color:#f5a623}
+.ac-iss-verdict-pill.unknown{background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.5)}
+.ac-iss-verdict-meta{flex:1;font-size:11px;color:rgba(255,255,255,0.55);font-family:'JetBrains Mono',monospace}
+.ac-iss-rlist{margin-top:10px;display:flex;flex-direction:column;gap:6px}
+.ac-iss-r{
+  padding:7px 10px;border-radius:6px;background:rgba(255,75,110,0.05);
+  border:1px solid rgba(255,75,110,0.16);font-size:11px;color:rgba(255,255,255,0.78);
+  display:flex;gap:8px;align-items:flex-start;
+}
+.ac-iss-r-key{font-family:'JetBrains Mono',monospace;color:#ff7a90;font-weight:600;min-width:88px}
+.ac-iss-alert{
+  padding:10px 12px;border-radius:8px;background:rgba(255,255,255,0.02);
+  border:1px solid rgba(255,255,255,0.06);margin-bottom:7px;
+}
+.ac-iss-alert.crit{border-color:rgba(255,75,110,0.36);background:rgba(255,75,110,0.04)}
+.ac-iss-alert.warn{border-color:rgba(245,166,35,0.28);background:rgba(245,166,35,0.03)}
+.ac-iss-alert-h{display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap}
+.ac-iss-alert-sev{
+  font-size:9px;font-weight:700;letter-spacing:0.08em;padding:1px 6px;border-radius:3px;
+  font-family:'JetBrains Mono',monospace;
+}
+.ac-iss-alert-sev.crit{background:rgba(255,75,110,0.18);color:#ff4b6e}
+.ac-iss-alert-sev.warn{background:rgba(245,166,35,0.18);color:#f5a623}
+.ac-iss-alert-sev.info{background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.7)}
+.ac-iss-alert-cat{font-size:10px;color:rgba(255,255,255,0.45);font-family:'JetBrains Mono',monospace}
+.ac-iss-alert-title{font-size:12.5px;font-weight:600;color:rgba(255,255,255,0.95);flex:1;min-width:120px}
+.ac-iss-alert-when{font-size:10px;color:rgba(255,255,255,0.4);font-family:'JetBrains Mono',monospace;margin-left:auto}
+.ac-iss-alert-body{font-size:11.5px;color:rgba(255,255,255,0.65);line-height:1.5}
+.ac-iss-event{
+  display:grid;grid-template-columns:120px 130px 1fr;gap:9px;padding:5px 9px;
+  font-size:11px;font-family:'JetBrains Mono',monospace;align-items:start;
+  border-bottom:1px solid rgba(255,255,255,0.04);
+}
+.ac-iss-event:last-child{border-bottom:none}
+.ac-iss-event-ts{color:rgba(255,255,255,0.4)}
+.ac-iss-event-agent{color:#a78bfa}
+.ac-iss-event-event{color:rgba(255,255,255,0.7);word-break:break-word}
+.ac-iss-empty{padding:18px;text-align:center;color:rgba(255,255,255,0.35);font-size:11px;font-style:italic}
 </style>
 
 <div class="ac-wrap">
@@ -110,14 +235,34 @@
   </div>
 
   <div class="ac-help">
-    Click <strong>View</strong> on any row to open that customer's portal dashboard
-    in <span style="color:#a78bfa">read-only impersonation mode</span> — exactly as
-    they see it. All write actions are blocked. Session expires after 30 minutes
-    of idle. Every view-as is logged.
+    <strong>Click any row</strong> to see that customer's open issues (validator
+    flags, restrictions, admin alerts, recent events). Rows with active issues
+    glow red. Click <strong>View</strong> to open their portal dashboard in
+    <span style="color:#a78bfa">read-only impersonation mode</span> — exactly as
+    they see it. All write actions are blocked. View-as session expires after
+    30 minutes of idle. Every view-as is logged.
   </div>
 
   <div class="ac-dir" id="ac-dir-wrap">
     <div class="ac-dir-empty" id="ac-dir-loading">Loading customer list…</div>
+  </div>
+</div>
+
+<!-- ISSUES MODAL — opens on row-click. Shows validator state + restrictions
+     + open admin_alerts + last 20 customer-scoped log events. -->
+<div class="ac-iss-backdrop" id="ac-iss-modal" onclick="if(event.target===this)acCloseIssues()">
+  <div class="ac-iss-card" id="ac-iss-card" role="dialog" aria-modal="true" aria-label="Customer issues">
+    <div class="ac-iss-head">
+      <span class="ac-iss-eye" id="ac-iss-eye">⚠️</span>
+      <div class="ac-iss-titlewrap">
+        <div class="ac-iss-name" id="ac-iss-name">—</div>
+        <div class="ac-iss-meta" id="ac-iss-meta">—</div>
+      </div>
+      <button class="ac-iss-close" onclick="acCloseIssues()">✕ Close</button>
+    </div>
+    <div class="ac-iss-body" id="ac-iss-body">
+      <div class="ac-iss-loading">Loading issues…</div>
+    </div>
   </div>
 </div>
 
@@ -303,12 +448,230 @@
     }
   }
 
+  // ── CUSTOMER FLAGS + ISSUES MODAL ────────────────────────────────────
+  // Two-tier data:
+  //   (1) Bulk /api/proxy/admin/customer-flags after the directory renders —
+  //       gives every customer's validator verdict + restriction count + open
+  //       alert count. Used to glow rows and put a badge in the Validator
+  //       column. Re-renders the table once flags arrive.
+  //   (2) On row-click, /api/proxy/admin/customer-issues/<id> for the full
+  //       detail surface that fills the modal.
+
+  function rowFlagClass(f){
+    if (!f || !f.flagged) return '';
+    const v = (f.validator_verdict || '').toUpperCase();
+    if (v === 'NO_GO')    return 'flagged-nogo';
+    if (v === 'DEGRADED') return 'flagged-degraded';
+    if (v === 'CAUTION')  return 'flagged-caution';
+    // Verdict GO/UNKNOWN but restrictions or alerts pending → soft red.
+    return 'flagged-soft';
+  }
+
+  function renderFlagBadge(f){
+    if (!f) return '<span class="ac-flag-badge mute">—</span>';
+    const v = (f.validator_verdict || 'UNKNOWN').toUpperCase();
+    const rc = f.validator_restrictions_count || 0;
+    const ac = f.alerts_count || 0;
+    if (v === 'GO' && rc === 0 && ac === 0) {
+      return '<span class="ac-flag-badge mute">GO</span>';
+    }
+    const cls = (v === 'CAUTION') ? 'amber' : '';
+    const tags = [];
+    if (v !== 'GO' && v !== 'UNKNOWN') tags.push(v.replace('_',' '));
+    if (rc > 0) tags.push(rc + ' restr');
+    if (ac > 0) tags.push(ac + ' alert' + (ac === 1 ? '' : 's'));
+    if (!tags.length) tags.push(v);
+    return '<span class="ac-flag-badge ' + cls + '"><span class="dot"></span>' + escHtml(tags.join(' · ')) + '</span>';
+  }
+
+  async function loadFlags(){
+    try {
+      const r = await fetch('/api/proxy/admin/customer-flags', {headers:{'X-Token':SECRET_TOKEN}});
+      const d = await r.json();
+      if (!r.ok || !d.ok) throw new Error(d.error || ('HTTP '+r.status));
+      window._acFlags = d.flags || {};
+    } catch(e) {
+      console.warn('customer-flags fetch failed:', e);
+      window._acFlags = {};
+    }
+    // Re-render rows so glow + badges land. The fmtRelativeDate column was
+    // already populated by the directory render; this only swaps row class
+    // + Validator-cell content. Simpler to re-render the table than to
+    // surgically patch every row.
+    if (_customers && _customers.length) renderDirectory();
+  }
+
+  // Issues modal -------------------------------------------------------
+  const issModalEl  = () => document.getElementById('ac-iss-modal');
+  const issCardEl   = () => document.getElementById('ac-iss-card');
+  const issBodyEl   = () => document.getElementById('ac-iss-body');
+  const issNameEl   = () => document.getElementById('ac-iss-name');
+  const issMetaEl   = () => document.getElementById('ac-iss-meta');
+  const issEyeEl    = () => document.getElementById('ac-iss-eye');
+
+  function openIssuesModal(){
+    issModalEl().classList.add('open');
+    document.body.style.overflow = 'hidden';
+    document.addEventListener('keydown', issEsc);
+  }
+  function closeIssuesModal(){
+    issModalEl().classList.remove('open');
+    issCardEl().classList.remove('has-flag');
+    document.body.style.overflow = '';
+    document.removeEventListener('keydown', issEsc);
+  }
+  function issEsc(e){ if (e.key === 'Escape') closeIssuesModal(); }
+
+  function fmtTs(iso){
+    if (!iso) return '—';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    // Local time, short
+    const pad = n => String(n).padStart(2,'0');
+    return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate())
+         + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+
+  function renderIssuesBody(d){
+    if (!d || !d.ok) {
+      return '<div class="ac-iss-empty">Failed to load issues — ' + escHtml((d && d.error) || 'unknown error') + '</div>';
+    }
+
+    const v = d.validator || {};
+    const verdict = (v.verdict || 'UNKNOWN').toUpperCase();
+    const vcls = verdict === 'NO_GO' ? 'nogo'
+              : verdict === 'DEGRADED' ? 'degraded'
+              : verdict === 'CAUTION' ? 'caution'
+              : verdict === 'GO' ? 'go' : 'unknown';
+    const restrictions = Array.isArray(v.restrictions) ? v.restrictions : [];
+
+    let validatorHtml = `
+      <div class="ac-iss-section">
+        <div class="ac-iss-secH">Validator
+          <span class="ac-iss-secH-count">${verdict === 'GO' ? 'clean' : 'flagged'}</span>
+        </div>
+        <div class="ac-iss-verdict-card ${vcls}">
+          <span class="ac-iss-verdict-pill ${vcls}">${escHtml(verdict.replace('_',' '))}</span>
+          <div class="ac-iss-verdict-meta">
+            ${restrictions.length} restriction${restrictions.length === 1 ? '' : 's'}
+            ${v.updated_at ? ' · updated ' + escHtml(fmtTs(v.updated_at)) : ''}
+          </div>
+        </div>`;
+    if (restrictions.length) {
+      validatorHtml += '<div class="ac-iss-rlist">';
+      restrictions.forEach(function(r){
+        // Restrictions can be strings OR objects depending on agent version.
+        if (typeof r === 'string') {
+          validatorHtml += '<div class="ac-iss-r"><div>' + escHtml(r) + '</div></div>';
+        } else if (r && typeof r === 'object') {
+          const key = r.code || r.reason || r.id || 'restriction';
+          const desc = r.message || r.detail || r.description || JSON.stringify(r);
+          validatorHtml += '<div class="ac-iss-r">'
+                        + '<div class="ac-iss-r-key">' + escHtml(String(key)) + '</div>'
+                        + '<div>' + escHtml(String(desc)) + '</div></div>';
+        }
+      });
+      validatorHtml += '</div>';
+    }
+    validatorHtml += '</div>';
+
+    // Admin alerts
+    const alerts = Array.isArray(d.alerts) ? d.alerts : [];
+    let alertsHtml = `
+      <div class="ac-iss-section">
+        <div class="ac-iss-secH">Admin alerts
+          <span class="ac-iss-secH-count">${alerts.length} open</span>
+        </div>`;
+    if (!alerts.length) {
+      alertsHtml += '<div class="ac-iss-empty">No open admin alerts for this customer.</div>';
+    } else {
+      alerts.forEach(function(a){
+        const sev = (a.severity || 'INFO').toUpperCase();
+        const sevCls = sev === 'CRITICAL' ? 'crit' : (sev === 'WARNING' ? 'warn' : 'info');
+        const cls = sev === 'CRITICAL' ? 'crit' : (sev === 'WARNING' ? 'warn' : '');
+        alertsHtml += `
+          <div class="ac-iss-alert ${cls}">
+            <div class="ac-iss-alert-h">
+              <span class="ac-iss-alert-sev ${sevCls}">${escHtml(sev)}</span>
+              <span class="ac-iss-alert-cat">${escHtml(a.category || '')}${a.code ? ' · ' + escHtml(a.code) : ''}${a.source_agent ? ' · ' + escHtml(a.source_agent) : ''}</span>
+              <span class="ac-iss-alert-title">${escHtml(a.title || '')}</span>
+              <span class="ac-iss-alert-when">${escHtml(fmtTs(a.created_at))}</span>
+            </div>
+            ${a.body ? '<div class="ac-iss-alert-body">' + escHtml(a.body) + '</div>' : ''}
+          </div>`;
+      });
+    }
+    alertsHtml += '</div>';
+
+    // Recent events (last 20)
+    const events = Array.isArray(d.events) ? d.events : [];
+    let eventsHtml = `
+      <div class="ac-iss-section">
+        <div class="ac-iss-secH">Recent events
+          <span class="ac-iss-secH-count">${events.length} shown · newest first</span>
+        </div>`;
+    if (!events.length) {
+      eventsHtml += '<div class="ac-iss-empty">No recent log events.</div>';
+    } else {
+      events.forEach(function(ev){
+        eventsHtml += `
+          <div class="ac-iss-event">
+            <div class="ac-iss-event-ts">${escHtml(fmtTs(ev.timestamp))}</div>
+            <div class="ac-iss-event-agent">${escHtml(ev.agent || '—')}</div>
+            <div class="ac-iss-event-event">
+              <strong>${escHtml(ev.event || '')}</strong>
+              ${ev.details ? '<div style="color:rgba(255,255,255,0.5);font-size:10.5px;margin-top:2px">' + escHtml(ev.details) + '</div>' : ''}
+            </div>
+          </div>`;
+      });
+    }
+    eventsHtml += '</div>';
+
+    return validatorHtml + alertsHtml + eventsHtml;
+  }
+
+  async function rowClick(ev, customerId, customerName){
+    // The View button + UUID-copy span call event.stopPropagation() so
+    // they don't bubble here. This handler fires only on actual row clicks.
+    openIssuesModal();
+    issEyeEl().textContent = '⚠️';
+    issNameEl().textContent = customerName || '—';
+    issMetaEl().textContent = customerId + ' · loading…';
+    issBodyEl().innerHTML = '<div class="ac-iss-loading">Loading issues…</div>';
+
+    try {
+      const r = await fetch('/api/proxy/admin/customer-issues/' + encodeURIComponent(customerId),
+                            {headers:{'X-Token':SECRET_TOKEN}});
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || ('HTTP '+r.status));
+
+      const flagged = (window._acFlags || {})[customerId];
+      if (flagged && flagged.flagged) {
+        issCardEl().classList.add('has-flag');
+        issEyeEl().textContent = '⚠️';
+      } else {
+        issCardEl().classList.remove('has-flag');
+        issEyeEl().textContent = '✓';
+      }
+      issNameEl().textContent = (d.customer_name || customerName || '—');
+      issMetaEl().textContent = (d.customer_email || '') + ' · ' + customerId;
+      issBodyEl().innerHTML = renderIssuesBody(d);
+    } catch(e) {
+      console.error('issues fetch failed', e);
+      issBodyEl().innerHTML = '<div class="ac-iss-empty" style="color:#ff4b6e">Failed to load issues: ' + escHtml(String(e.message || e)) + '</div>';
+    }
+  }
+
   // Expose for onclick attributes
   window.acViewAsCustomer = viewAsCustomer;
   window.acCopyUuid       = copyUuid;
   window.acCloseModal     = closeModal;
+  window.acRowClick       = rowClick;
+  window.acCloseIssues    = closeIssuesModal;
 
   // ── DIRECTORY ──────────────────────────────────────────────────────────
+  // Split fetch + render so loadFlags() can re-render once flags arrive
+  // without re-fetching the customer list.
   async function loadDirectory(){
     try {
       const r = await fetch('/api/proxy/billing/all-customers', {headers:{'X-Token':SECRET_TOKEN}});
@@ -321,7 +684,14 @@
       wrap.innerHTML = '<div class="ac-dir-empty" style="color:#ff4b6e">Failed to load customer list — ' + escHtml(String(e)) + '</div>';
       return;
     }
+    // Sort newest first ONCE — re-renders driven by loadFlags reuse this order.
+    _customers.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+    renderDirectory();
+    // Kick off flags fetch in parallel — re-renders the table when it lands.
+    loadFlags();
+  }
 
+  function renderDirectory(){
     const wrap = document.getElementById('ac-dir-wrap');
     const countEl = document.getElementById('ac-dir-count');
     const tabCountEl = document.getElementById('acc-cust-count');
@@ -334,9 +704,6 @@
       return;
     }
 
-    // Sort newest first.
-    _customers.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
-
     const rows = _customers.map(c => {
       const name = c.name || '(unnamed)';
       const email = c.email || '—';
@@ -344,17 +711,26 @@
       const uuidShort = uuid ? uuid.slice(0,8) + '…' : '—';
       const nameJs  = (name).replace(/'/g,"\\'");
       const uuidJs  = (uuid).replace(/'/g,"\\'");
+
+      // Glow class + Validator-column badge are driven by the flags map
+      // (separate fetch — see loadFlags below). If flags haven't landed
+      // yet the row renders neutral, then re-renders once flags arrive.
+      const f = (window._acFlags || {})[uuid] || null;
+      const flagCls   = f ? rowFlagClass(f) : '';
+      const flagBadge = f ? renderFlagBadge(f) : '<span class="ac-flag-badge mute">—</span>';
+
       return `
-        <tr>
+        <tr class="${flagCls}" data-cid="${escHtml(uuid)}" data-name="${escHtml(name)}" onclick="acRowClick(event, '${uuidJs}', '${nameJs}')">
           <td><div class="ac-dir-name">${escHtml(name)}</div></td>
           <td class="col-email"><div class="ac-dir-email" title="${escHtml(email)}">${escHtml(email)}</div></td>
+          <td class="col-validator">${flagBadge}</td>
           <td class="col-plan">${fmtTier(c.pricing_tier)}</td>
           <td class="col-status">${fmtStatus(c.subscription_status)}</td>
           <td class="col-trading">${fmtTradingMode(c.trading_mode)}</td>
           <td class="col-alpaca"><span class="ac-check ${c.has_alpaca ? 'ac-check-yes' : 'ac-check-no'}">${c.has_alpaca ? '✓' : '✗'}</span></td>
           <td class="col-joined"><div style="font-size:11px;color:rgba(255,255,255,0.7)">${fmtRelativeDate(c.created_at)}</div></td>
-          <td class="col-uuid"><span class="ac-dir-uuid" data-uuid="${escHtml(uuid)}" onclick="acCopyUuid(this)" title="${escHtml(uuid)}">${escHtml(uuidShort)}</span></td>
-          <td class="col-view"><button class="ac-view-btn" onclick="acViewAsCustomer(this, '${uuidJs}', '${nameJs}')" title="Open this customer's portal in read-only impersonation mode">View</button></td>
+          <td class="col-uuid"><span class="ac-dir-uuid" data-uuid="${escHtml(uuid)}" onclick="event.stopPropagation();acCopyUuid(this)" title="${escHtml(uuid)}">${escHtml(uuidShort)}</span></td>
+          <td class="col-view"><button class="ac-view-btn" onclick="event.stopPropagation();acViewAsCustomer(this, '${uuidJs}', '${nameJs}')" title="Open this customer's portal in read-only impersonation mode">View</button></td>
         </tr>
       `;
     }).join('');
@@ -365,6 +741,7 @@
           <tr>
             <th>Name</th>
             <th class="col-email">Email</th>
+            <th class="col-validator">Validator</th>
             <th class="col-plan">Plan</th>
             <th class="col-status">Status</th>
             <th class="col-trading">Trading</th>

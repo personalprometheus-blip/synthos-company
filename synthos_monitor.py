@@ -7208,6 +7208,51 @@ def api_view_as_customer():
     })
 
 
+# ── ACCOUNTS PAGE PROXIES — customer flags + per-customer issue detail ──────
+# Both fetch from pi5 with X-Token auth. Used by /accounts#customers to:
+#   (1) glow rows of customers with active validator flags / open alerts
+#   (2) open an issue-detail modal when admin clicks a row.
+
+@app.route("/api/proxy/admin/customer-flags")
+def proxy_admin_customer_flags():
+    if not _authorized():
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+    import requests as _req
+    try:
+        r = _req.get(
+            f"{RETAIL_PORTAL_URL}/api/admin/customer-flags",
+            headers={"X-Token": SECRET_TOKEN},
+            timeout=10,
+        )
+    except Exception as e:
+        print(f"[admin/customer-flags] proxy failed: {e}")
+        return jsonify({"ok": False, "error": f"pi5 unreachable: {e}"}), 502
+    try:
+        return jsonify(r.json()), r.status_code
+    except Exception:
+        return jsonify({"ok": False, "error": "bad pi5 response"}), 502
+
+
+@app.route("/api/proxy/admin/customer-issues/<customer_id>")
+def proxy_admin_customer_issues(customer_id):
+    if not _authorized():
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+    import requests as _req
+    try:
+        r = _req.get(
+            f"{RETAIL_PORTAL_URL}/api/admin/customer-issues/{customer_id}",
+            headers={"X-Token": SECRET_TOKEN},
+            timeout=10,
+        )
+    except Exception as e:
+        print(f"[admin/customer-issues] proxy failed: {e}")
+        return jsonify({"ok": False, "error": f"pi5 unreachable: {e}"}), 502
+    try:
+        return jsonify(r.json()), r.status_code
+    except Exception:
+        return jsonify({"ok": False, "error": "bad pi5 response"}), 502
+
+
 # ── POLICY EOD PAGE (Trader V1 daily comparison) ─────────────────────────────
 
 @app.route("/policy-eod")

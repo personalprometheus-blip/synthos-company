@@ -165,6 +165,19 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 </div>
 
 <script>
+
+// Node display order on /auditor: retail first (it's the primary trader),
+// pi4b-company in the middle (the dashboard itself), pi2w-monitor last
+// (just the external watchdog). 2026-05-11 — fixed at user request.
+const _NODE_SORT_ORDER = { 'synthos-pi-retail': 0, 'pi4b-company': 1, 'pi2w-monitor': 2 };
+function _sortNodes(ids) {
+  return ids.slice().sort((a,b) => {
+    const ra = _NODE_SORT_ORDER[a] ?? 99;
+    const rb = _NODE_SORT_ORDER[b] ?? 99;
+    if (ra !== rb) return ra - rb;
+    return a.localeCompare(b);
+  });
+}
 function fmtAge(seconds) {
   if (seconds == null || isNaN(seconds)) return '—';
   if (seconds < 60) return Math.floor(seconds) + 's';
@@ -191,7 +204,7 @@ function metricClass(value, warnThresh, critThresh) {
 
 function renderNodes(metrics) {
   const grid = document.getElementById('node-grid');
-  const nodeIds = Object.keys(metrics).sort();
+  const nodeIds = _sortNodes(Object.keys(metrics));
   if (nodeIds.length === 0) {
     grid.innerHTML = '<div class="empty">No nodes reporting</div>';
     document.getElementById('kpi-nodes').textContent = '0';
@@ -455,7 +468,7 @@ setInterval(load, 60000);
     const r = await fetch('/api/metrics/current');
     if (!r.ok) throw new Error('metrics current HTTP ' + r.status);
     const data = await r.json();
-    const nodes = Object.keys(data).sort();
+    const nodes = _sortNodes(Object.keys(data));
     if (JSON.stringify(nodes) !== JSON.stringify(knownNodes)) {
       knownNodes = nodes;
       renderTabs(nodes);

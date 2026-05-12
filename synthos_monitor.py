@@ -1274,7 +1274,6 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 .page{max-width:1400px;margin:0 auto;padding:20px 24px}
 
 /* FLEET STATS */
-.fleet-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px}
 .fleet-card{
   padding:14px 16px;border-radius:14px;
   border:1px solid var(--border);background:var(--surface);
@@ -1560,9 +1559,15 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 .pwr-btn:hover svg{color:var(--amber)}
 .pwr-btn.danger:hover{border-color:var(--pink);background:rgba(255,75,110,0.08)}
 .pwr-btn.danger:hover svg{color:var(--pink)}
-.mute-btn{background:none;border:none;cursor:pointer;font-size:13px;padding:2px 3px;border-radius:6px;opacity:0.4;transition:opacity 0.15s;line-height:1}
-.mute-btn:hover{opacity:1}
-.mute-btn.muted{opacity:1}
+.mute-btn{width:22px;height:22px;border-radius:6px;border:1px solid var(--border2);
+  background:var(--surface2);cursor:pointer;display:flex;align-items:center;
+  justify-content:center;transition:all .15s;padding:0}
+.mute-btn:hover{border-color:var(--teal);background:rgba(0,245,212,0.08)}
+.mute-btn svg{width:11px;height:11px;color:var(--muted);transition:color .15s}
+.mute-btn:hover svg{color:var(--teal)}
+.mute-btn.muted{border-color:rgba(255,75,110,0.45);background:rgba(255,75,110,0.10)}
+.mute-btn.muted svg{color:var(--pink)}
+.mute-btn.muted:hover{border-color:var(--pink);background:rgba(255,75,110,0.18)}
 /* GRAPH CARDS */
 /* SIGCOV-CSS — signal coverage hero card + slide-out drawer */
 .sigcov-card{ cursor:pointer; transition:all 0.18s; }
@@ -2102,58 +2107,6 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
 <!-- PAGE -->
 <div class="page">
 
-  <!-- FLEET STATS -->
-  <div class="fleet-grid">
-    <!-- Nodes Online -->
-    <div class="fleet-card fc-teal">
-      <div class="fleet-label">Nodes Online</div>
-      <div class="fleet-val" id="fl-online">0</div>
-      <div class="fleet-sub" id="fl-total">of 0 registered</div>
-      <svg class="fleet-cloud" viewBox="0 0 54 38" xmlns="http://www.w3.org/2000/svg" width="54" height="38">
-        <circle cx="38" cy="12" r="9" fill="none" stroke="rgba(255,255,255,1)" stroke-width="1.2"/>
-        <g stroke="rgba(255,255,255,1)" stroke-width="1.1" stroke-linecap="round">
-          <line x1="38" y1="1" x2="38" y2="0"/><line x1="44.5" y1="5.5" x2="45.5" y2="4.5"/>
-          <line x1="48" y1="12" x2="50" y2="12"/><line x1="31.5" y1="5.5" x2="30.5" y2="4.5"/>
-          <line x1="28" y1="12" x2="26" y2="12"/>
-        </g>
-        <path d="M3,29 Q3,22 10,22 Q9,15 18,15 Q24,15 26,19 Q33,18 33,24 Q37,24 37,29 Q37,33 33,33 L7,33 Q3,33 3,29 Z" fill="none" stroke="rgba(255,255,255,1)" stroke-width="1.3" stroke-linejoin="round"/>
-      </svg>
-    </div>
-    <!-- Active Alerts -->
-    <div class="fleet-card fc-pink">
-      <div class="fleet-label">Active Alerts</div>
-      <div class="fleet-val" id="fl-issues">0</div>
-      <div class="fleet-sub">Open issues</div>
-      <svg class="fleet-cloud" viewBox="0 0 44 40" xmlns="http://www.w3.org/2000/svg" width="44" height="40">
-        <path d="M3,23 Q3,16 10,16 Q9,9 18,9 Q24,9 26,13 Q33,12 33,18 Q37,18 37,23 Q37,27 33,27 L7,27 Q3,27 3,23 Z" fill="none" stroke="rgba(255,255,255,1)" stroke-width="1.3" stroke-linejoin="round"/>
-        <path d="M21,28 L18,35 L21,34.5 L19.5,40 L25.5,32 L22,32.5 Z" fill="rgba(255,255,255,1)" stroke="none"/>
-      </svg>
-    </div>
-    <!-- Fleet Agents -->
-    <div class="fleet-card fc-teal">
-      <div class="fleet-label">Fleet Agents</div>
-      <div class="fleet-val" id="fl-agents">—</div>
-      <div class="fleet-sub" id="fl-agents-sub">Awaiting data</div>
-      <svg class="fleet-cloud" viewBox="0 0 44 32" xmlns="http://www.w3.org/2000/svg" width="44" height="32">
-        <path d="M3,23 Q3,16 10,16 Q9,9 18,9 Q24,9 26,13 Q33,12 33,18 Q37,18 37,23 Q37,27 33,27 L7,27 Q3,27 3,23 Z" fill="none" stroke="rgba(255,255,255,1)" stroke-width="1.3" stroke-linejoin="round"/>
-        <g fill="rgba(255,255,255,0.85)" stroke="none">
-          <circle cx="14" cy="18" r="2.5"/><circle cx="22" cy="18" r="2.5"/><circle cx="30" cy="18" r="2.5"/>
-        </g>
-      </svg>
-    </div>
-    <!-- Trading Mode -->
-    <div class="fleet-card fc-amber">
-      <div class="fleet-label">Trading Mode</div>
-      <div class="fleet-val" id="fl-trading" style="font-size:20px">—</div>
-      <div class="fleet-sub" id="fl-trading-sub">Awaiting data</div>
-      <svg class="fleet-cloud" viewBox="0 0 44 32" xmlns="http://www.w3.org/2000/svg" width="44" height="32">
-        <path d="M3,23 Q3,16 10,16 Q9,9 18,9 Q24,9 26,13 Q33,12 33,18 Q37,18 37,23 Q37,27 33,27 L7,27 Q3,27 3,23 Z" fill="none" stroke="rgba(255,255,255,1)" stroke-width="1.3" stroke-linejoin="round"/>
-        <g stroke="rgba(255,255,255,0.9)" stroke-width="1.2" fill="none" stroke-linecap="round">
-          <polyline points="11,24 16,17 21,21 29,13"/><circle cx="29" cy="13" r="1.5" fill="rgba(255,255,255,0.9)"/>
-        </g>
-      </svg>
-    </div>
-  </div>
 
   <!-- ROSTER + COMMANDS ROW -->
   <div class="roster-cmd-row">
@@ -2249,11 +2202,11 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
     <!-- SYSTEM HEALTH GRAPHS -->
     <div>
       <div class="sec-title">System Health Over Time</div>
-      <div class="graph-card">
+      <div class="graph-card" style="cursor:pointer" onclick="window.location.href='/auditor'" title="Open System Health page">
         <div class="graph-card-title">CPU Usage %</div>
         <div class="graph-canvas-wrap"><canvas id="cpu-chart"></canvas></div>
       </div>
-      <div class="graph-card">
+      <div class="graph-card" style="cursor:pointer" onclick="window.location.href='/auditor'" title="Open System Health page">
         <div class="graph-card-title">Memory Usage %</div>
         <div class="graph-canvas-wrap"><canvas id="ram-chart"></canvas></div>
       </div>
@@ -2658,13 +2611,7 @@ function updateFleetStats() {
 
   const sv = (id,v) => { const el=document.getElementById(id); if(el) el.textContent=v; };
 
-  sv('fl-online',  online + (total ? ' / ' + total : ''));
   sv('fl-total',   total === 0 ? 'No nodes registered' : notOk === 0 ? 'All reporting' : notOk + ' not reporting');
-  sv('fl-issues',  allTodos.filter(t=>!t.resolved).length);
-  sv('fl-agents',  agTotal > 0 ? agActive + ' / ' + agTotal : '—');
-  sv('fl-agents-sub', agTotal > 0 ? agActive + ' active' + (agIdle ? ', ' + agIdle + ' idle' : '') + (agFault ? ', ' + agFault + ' fault' : '') + (agInactive ? ', ' + agInactive + ' off' : '') : 'Awaiting data');
-  sv('fl-trading',    custTotal > 0 ? paperCount + 'P / ' + liveCount + 'L' : '—');
-  sv('fl-trading-sub', custTotal > 0 ? custTotal + ' customers — ' + paperCount + ' paper, ' + liveCount + ' live' : 'Awaiting data');
 
   // Header pill
   if (total === 0)       sv('pi-count', 'No Nodes');
@@ -2720,7 +2667,9 @@ function renderNodeRoster() {
       + '<button class="mute-btn' + (pi.silenced ? ' muted' : '') + '" '
       + 'onclick="event.stopPropagation();toggleSilence(\\'' + escHtml(pi.pi_id) + '\\')" '
       + 'title="' + (pi.silenced ? 'Unmute alerts' : 'Mute alerts') + '">'
-      + (pi.silenced ? '\U0001F507' : '\U0001F514')
+      + (pi.silenced
+          ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.7 3A6 6 0 0 1 18 8c0 7 3 9 3 9h-2"/><path d="M6 8c0 2.2-.7 4.3-2 6h12"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/><line x1="2" y1="2" x2="22" y2="22"/></svg>'
+          : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>')
       + '</button>'
       + '<button class="pwr-btn" title="Reboot" data-piid="' + pi.pi_id + '" data-act="reboot" onclick="nodePower(this.dataset.piid,this.dataset.act,event)">'
         + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>'
@@ -8390,6 +8339,41 @@ def api_audit_for_pi(pi_id):
         return jsonify({"error": f"Could not reach {pi_ip}:5001 — {e}", "pi_id": pi_id}), 503
 
 
+@app.route("/api/audit/<pi_id>/resolve", methods=["POST"])
+def api_audit_resolve_for_pi(pi_id):
+    """Proxy a resolve action to a retail Pi portal.
+
+    Body forwarded as-is: {source_file, context_prefix, reason?}. The
+    upstream endpoint persists a (source_file, context_prefix) suppression
+    in audit_suppressions.json and busts its scan cache so the next
+    /api/logs-audit poll drops the finding.
+
+    Auth: session cookie (admin) on this side; bearer-forwarded to the Pi.
+    """
+    if not _session_authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    with registry_lock:
+        pi = pi_registry.get(pi_id)
+    if not pi:
+        return jsonify({"error": "Pi not found"}), 404
+    pi_ip = pi.get("pi_ip")
+    if not pi_ip:
+        return jsonify({"error": "Pi IP unknown — waiting for heartbeat", "pi_id": pi_id}), 503
+    payload = request.get_json(force=True, silent=True) or {}
+    try:
+        import requests as _req
+        r = _req.post(
+            f"http://{pi_ip}:5001/api/logs-audit/resolve",
+            headers={"Authorization": f"Bearer {SECRET_TOKEN}",
+                     "Content-Type": "application/json"},
+            json=payload,
+            timeout=10,
+        )
+        return jsonify(r.json()), r.status_code
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Could not reach {pi_ip}:5001 — {e}"}), 503
+
+
 @app.route("/api/backlog/<pi_id>")
 def api_backlog_for_pi(pi_id):
     """Fetch improvement backlog from a Pi's portal."""
@@ -8834,7 +8818,7 @@ async function kmDiscoverNodes() {
       card.innerHTML = '<div class="card-label">' + short + ' &middot; ' + label +
                         ' <span style="font-size:0.65rem;color:var(--muted);margin-left:6px">' + role + '</span></div>' +
                        '<div class="km-table" id="km-table-' + short + '"><div class="km-loading">Loading&hellip;</div></div>' +
-                       '<button class="km-add-btn" onclick="kmAddRow(\''  + short + '\')">+ Add Key</button>';
+                       '<button class="km-add-btn" onclick="kmAddRow(&apos;' + short + '&apos;)">+ Add Key</button>';
       container.appendChild(card);
       kmLoadNode(short);
     });
@@ -10759,13 +10743,19 @@ function render(d){
     issuesEl.innerHTML = issues.map(iss => {
       const sc = 'sev-' + (iss.severity||'low');
       const hits = iss.hit_count > 1 ? ' <span style="color:var(--dim)">×'+iss.hit_count+'</span>' : '';
-      // Only company-side issues have a DB id we can resolve. Per-Pi live
-      // scans return synthetic ids that don't map to a stored row, so skip
-      // the button there (iss.id will be present but meaningless).
-      const canResolve = (currentNode === 'company') && iss.id != null;
-      const resolveBtn = canResolve
-        ? '<button class="auditor-resolve-btn" data-issid="'+CSS.escape(String(iss.id))+'" onclick="resolveAuditorIssue(this.dataset.issid,event)">Resolve</button>'
-        : '';
+      // company-side issues resolve against detected_issues table (by id);
+      // pi-retail issues resolve by persisting a (source_file, context_prefix)
+      // suppression on pi5, since /api/logs-audit is stateless.
+      let resolveBtn = '';
+      if (currentNode === 'company' && iss.id != null) {
+        resolveBtn = '<button class="auditor-resolve-btn" data-issid="'+CSS.escape(String(iss.id))+'" onclick="resolveAuditorIssue(this.dataset.issid,event)">Resolve</button>';
+      } else if (currentNode !== 'company') {
+        const ctxPrefix = (iss.context||'').slice(0, 80);
+        resolveBtn = '<button class="auditor-resolve-btn" '
+          + 'data-srcfile="'+escHtml(iss.source_file||'')+'" '
+          + 'data-ctxpre="'+escHtml(ctxPrefix)+'" '
+          + 'onclick="resolvePiAuditorIssue(this.dataset.srcfile,this.dataset.ctxpre,event)">Resolve</button>';
+      }
       return '<div class="issue-row" data-issue-id="'+CSS.escape(String(iss.id || ''))+'">'
         + '<div class="sev-badge '+sc+'">'+escHtml(iss.severity)+'</div>'
         + '<div class="issue-body">'
@@ -10867,6 +10857,36 @@ async function resolveAuditorIssue(issueId, ev) {
         nodeCache[currentNode].total_unresolved = Math.max(0, nodeCache[currentNode].total_unresolved - 1);
       render(nodeCache[currentNode]);
     }
+  } catch(e) {
+    if (btn) btn.disabled = false;
+    if (row) row.classList.remove('resolving');
+    alert('Resolve failed: ' + e.message);
+  }
+}
+
+async function resolvePiAuditorIssue(srcFile, ctxPrefix, ev) {
+  if (ev && ev.stopPropagation) ev.stopPropagation();
+  if (!srcFile || !ctxPrefix) return;
+  const btn = ev && ev.currentTarget;
+  const row = btn ? btn.closest('.issue-row') : null;
+  if (btn) btn.disabled = true;
+  if (row) row.classList.add('resolving');
+  try {
+    const r = await fetch('/api/audit/' + encodeURIComponent(currentNode) + '/resolve', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      credentials: 'same-origin',
+      body: JSON.stringify({source_file: srcFile, context_prefix: ctxPrefix, reason: 'operator-resolved from auditor UI'}),
+    });
+    const d = await r.json().catch(() => ({ok: false, error: 'invalid JSON'}));
+    if (!r.ok || !d.ok) {
+      if (btn) btn.disabled = false;
+      if (row) row.classList.remove('resolving');
+      alert('Resolve failed: ' + (d.error || r.statusText || 'unknown'));
+      return;
+    }
+    delete nodeCache[currentNode];
+    loadNode(currentNode, {silent: true});
   } catch(e) {
     if (btn) btn.disabled = false;
     if (row) row.classList.remove('resolving');

@@ -1612,6 +1612,47 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 #histcov-drawer-close{ background:transparent; border:1px solid rgba(255,255,255,0.13); color:rgba(255,255,255,0.55); width:28px; height:28px; border-radius:6px; cursor:pointer; padding:0; font-size:16px; line-height:1; }
 #histcov-drawer-close:hover{ color:#ff4b6e; border-color:rgba(255,75,110,0.4); }
 #histcov-drawer-body{ flex:1; overflow-y:auto; padding:14px 20px; }
+
+/* THROUGHPUT — third sibling to SIGCOV + HISTCOV. Realtime Alpaca pool throughput. */
+.throughput-card{ cursor:pointer; transition:all 0.18s; }
+.throughput-card:hover{ border-color:rgba(167,139,250,0.45); }
+.throughput-bar-wrap{ position:relative; height:28px; background:rgba(255,255,255,0.04); border-radius:6px; overflow:hidden; margin:6px 0 4px; border:1px solid rgba(255,255,255,0.07); }
+.throughput-bar-fill{ position:absolute; left:0; top:0; bottom:0; width:0%; transition:width 0.35s ease-out, background 0.3s; box-shadow:inset 0 0 8px rgba(255,255,255,0.10); }
+.throughput-bar-fill.idle{ background:linear-gradient(90deg,#475569 0%,#64748b 100%); }
+.throughput-bar-fill.light{ background:linear-gradient(90deg,#a78bfa 0%,#c4b5fd 100%); }
+.throughput-bar-fill.heavy{ background:linear-gradient(90deg,#f5a623 0%,#ffb347 100%); }
+.throughput-bar-fill.saturated{ background:linear-gradient(90deg,#ff4b6e 0%,#ff0040 100%); }
+.throughput-bar-pct{ position:absolute; right:10px; top:50%; transform:translateY(-50%); font-family:'JetBrains Mono',monospace; font-weight:700; font-size:13px; color:#fff; text-shadow:0 1px 3px rgba(0,0,0,0.5); }
+.throughput-meta{ display:flex; justify-content:space-between; font-size:10px; color:var(--muted); font-family:'JetBrains Mono',monospace; margin-top:4px; }
+#throughput-drawer{ position:fixed; top:0; right:0; bottom:0; width:480px; max-width:100vw; background:rgba(13,17,32,0.97); border-left:1px solid rgba(167,139,250,0.3); backdrop-filter:blur(16px); z-index:9997; transform:translateX(100%); transition:transform 0.32s ease-out; box-shadow:-12px 0 40px rgba(0,0,0,0.5); display:flex; flex-direction:column; }
+#throughput-drawer.open{ transform:translateX(0); }
+#throughput-drawer-header{ padding:18px 20px; border-bottom:1px solid rgba(255,255,255,0.07); display:flex; align-items:center; gap:10px; flex-shrink:0; }
+#throughput-drawer-title{ font-size:15px; font-weight:700; color:#fff; flex:1; letter-spacing:0.04em; }
+#throughput-drawer-close{ background:transparent; border:1px solid rgba(255,255,255,0.13); color:rgba(255,255,255,0.55); width:28px; height:28px; border-radius:6px; cursor:pointer; padding:0; font-size:16px; line-height:1; }
+#throughput-drawer-close:hover{ color:#ff4b6e; border-color:rgba(255,75,110,0.4); }
+#throughput-drawer-body{ flex:1; overflow-y:auto; padding:14px 20px; }
+.throughput-key{ padding:10px 12px; margin-bottom:8px; background:rgba(255,255,255,0.025); border:1px solid rgba(255,255,255,0.06); border-radius:8px; }
+.throughput-key.idle{ border-left:3px solid #475569; }
+.throughput-key.light{ border-left:3px solid #a78bfa; }
+.throughput-key.heavy{ border-left:3px solid #f5a623; }
+.throughput-key.saturated{ border-left:3px solid #ff4b6e; }
+.throughput-key-head{ display:flex; align-items:baseline; gap:8px; margin-bottom:6px; }
+.throughput-key-alias{ font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:700; color:#fff; flex:1; }
+.throughput-key-rate{ font-family:'JetBrains Mono',monospace; font-size:11px; color:rgba(255,255,255,0.7); }
+.throughput-key-bar{ position:relative; height:6px; background:rgba(255,255,255,0.05); border-radius:3px; overflow:hidden; margin:4px 0 6px; }
+.throughput-key-bar-fill{ position:absolute; left:0; top:0; bottom:0; transition:width 0.3s; }
+.throughput-key-bar-fill.idle{ background:#475569; }
+.throughput-key-bar-fill.light{ background:#a78bfa; }
+.throughput-key-bar-fill.heavy{ background:#f5a623; }
+.throughput-key-bar-fill.saturated{ background:#ff4b6e; }
+.throughput-key-stats{ display:flex; gap:14px; font-family:'JetBrains Mono',monospace; font-size:9px; color:rgba(255,255,255,0.5); }
+.throughput-key-stats .ok{ color:#4ade80; }
+.throughput-key-stats .warn{ color:#f5a623; }
+.throughput-key-stats .err{ color:#ff4b6e; }
+.throughput-cooldown{ font-family:'JetBrains Mono',monospace; font-size:9px; color:#ff4b6e; padding:1px 5px; border-radius:99px; background:rgba(255,75,110,0.12); border:1px solid rgba(255,75,110,0.3); margin-left:6px; }
+.throughput-section-title{ font-family:'JetBrains Mono',monospace; font-size:10px; font-weight:700; color:rgba(255,255,255,0.55); letter-spacing:0.06em; text-transform:uppercase; margin:14px 0 8px; }
+.throughput-agent-row{ display:flex; justify-content:space-between; font-family:'JetBrains Mono',monospace; font-size:10px; color:rgba(255,255,255,0.7); padding:4px 0; border-bottom:1px solid rgba(255,255,255,0.04); }
+.throughput-agent-row .label{ color:rgba(255,255,255,0.55); }
 .histcov-db{ padding:12px 14px; margin-bottom:10px; background:rgba(255,255,255,0.025); border:1px solid rgba(255,255,255,0.06); border-radius:8px; }
 .histcov-db.fresh{ border-left:3px solid #4ade80; }
 .histcov-db.stale{ border-left:3px solid #ff4b6e; }
@@ -2247,6 +2288,17 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
         <div class="histcov-meta">
           <span id="histcov-meta-dbs">no scan yet</span>
           <span id="histcov-meta-scan">—</span>
+        </div>
+      </div>
+      <div class="graph-card throughput-card" id="throughput-card" onclick="throughputOpenDrawer()" title="Click for per-key breakdown">
+        <div class="graph-card-title">Alpaca Throughput</div>
+        <div class="throughput-bar-wrap">
+          <div class="throughput-bar-fill" id="throughput-bar-fill"></div>
+          <div class="throughput-bar-pct" id="throughput-bar-pct">—</div>
+        </div>
+        <div class="throughput-meta">
+          <span id="throughput-meta-rate">no scan yet</span>
+          <span id="throughput-meta-scan">—</span>
         </div>
       </div>
     </div>
@@ -4203,6 +4255,17 @@ document.addEventListener('click',function(e){if(!document.getElementById('hbtn'
   </div>
 </div>
 
+<div id="throughput-drawer">
+  <div id="throughput-drawer-header">
+    <div id="throughput-drawer-title">Alpaca Throughput</div>
+    <span id="throughput-drawer-meta" style="font-size:10px;color:var(--muted);font-family:'JetBrains Mono',monospace">—</span>
+    <button id="throughput-drawer-close" onclick="throughputCloseDrawer()" title="Close">&times;</button>
+  </div>
+  <div id="throughput-drawer-body">
+    <div style="padding:20px;color:var(--muted);font-size:11px">Loading scan&hellip;</div>
+  </div>
+</div>
+
 <script>
 /* SIGCOV-JS — hero card + drawer */
 let _SIGCOV_LAST = null;
@@ -4625,6 +4688,129 @@ document.addEventListener('keydown', function(ev) {
 
 histcovLoad();
 setInterval(histcovLoad, 60000);
+
+// THROUGHPUT — third sibling to SIGCOV + HISTCOV. Realtime Alpaca pool.
+let _THROUGHPUT_LAST = null;
+
+function throughputBarClass(pct) {
+  if (pct == null || pct === 0) return 'idle';
+  if (pct < 40) return 'light';
+  if (pct < 80) return 'heavy';
+  return 'saturated';
+}
+
+function throughputEscape(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]);
+}
+
+function throughputFmtAge(iso) {
+  if (!iso) return 'never';
+  try {
+    const t = new Date(iso).getTime();
+    const ageSec = (Date.now() - t) / 1000;
+    if (ageSec < 60) return Math.floor(ageSec) + 's ago';
+    if (ageSec < 3600) return Math.floor(ageSec/60) + 'm ago';
+    return Math.floor(ageSec/3600) + 'h ago';
+  } catch (e) { return 'never'; }
+}
+
+async function throughputLoad() {
+  try {
+    const r = await fetch('/api/alpaca-throughput');
+    if (!r.ok) return;
+    const data = await r.json();
+    const nodes = data.nodes || {};
+    const ids = Object.keys(nodes);
+    const fill = document.getElementById('throughput-bar-fill');
+    const pctEl = document.getElementById('throughput-bar-pct');
+    const metaRate = document.getElementById('throughput-meta-rate');
+    const metaScan = document.getElementById('throughput-meta-scan');
+    if (ids.length === 0) {
+      if (fill) fill.style.width = '0%';
+      if (pctEl) pctEl.textContent = '—';
+      if (metaRate) metaRate.textContent = 'no scans yet';
+      return;
+    }
+    const scan = nodes[ids[0]];
+    _THROUGHPUT_LAST = scan;
+    const util = scan.utilization_pct;
+    if (fill) {
+      fill.style.width = (util != null ? Math.min(100, util) : 0) + '%';
+      fill.className = 'throughput-bar-fill ' + throughputBarClass(util);
+    }
+    if (pctEl) pctEl.textContent = util != null ? util.toFixed(1) + '%' : '—';
+    const rate = scan.total_calls_per_min || 0;
+    const cap = scan.pool_capacity_per_min || 0;
+    if (metaRate) metaRate.textContent = rate.toFixed(0) + '/' + cap + ' calls/min';
+    if (metaScan) metaScan.textContent = throughputFmtAge(scan.scan_at);
+    throughputRenderDrawer(scan);
+  } catch (e) { /* silent */ }
+}
+
+function throughputRenderDrawer(scan) {
+  const body = document.getElementById('throughput-drawer-body');
+  const meta = document.getElementById('throughput-drawer-meta');
+  if (!body) return;
+  if (meta) {
+    const cap = scan.pool_capacity_per_min || 0;
+    const util = scan.utilization_pct || 0;
+    meta.textContent = scan.node_id + ' · ' + scan.total_calls_per_min.toFixed(0) + '/' + cap + ' calls/min · ' + util.toFixed(1) + '%';
+  }
+  const keys = (scan.keys || []).slice();
+  if (keys.length === 0) {
+    body.innerHTML = '<div style="padding:20px;color:var(--muted)">No keys reported yet — waiting for first scan.</div>';
+    return;
+  }
+  let html = '<div class="throughput-section-title">Per-key activity (last 60s)</div>';
+  for (const k of keys) {
+    const util = k.utilization_pct || 0;
+    const cls = throughputBarClass(util);
+    html += '<div class="throughput-key ' + cls + '">';
+    html += '<div class="throughput-key-head">';
+    html += '<span class="throughput-key-alias">' + throughputEscape(k.alias) + '</span>';
+    if (k.cooldown_remaining_secs > 0) {
+      html += '<span class="throughput-cooldown">cooldown ' + Math.ceil(k.cooldown_remaining_secs) + 's</span>';
+    }
+    html += '<span class="throughput-key-rate">' + k.rate_per_min.toFixed(0) + '/' + k.cap_per_min + '</span>';
+    html += '</div>';
+    html += '<div class="throughput-key-bar"><div class="throughput-key-bar-fill ' + cls + '" style="width:' + Math.min(100, util) + '%"></div></div>';
+    html += '<div class="throughput-key-stats">';
+    html += '<span><span class="ok">✓</span> ' + k.successes_60s + ' ok</span>';
+    if (k.throttles_429_60s > 0) html += '<span><span class="warn">⚠</span> ' + k.throttles_429_60s + ' 429</span>';
+    if (k.errors_60s > 0) html += '<span><span class="err">✗</span> ' + k.errors_60s + ' err</span>';
+    html += '<span style="margin-left:auto">' + (k.last_call_at ? throughputFmtAge(k.last_call_at) : 'idle') + '</span>';
+    html += '</div>';
+    html += '</div>';
+  }
+  // By-agent breakdown
+  const byAgent = scan.by_agent || {};
+  const agents = Object.keys(byAgent);
+  if (agents.length > 0) {
+    html += '<div class="throughput-section-title">By agent (last 60s)</div>';
+    agents.sort((a,b) => byAgent[b] - byAgent[a]);
+    for (const a of agents) {
+      html += '<div class="throughput-agent-row"><span class="label">' + throughputEscape(a) + '</span><span>' + byAgent[a] + '</span></div>';
+    }
+  }
+  body.innerHTML = html;
+}
+
+function throughputOpenDrawer() {
+  if (_THROUGHPUT_LAST) throughputRenderDrawer(_THROUGHPUT_LAST);
+  document.getElementById('throughput-drawer').classList.add('open');
+}
+function throughputCloseDrawer() {
+  document.getElementById('throughput-drawer').classList.remove('open');
+}
+
+document.addEventListener('keydown', function(ev) {
+  if (ev.key === 'Escape') throughputCloseDrawer();
+});
+
+// Initial + 10s refresh (this is the realtime card)
+throughputLoad();
+setInterval(throughputLoad, 10000);
 </script>
 
 <script>
@@ -11676,6 +11862,105 @@ def api_history_coverage_current():
             ).fetchone()
             if row:
                 out[r["node_id"]] = _history_coverage_enrich(json.loads(row["payload"]))
+        return jsonify({"nodes": out, "scan_count": len(out)}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        try: conn.close()
+        except: pass
+
+
+def alpaca_throughput_table_init():
+    """Idempotent CREATE TABLE for alpaca_throughput in auditor.db.
+    Mirrors signal_coverage / history_coverage shape: latest scan per
+    node + 7-day rolling prune."""
+    auditor_db = os.getenv("AUDITOR_DB_PATH", "/home/pi/synthos-company/data/auditor.db")
+    conn = sqlite3.connect(auditor_db, timeout=5)
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS alpaca_throughput (
+                node_id TEXT NOT NULL,
+                scan_at INTEGER NOT NULL,
+                payload TEXT NOT NULL,
+                utilization_pct REAL,
+                PRIMARY KEY (node_id, scan_at)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_alpaca_throughput_node ON alpaca_throughput(node_id, scan_at DESC)")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+@app.route("/api/alpaca-throughput", methods=["POST"])
+def api_alpaca_throughput_report():
+    """Receive Alpaca pool throughput scan from a retail node. Stores
+    latest scan in auditor.db.alpaca_throughput with 7-day prune."""
+    token = request.headers.get("X-Token", "")
+    if token != SECRET_TOKEN:
+        return jsonify({"error": "unauthorized"}), 401
+    try:
+        data = request.get_json(force=True)
+    except Exception:
+        return jsonify({"error": "invalid JSON"}), 400
+    node_id = data.get("node_id") or "unknown"
+    scan_iso = data.get("scan_at") or ""
+    util = data.get("utilization_pct")
+    try:
+        scan_epoch = int(__import__("datetime").datetime.strptime(
+            scan_iso, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=__import__("datetime").timezone.utc).timestamp())
+    except Exception:
+        scan_epoch = int(time.time())
+
+    alpaca_throughput_table_init()
+    auditor_db = os.getenv("AUDITOR_DB_PATH", "/home/pi/synthos-company/data/auditor.db")
+    conn = sqlite3.connect(auditor_db, timeout=5)
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO alpaca_throughput (node_id, scan_at, payload, utilization_pct) VALUES (?, ?, ?, ?)",
+            (node_id, scan_epoch, json.dumps(data), util),
+        )
+        cutoff = int(time.time()) - 7 * 86400
+        conn.execute(
+            "DELETE FROM alpaca_throughput WHERE node_id = ? AND scan_at < ?",
+            (node_id, cutoff),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return jsonify({"ok": True, "node_id": node_id, "scan_at": scan_iso}), 200
+
+
+@app.route("/api/alpaca-throughput", methods=["GET"])
+def api_alpaca_throughput_current():
+    """Latest Alpaca pool throughput scan(s) for the dashboard."""
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    node = request.args.get("node", "").strip()
+    auditor_db = os.getenv("AUDITOR_DB_PATH", "/home/pi/synthos-company/data/auditor.db")
+    try:
+        conn = sqlite3.connect(auditor_db, timeout=5)
+        conn.row_factory = sqlite3.Row
+        if node:
+            row = conn.execute(
+                "SELECT node_id, scan_at, payload, utilization_pct FROM alpaca_throughput "
+                "WHERE node_id = ? ORDER BY scan_at DESC LIMIT 1",
+                (node,),
+            ).fetchone()
+            payload = json.loads(row["payload"]) if row else None
+            return jsonify({"node": node, "scan": payload}), 200
+        rows = conn.execute(
+            "SELECT node_id, MAX(scan_at) AS latest FROM alpaca_throughput GROUP BY node_id"
+        ).fetchall()
+        out = {}
+        for r in rows:
+            row = conn.execute(
+                "SELECT payload FROM alpaca_throughput WHERE node_id = ? AND scan_at = ?",
+                (r["node_id"], r["latest"]),
+            ).fetchone()
+            if row:
+                out[r["node_id"]] = json.loads(row["payload"])
         return jsonify({"nodes": out, "scan_count": len(out)}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500

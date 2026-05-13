@@ -10501,7 +10501,7 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 
 
 <div class="page">
-  <div class="title-v2">Auditor <span>&mdash; All Nodes</span></div>
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:20px;"><div class="title-v2" style="margin-bottom:0;">Auditor <span>&mdash; All Nodes</span></div><a href="https://portal.synth-cloud.com/audit/catalog" target="_blank" style="display:inline-flex;align-items:center;gap:8px;padding:10px 18px;border-radius:10px;background:linear-gradient(90deg,var(--purple),var(--teal));color:#000;text-decoration:none;font-weight:700;font-size:12px;letter-spacing:0.04em;text-transform:uppercase;white-space:nowrap;box-shadow:0 4px 14px rgba(0,245,212,0.25);flex-shrink:0;">Catalog Dashboard →</a></div>
 
   <!-- ── V2 Hero KPI bar ── 4 numbers above the fold ── -->
   <div class="hero-strip">

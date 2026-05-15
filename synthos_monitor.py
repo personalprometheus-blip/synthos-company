@@ -628,6 +628,44 @@ def _mqtt_node_metrics_for(canonical_id: str, max_age_s: int = 300) -> dict:
         return {}
 
 
+def _history_from_metrics_db(canonical_id: str, hours: int = 24) -> list:
+    """Build the per-pi `history` time series from auditor.db.metrics_history
+    (Phase 2 canonical-keyed store) for the dashboard CPU/Memory charts.
+
+    Returns [{t, cpu, ram}, ...] sorted oldest-first. The chart frontend
+    expects ISO timestamps + cpu/ram fields. Old shape also included
+    `v` (portfolio_value) but the CPU/RAM charts don't use it — omit
+    to keep payload light.
+
+    metrics_history is the canonical-keyed view (Phase 2 recorder is
+    MQTT-aware + skips stale buckets), so this replaces the legacy
+    per-heartbeat history append which only fired for HTTP-heartbeating
+    nodes (process-1 + trader-1 daemons publish MQTT only, so their
+    legacy `history` arrays were sparse-to-empty).
+    """
+    import time
+    auditor_db = os.getenv("AUDITOR_DB_PATH",
+                           "/home/pi/synthos-company/data/auditor.db")
+    cutoff = int(time.time()) - hours * 3600
+    try:
+        conn = sqlite3.connect(auditor_db, timeout=2)
+        rows = conn.execute(
+            "SELECT ts_bucket, cpu_pct, ram_pct FROM metrics_history "
+            "WHERE node_id = ? AND ts_bucket >= ? ORDER BY ts_bucket",
+            (canonical_id, cutoff),
+        ).fetchall()
+        conn.close()
+    except Exception:
+        return []
+    from datetime import datetime as _dt, timezone as _tz
+    out = []
+    for ts, cpu, ram in rows:
+        # ts is epoch-seconds (bucketed); chart uses Date.parse on iso strings
+        iso = _dt.fromtimestamp(ts, tz=_tz.utc).isoformat()
+        out.append({"t": iso, "cpu": cpu, "ram": ram})
+    return out
+
+
 def _mqtt_agents_for(canonical_id: str, max_age_s: int = 300) -> dict:
     """Aggregate per-agent MQTT heartbeats for this canonical node into
     an {agent_name: status} dict. Status is 'active' (fresh), 'stale'
@@ -1103,7 +1141,10 @@ def api_status():
                 "uptime":         mqtt_extra.get("uptime",     data.get("uptime")),
                 # Agents — union of pi_registry's dict and MQTT's per-agent topics
                 "agents":         {**data.get("agents", {}), **mqtt_agents},
-                "history":        data.get("history", []),
+                # Phase 2 fix: history comes from canonical-keyed metrics_history
+                # DB (MQTT-overlay-aware), not the legacy per-heartbeat array.
+                # See _history_from_metrics_db for details.
+                "history":        _history_from_metrics_db(canonical_id),
                 # silenced now from auditor.db, keyed by canonical_id
                 "silenced":       _is_silenced(canonical_id),
             }
@@ -1145,7 +1186,7 @@ def api_status():
                 "cpu_temp":       mqtt_extra.get("cpu_temp"),
                 "uptime":         mqtt_extra.get("uptime"),
                 "agents":         mqtt_agents,
-                "history":        [],
+                "history":        _history_from_metrics_db(canonical_id),
                 "silenced":       _is_silenced(canonical_id),
             }
         out[canonical_id] = entry

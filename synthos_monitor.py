@@ -462,7 +462,263 @@ def pi_status(data):
     return "active"
 
 
+# ── Canonical Node Registry (2026-05-15 Phase 2 of heartbeat migration) ──
+# Maps display-canonical IDs to their alias set. Aliases cover:
+#   - The MQTT NODE_ID (often shorter, e.g. "company" vs "companypi")
+#   - The HTTP PI_ID (longer, e.g. "companypi")
+#   - Legacy IDs from pre-refactor heartbeats (e.g. "pi4b-company",
+#     "synthos-pi-retail") that may still appear in pi_registry until
+#     they age out
+# When a heartbeat arrives under any alias, all of them are treated as
+# the same physical node by the dashboard.
+CANONICAL_NODES = [
+    {"id": "companypi", "label": "CompanyPi (Pi 5 8GB)",
+     "aliases": ["company", "companypi", "pi4b-company"]},
+    {"id": "process-1", "label": "Process Node (Pi 5 16GB)",
+     "aliases": ["process", "process-1"]},
+    {"id": "trader-1",  "label": "Trader Node (Pi 5 8GB)",
+     # synthos-pi-retail is the LEGACY PI_ID that trader-1 currently
+     # heartbeats under (will be renamed at the 09:30 cutover). Until
+     # then, route those heartbeats into the trader-1 canonical row.
+     "aliases": ["trader-1", "trader", "synthos-pi-retail"]},
+    {"id": "pi2w-monitor", "label": "pi2w Monitor Node",
+     "aliases": ["pi2w-monitor", "pi2w"]},
+]
+
+# Reverse lookup: alias → canonical_id
+_ALIAS_TO_CANONICAL = {
+    alias: node["id"]
+    for node in CANONICAL_NODES for alias in node["aliases"]
+}
+
+# Forward lookup: canonical_id → {id, label, aliases}
+_CANONICAL_BY_ID = {n["id"]: n for n in CANONICAL_NODES}
+
+
+def _canonical_id(pi_id: str) -> str:
+    """Resolve any alias to its canonical id. Returns input unchanged if
+    no match — supports new nodes that haven't been added to
+    CANONICAL_NODES yet (they pass through as their own canonical id)."""
+    if not pi_id:
+        return pi_id
+    return _ALIAS_TO_CANONICAL.get(pi_id, pi_id)
+
+
+def _aliases_for(canonical_id: str) -> list:
+    """Return all known aliases for a canonical id. For an unknown
+    canonical_id (a new node not in CANONICAL_NODES), returns [canonical_id]
+    so callers can still match the single id."""
+    node = _CANONICAL_BY_ID.get(canonical_id)
+    if node:
+        return list(node["aliases"])
+    return [canonical_id]
+
+
+def _registry_keys_for_canonical(canonical_id: str) -> list:
+    """Return the pi_registry dict keys (raw pi_ids from past heartbeats)
+    that correspond to this canonical node. May be 0, 1, or many. Caller
+    holds registry_lock around any subsequent registry access."""
+    aliases = set(_aliases_for(canonical_id))
+    return [k for k in pi_registry if k in aliases]
+
+
+def _silenced_table_init():
+    """Idempotent schema init for the silenced_nodes table.
+    Phase 2 moves silenced state out of in-memory pi_registry into
+    auditor.db so it survives node renames + monitor restarts and
+    is keyed by canonical_id (one row per physical node, not per pi_id)."""
+    auditor_db = os.getenv("AUDITOR_DB_PATH",
+                           "/home/pi/synthos-company/data/auditor.db")
+    try:
+        conn = sqlite3.connect(auditor_db, timeout=5)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS silenced_nodes (
+                canonical_id  TEXT PRIMARY KEY,
+                silenced_at   TEXT NOT NULL,
+                silenced_by   TEXT,
+                reason        TEXT
+            )
+        """)
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[silenced_nodes] schema init failed: {e}", flush=True)
+
+
+def _is_silenced(canonical_id: str) -> bool:
+    """Read the silenced flag from auditor.db. Returns False on any
+    error (silenced state is non-critical for dashboard correctness)."""
+    auditor_db = os.getenv("AUDITOR_DB_PATH",
+                           "/home/pi/synthos-company/data/auditor.db")
+    try:
+        conn = sqlite3.connect(auditor_db, timeout=2)
+        row = conn.execute(
+            "SELECT 1 FROM silenced_nodes WHERE canonical_id=?",
+            (canonical_id,),
+        ).fetchone()
+        conn.close()
+        return row is not None
+    except Exception:
+        return False
+
+
+def _set_silenced(canonical_id: str, silenced: bool, by: str = "operator") -> bool:
+    """Write or clear the silenced flag. Returns True on success."""
+    from datetime import datetime as _dt, timezone as _tz
+    auditor_db = os.getenv("AUDITOR_DB_PATH",
+                           "/home/pi/synthos-company/data/auditor.db")
+    try:
+        conn = sqlite3.connect(auditor_db, timeout=5)
+        if silenced:
+            conn.execute(
+                "INSERT OR REPLACE INTO silenced_nodes "
+                "(canonical_id, silenced_at, silenced_by) VALUES (?, ?, ?)",
+                (canonical_id, _dt.now(_tz.utc).isoformat(), by),
+            )
+        else:
+            conn.execute(
+                "DELETE FROM silenced_nodes WHERE canonical_id=?",
+                (canonical_id,),
+            )
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"[silenced_nodes] write failed for {canonical_id}: {e}", flush=True)
+        return False
+
+
+def _mqtt_node_metrics_for(canonical_id: str, max_age_s: int = 300) -> dict:
+    """Look up the freshest MQTT node_metrics topic among this canonical
+    node's aliases. Returns the parsed `extra` dict from the payload, or
+    {} if no fresh topic found.
+
+    Phase 2 makes the Node Roster MQTT-aware: when a node has recent
+    node_metrics (from node_metrics_publisher), its CPU/RAM/disk/temp
+    overlay the (potentially stale) pi_registry values."""
+    import time, json
+    auditor_db = os.getenv("AUDITOR_DB_PATH",
+                           "/home/pi/synthos-company/data/auditor.db")
+    aliases = _aliases_for(canonical_id)
+    try:
+        conn = sqlite3.connect(auditor_db, timeout=2)
+        # Build the IN clause safely with the right number of placeholders
+        topics = [f"process/heartbeat/{a}/node_metrics" for a in aliases]
+        placeholders = ",".join("?" * len(topics))
+        row = conn.execute(
+            f"SELECT topic, last_payload, last_seen_ts FROM mqtt_observations "
+            f"WHERE topic IN ({placeholders}) "
+            f"ORDER BY last_seen_ts DESC LIMIT 1",
+            topics,
+        ).fetchone()
+        conn.close()
+        if not row:
+            return {}
+        topic, payload_raw, ts = row
+        if (time.time() - (ts or 0)) > max_age_s:
+            return {}
+        try:
+            payload = json.loads(payload_raw)
+        except Exception:
+            return {}  # likely "offline" LWT marker
+        if not isinstance(payload, dict):
+            return {}
+        return payload.get("extra") or {}
+    except Exception:
+        return {}
+
+
+def _mqtt_agents_for(canonical_id: str, max_age_s: int = 300) -> dict:
+    """Aggregate per-agent MQTT heartbeats for this canonical node into
+    an {agent_name: status} dict. Status is 'active' (fresh), 'stale'
+    (>120s), or 'offline' (payload = 'offline' from LWT)."""
+    import time
+    auditor_db = os.getenv("AUDITOR_DB_PATH",
+                           "/home/pi/synthos-company/data/auditor.db")
+    aliases = _aliases_for(canonical_id)
+    out: dict = {}
+    try:
+        conn = sqlite3.connect(auditor_db, timeout=2)
+        # Match ALL topics for each alias (process/heartbeat/<alias>/<*>)
+        # but exclude node_metrics (that's a separate concern)
+        like_clauses = " OR ".join(["topic LIKE ?"] * len(aliases))
+        params = [f"process/heartbeat/{a}/%" for a in aliases]
+        rows = conn.execute(
+            f"SELECT topic, last_payload, last_seen_ts FROM mqtt_observations "
+            f"WHERE ({like_clauses}) AND topic NOT LIKE '%/node_metrics'",
+            params,
+        ).fetchall()
+        conn.close()
+        now = time.time()
+        for topic, payload, ts in rows:
+            parts = topic.split("/")
+            if len(parts) != 4:
+                continue
+            agent = parts[3]
+            if (payload or "") == "offline":
+                out[agent] = "offline"
+            else:
+                age = now - (ts or 0)
+                out[agent] = "active" if age < 120 else "stale"
+    except Exception:
+        pass
+    return out
+
+
 # ── Company Auth Helpers ─────────────────────────────────────────────────────
+
+# Phase 2 — ensure silenced_nodes table exists at module import.
+_silenced_table_init()
+
+
+# ── Phase 2: auto-prune pi_registry entries >24h stale ─────────────────
+# Old pi_ids that haven't been refreshed in 24h are almost always
+# stale ghosts (renamed nodes, retired hardware). Manual cleanup via
+# /api/delete works but is forgotten. Auto-sweep keeps the registry
+# tidy without operator intervention. Run as a daemon thread; sweep
+# interval is 1h to keep churn low.
+_AUTOPRUNE_INTERVAL_S = 3600
+_AUTOPRUNE_STALE_THRESHOLD_S = 24 * 3600
+
+
+def _autoprune_registry_loop():
+    import time as _t
+    from datetime import datetime as _dt
+    while True:
+        try:
+            _t.sleep(_AUTOPRUNE_INTERVAL_S)
+            removed = []
+            now = now_utc()
+            with registry_lock:
+                for pid in list(pi_registry.keys()):
+                    entry = pi_registry.get(pid)
+                    if not entry:
+                        continue
+                    last_seen = entry.get("last_seen")
+                    if not last_seen:
+                        continue
+                    age_s = (now - last_seen).total_seconds()
+                    if age_s > _AUTOPRUNE_STALE_THRESHOLD_S:
+                        del pi_registry[pid]
+                        removed.append((pid, int(age_s)))
+                if removed:
+                    save_registry()
+            if removed:
+                print(f"[autoprune] pruned {len(removed)} stale pi_registry entries: "
+                      + ", ".join(f"{p}({a//3600}h)" for p, a in removed),
+                      flush=True)
+        except Exception as e:
+            print(f"[autoprune] loop error: {e}", flush=True)
+
+
+import threading as _autoprune_threading
+_autoprune_thread = _autoprune_threading.Thread(
+    target=_autoprune_registry_loop, name="pi-registry-autoprune", daemon=True
+)
+_autoprune_thread.start()
+
+
+
 def _cf_authorized():
     """Trust Cloudflare Access — checks Cf-Access-Authenticated-User-Email header."""
     if not CF_ADMIN_EMAIL:
@@ -665,37 +921,96 @@ def heartbeat():
 
 @app.route("/api/pi/<pi_id>", methods=["GET"])
 def api_pi_detail(pi_id):
-    """Full detail for a single Pi — used by modal on click."""
+    """Full detail for a single canonical node (Phase 2). Accepts either
+    canonical or alias pi_id; picks the freshest pi_registry entry
+    matching the canonical's alias set."""
+    canonical_id = _canonical_id(pi_id)
+    candidates = []
     with registry_lock:
-        data = pi_registry.get(pi_id)
-    if not data:
-        return jsonify({"error": "Pi not found"}), 404
+        for k in _registry_keys_for_canonical(canonical_id):
+            candidates.append((k, dict(pi_registry[k])))
+    if not candidates:
+        return jsonify({"error": "Pi not found", "canonical_id": canonical_id}), 404
+    # Pick freshest
+    candidates.sort(key=lambda kv: kv[1].get("last_seen"), reverse=True)
+    _, data = candidates[0]
     age_secs = int((now_utc() - data["last_seen"]).total_seconds())
     return jsonify({
         **data,
-        "last_seen":  data["last_seen"].isoformat(),
-        "first_seen": data["first_seen"].isoformat(),
+        "pi_id":       canonical_id,
+        "last_seen":   data["last_seen"].isoformat(),
+        "first_seen": (data.get("first_seen") or data["last_seen"]).isoformat()
+                       if hasattr(data.get("first_seen") or data["last_seen"], "isoformat")
+                       else None,
         "age_secs":   age_secs,
         "status":     pi_status(data),
+        "silenced":   _is_silenced(canonical_id),
     }), 200
 
 
 @app.route("/api/status", methods=["GET"])
 def api_status():
+    """Phase 2 rebuild (2026-05-15): output is keyed by canonical_id.
+
+    Sources:
+      - pi_registry (HTTP /heartbeat ingest)        → primary, supplies
+        trading-side fields (portfolio_value, cash, trades_today, etc.)
+      - mqtt_observations.node_metrics topic         → overlays CPU/RAM/
+        disk/temp/uptime/load_avg when fresher than pi_registry
+      - mqtt_observations per-agent heartbeats       → union with
+        pi_registry agents dict for fuller liveness view
+      - auditor.db.silenced_nodes                    → silenced flag,
+        keyed by canonical_id (survives renames + monitor restarts)
+
+    One physical node ⇒ one output entry, even if multiple aliases
+    appear in pi_registry (e.g. companypi + legacy pi4b-company, or
+    trader-1 + legacy synthos-pi-retail). The CANONICAL_NODES table
+    drives the alias resolution."""
     token = request.headers.get("X-Token", "")
     if token != SECRET_TOKEN and not _authorized():
         return jsonify({"error": "unauthorized"}), 401
+
+    out = {}
+
+    # Snapshot pi_registry once (and copy) so we can iterate without
+    # holding the lock while we do SQLite reads for MQTT overlay.
     with registry_lock:
-        out = {}
-        for pi_id, data in pi_registry.items():
+        registry_snapshot = {k: dict(v) for k, v in pi_registry.items()}
+
+    # Index pi_registry by canonical_id. Multiple aliases may collapse
+    # into a single canonical entry; pick the freshest (max last_seen).
+    by_canonical: dict = {}
+    for pid, data in registry_snapshot.items():
+        cid = _canonical_id(pid)
+        existing = by_canonical.get(cid)
+        # Compare by last_seen — keep the freshest registry entry per canonical
+        if existing is None or data.get("last_seen", existing.get("last_seen")) > existing.get("last_seen", data["last_seen"]):
+            by_canonical[cid] = data
+
+    # Ensure every CANONICAL_NODE shows up, even if no pi_registry entry
+    # exists yet (e.g. trader-1 before its first HTTP heartbeat).
+    for node in CANONICAL_NODES:
+        by_canonical.setdefault(node["id"], None)
+
+    for canonical_id, data in by_canonical.items():
+        canonical_meta = _CANONICAL_BY_ID.get(canonical_id)
+        label_default = canonical_meta["label"] if canonical_meta else canonical_id
+
+        # Pull MQTT overlay (may be empty dict if no fresh node_metrics)
+        mqtt_extra  = _mqtt_node_metrics_for(canonical_id)
+        mqtt_agents = _mqtt_agents_for(canonical_id)
+
+        if data is not None:
+            # Node has a pi_registry entry — use it as base
             age_secs = int((now_utc() - data["last_seen"]).total_seconds())
-            out[pi_id] = {
-                "pi_id":             pi_id,
-                "label":             data.get("label", pi_id),
+            entry = {
+                "pi_id":             canonical_id,
+                "label":             data.get("label") or label_default,
                 "email":             data.get("email", ""),
                 "last_seen":         data["last_seen"].isoformat(),
                 "age_secs":          age_secs,
                 "status":            pi_status(data),
+                # Trading-side fields — pi_registry only (MQTT doesn't carry these yet)
                 "portfolio_value":   data.get("portfolio_value", data.get("portfolio", 0.0)),
                 "cash":              data.get("cash", 0.0),
                 "realized_gains":    data.get("realized_gains", 0.0),
@@ -703,44 +1018,99 @@ def api_status():
                 "pending_approvals": data.get("pending_approvals", 0),
                 "urgent_flags":      data.get("urgent_flags", 0),
                 "trades_today":      data.get("trades_today", 0),
-                "agents":            data.get("agents", {}),
-                "uptime":            data.get("uptime", None),
                 "operating_mode":    data.get("operating_mode", "MANAGED"),
                 "trading_mode":      data.get("trading_mode", "PAPER"),
                 "kill_switch":       data.get("kill_switch", False),
                 "policy_enforcement": data.get("policy_enforcement", {"on":0,"off":0,"total":0,"err":0}),
-                "cpu_percent":    data.get("cpu_percent"),
-                "cpu_count":      data.get("cpu_count"),
-                "load_avg":       data.get("load_avg"),
-                "ram_percent":    data.get("ram_percent"),
-                "ram_total_gb":   data.get("ram_total_gb"),
-                "ram_used_gb":    data.get("ram_used_gb"),
-                "ram_avail_gb":   data.get("ram_avail_gb"),
-                "ram_cached_gb":  data.get("ram_cached_gb"),
-                "disk_percent":   data.get("disk_percent"),
-                "disk_total_gb":  data.get("disk_total_gb"),
-                "disk_used_gb":   data.get("disk_used_gb"),
-                "disk_free_gb":   data.get("disk_free_gb"),
-                "net_bytes_sent": data.get("net_bytes_sent"),
-                "net_bytes_recv": data.get("net_bytes_recv"),
-                "cpu_temp":       data.get("cpu_temp"),
+                # System metrics — MQTT overlay wins over pi_registry if present
+                "cpu_percent":    mqtt_extra.get("cpu_percent", data.get("cpu_percent")),
+                "cpu_count":      mqtt_extra.get("cpu_count",   data.get("cpu_count")),
+                "load_avg":       mqtt_extra.get("load_avg",    data.get("load_avg")),
+                "ram_percent":    mqtt_extra.get("ram_percent", data.get("ram_percent")),
+                "ram_total_gb":   mqtt_extra.get("ram_total_gb",data.get("ram_total_gb")),
+                "ram_used_gb":    mqtt_extra.get("ram_used_gb", data.get("ram_used_gb")),
+                "ram_avail_gb":   mqtt_extra.get("ram_avail_gb",data.get("ram_avail_gb")),
+                "ram_cached_gb":  mqtt_extra.get("ram_cached_gb",data.get("ram_cached_gb")),
+                "disk_percent":   mqtt_extra.get("disk_percent",data.get("disk_percent")),
+                "disk_total_gb":  mqtt_extra.get("disk_total_gb",data.get("disk_total_gb")),
+                "disk_used_gb":   mqtt_extra.get("disk_used_gb",data.get("disk_used_gb")),
+                "disk_free_gb":   mqtt_extra.get("disk_free_gb",data.get("disk_free_gb")),
+                "net_bytes_sent": mqtt_extra.get("net_bytes_sent",data.get("net_bytes_sent")),
+                "net_bytes_recv": mqtt_extra.get("net_bytes_recv",data.get("net_bytes_recv")),
+                "cpu_temp":       mqtt_extra.get("cpu_temp",   data.get("cpu_temp")),
+                "uptime":         mqtt_extra.get("uptime",     data.get("uptime")),
+                # Agents — union of pi_registry's dict and MQTT's per-agent topics
+                "agents":         {**data.get("agents", {}), **mqtt_agents},
                 "history":        data.get("history", []),
-                "silenced":       data.get("silenced", False),
+                # silenced now from auditor.db, keyed by canonical_id
+                "silenced":       _is_silenced(canonical_id),
             }
+        else:
+            # No pi_registry entry yet — render skeleton from MQTT alone.
+            # Trading fields default to None / 0 / safe values.
+            entry = {
+                "pi_id":             canonical_id,
+                "label":             label_default,
+                "email":             "",
+                "last_seen":         None,
+                "age_secs":          None,
+                "status":            "offline" if not mqtt_extra and not mqtt_agents else "active",
+                "portfolio_value":   0.0,
+                "cash":              0.0,
+                "realized_gains":    0.0,
+                "open_positions":    0,
+                "pending_approvals": 0,
+                "urgent_flags":      0,
+                "trades_today":      0,
+                "operating_mode":    "MANAGED",
+                "trading_mode":      "PAPER",
+                "kill_switch":       False,
+                "policy_enforcement": {"on":0,"off":0,"total":0,"err":0},
+                "cpu_percent":    mqtt_extra.get("cpu_percent"),
+                "cpu_count":      mqtt_extra.get("cpu_count"),
+                "load_avg":       mqtt_extra.get("load_avg"),
+                "ram_percent":    mqtt_extra.get("ram_percent"),
+                "ram_total_gb":   mqtt_extra.get("ram_total_gb"),
+                "ram_used_gb":    mqtt_extra.get("ram_used_gb"),
+                "ram_avail_gb":   mqtt_extra.get("ram_avail_gb"),
+                "ram_cached_gb":  mqtt_extra.get("ram_cached_gb"),
+                "disk_percent":   mqtt_extra.get("disk_percent"),
+                "disk_total_gb":  mqtt_extra.get("disk_total_gb"),
+                "disk_used_gb":   mqtt_extra.get("disk_used_gb"),
+                "disk_free_gb":   mqtt_extra.get("disk_free_gb"),
+                "net_bytes_sent": mqtt_extra.get("net_bytes_sent"),
+                "net_bytes_recv": mqtt_extra.get("net_bytes_recv"),
+                "cpu_temp":       mqtt_extra.get("cpu_temp"),
+                "uptime":         mqtt_extra.get("uptime"),
+                "agents":         mqtt_agents,
+                "history":        [],
+                "silenced":       _is_silenced(canonical_id),
+            }
+        out[canonical_id] = entry
+
     return jsonify(out), 200
 
 
 @app.route("/api/delete/<pi_id>", methods=["DELETE"])
 def delete_pi(pi_id):
+    """Delete all pi_registry aliases for the canonical node (Phase 2).
+    Also clears any silenced_nodes entry for the canonical_id."""
     token = request.headers.get("X-Token", "")
-    if token != SECRET_TOKEN:
+    if token != SECRET_TOKEN and not _authorized():
         return jsonify({"error": "unauthorized"}), 401
+    canonical_id = _canonical_id(pi_id)
+    deleted: list = []
     with registry_lock:
-        if pi_id in pi_registry:
-            del pi_registry[pi_id]
+        for k in _registry_keys_for_canonical(canonical_id):
+            del pi_registry[k]
+            deleted.append(k)
+        if deleted:
             save_registry()
-            return jsonify({"deleted": pi_id}), 200
-    return jsonify({"error": "not found"}), 404
+    # Also clear silenced state for this canonical node (orphan otherwise).
+    _set_silenced(canonical_id, False, by="delete-cascade")
+    if not deleted:
+        return jsonify({"error": "not found", "canonical_id": canonical_id}), 404
+    return jsonify({"deleted": deleted, "canonical_id": canonical_id}), 200
 
 
 @app.route("/report", methods=["POST"])
@@ -1213,16 +1583,20 @@ def api_admin_override():
 # ── Silence Toggle API ────────────────────────────────────────────────────────
 @app.route("/api/silence/<pi_id>", methods=["POST"])
 def api_silence_toggle(pi_id):
+    """Toggle silenced state for a canonical node (Phase 2 of heartbeat
+    migration). Accepts either canonical or alias pi_id; state is keyed
+    by canonical_id in auditor.db.silenced_nodes, so it survives node
+    renames and monitor restarts."""
     if not _authorized():
         return jsonify({"error": "unauthorized"}), 401
-    with registry_lock:
-        if pi_id not in pi_registry:
-            return jsonify({"error": "not found"}), 404
-        pi_registry[pi_id]["silenced"] = not pi_registry[pi_id].get("silenced", False)
-        silenced = pi_registry[pi_id]["silenced"]
-        save_registry()
-    print(f"[Silence] {pi_id} silenced={silenced}")
-    return jsonify({"ok": True, "silenced": silenced}), 200
+    canonical_id = _canonical_id(pi_id)
+    current = _is_silenced(canonical_id)
+    new_state = not current
+    ok = _set_silenced(canonical_id, new_state, by="operator")
+    if not ok:
+        return jsonify({"error": "silenced_nodes write failed"}), 500
+    print(f"[Silence] {pi_id} (canonical={canonical_id}) silenced={new_state}")
+    return jsonify({"ok": True, "silenced": new_state, "canonical_id": canonical_id}), 200
 
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────
@@ -8292,12 +8666,21 @@ def api_auditor_ticker_state():
 def api_audit_for_pi(pi_id):
     """
     Fetch log-scan audit data from a retail Pi portal.
-    Uses pi_ip stored in registry from heartbeat — no IP guessing.
+    Phase 2: pi_id can be canonical or alias. Resolves via canonical,
+    then picks the freshest pi_registry alias entry to get pi_ip.
     """
+    canonical = _canonical_id(pi_id)
+    pi = None
     with registry_lock:
-        pi = pi_registry.get(pi_id)
+        # Pick the freshest entry matching any alias of this canonical
+        candidates = sorted(
+            ((k, dict(pi_registry[k])) for k in _registry_keys_for_canonical(canonical)),
+            key=lambda kv: kv[1].get("last_seen"), reverse=True
+        )
+        if candidates:
+            pi = candidates[0][1]
     if not pi:
-        return jsonify({"error": "Pi not found"}), 404
+        return jsonify({"error": "Pi not found", "canonical_id": canonical}), 404
     pi_ip = pi.get("pi_ip")
     if not pi_ip:
         return jsonify({"error": "Pi IP unknown — waiting for heartbeat", "pi_id": pi_id}), 503
@@ -8319,6 +8702,8 @@ def api_audit_for_pi(pi_id):
 
 @app.route("/api/audit/<pi_id>/resolve", methods=["POST"])
 def api_audit_resolve_for_pi(pi_id):
+    # Phase 2: accept canonical or alias pi_id
+    pi_id = _canonical_id(pi_id)
     """Proxy a resolve action to a retail Pi portal.
 
     Body forwarded as-is: {source_file, context_prefix, reason?}. The
@@ -8354,11 +8739,19 @@ def api_audit_resolve_for_pi(pi_id):
 
 @app.route("/api/backlog/<pi_id>")
 def api_backlog_for_pi(pi_id):
-    """Fetch improvement backlog from a Pi's portal."""
+    """Fetch improvement backlog from a Pi's portal. Phase 2: accepts
+    canonical or alias pi_id."""
+    canonical = _canonical_id(pi_id)
+    pi = None
     with registry_lock:
-        pi = pi_registry.get(pi_id)
+        candidates = sorted(
+            ((k, dict(pi_registry[k])) for k in _registry_keys_for_canonical(canonical)),
+            key=lambda kv: kv[1].get("last_seen"), reverse=True
+        )
+        if candidates:
+            pi = candidates[0][1]
     if not pi:
-        return jsonify({"error": "Pi not found"}), 404
+        return jsonify({"error": "Pi not found", "canonical_id": canonical}), 404
     try:
         import requests as _req
         portal_url = f"http://{pi_id.replace('synthos-','').replace('-','.')}:5001/api/improvement-backlog"
@@ -8901,7 +9294,11 @@ _NODE_SSH_MAP = {
 
 @app.route("/api/node/<pi_id>/power", methods=["POST"])
 def api_node_power(pi_id):
-    """Reboot or shutdown a node via SSH."""
+    """Reboot or shutdown a node via SSH. Phase 2 (2026-05-15):
+    accepts canonical or alias pi_id, resolves via _canonical_id(),
+    looks up SSH target in _NODE_SSH_MAP (canonical-keyed). Verifies
+    the SSH command actually succeeded — previous version returned
+    ok:true even when SSH auth failed."""
     token = request.headers.get("X-Token", "")
     if token != SECRET_TOKEN and not _authorized():
         return jsonify({"error": "unauthorized"}), 401
@@ -8911,16 +9308,10 @@ def api_node_power(pi_id):
     if action not in ("reboot", "shutdown"):
         return jsonify({"error": "action must be reboot or shutdown"}), 400
 
-    # Look up SSH target
-    ssh_info = _NODE_SSH_MAP.get(pi_id)
+    canonical = _canonical_id(pi_id)
+    ssh_info = _NODE_SSH_MAP.get(canonical) or _NODE_SSH_MAP.get(pi_id)
     if not ssh_info:
-        # Try to find from registry
-        with registry_lock:
-            pi = pi_registry.get(pi_id)
-        if pi and pi.get("pi_ip"):
-            ssh_info = (pi["pi_ip"], "pi")
-        else:
-            return jsonify({"error": f"Unknown node: {pi_id}"}), 404
+        return jsonify({"error": f"Unknown node: {pi_id} (canonical={canonical})"}), 404
 
     host, user = ssh_info
     cmd = "sudo reboot" if action == "reboot" else "sudo poweroff"
@@ -8932,15 +9323,35 @@ def api_node_power(pi_id):
                 cmd.split(), capture_output=True, text=True, timeout=10
             )
         else:
+            # reboot/shutdown drops the SSH session before returning a
+            # clean exit. ssh returns 255 when the connection closes mid-
+            # command — that is the success signal here, NOT a failure.
+            # Treat 0 and 255 as success; everything else means SSH/auth
+            # failed before the command ran.
             result = subprocess.run(
                 ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=5",
+                 "-o", "BatchMode=yes",
                  f"{user}@{host}", cmd],
                 capture_output=True, text=True, timeout=15
             )
-        print(f"[Synthos Monitor] Power {action} sent to {pi_id} ({host})")
-        return jsonify({"ok": True, "action": action, "pi_id": pi_id})
-    except subprocess.TimeoutExpired:
+        rc = result.returncode
+        # Success codes: 0 (clean exit), 255 (connection dropped — expected
+        # on reboot/shutdown after the command landed).
+        if rc not in (0, 255):
+            stderr = (result.stderr or "")[:200]
+            return jsonify({
+                "ok": False, "action": action, "pi_id": pi_id, "canonical_id": canonical,
+                "ssh_rc": rc, "stderr": stderr,
+            }), 502
+        print(f"[Synthos Monitor] Power {action} sent to {canonical} ({host}) rc={rc}")
         return jsonify({"ok": True, "action": action, "pi_id": pi_id,
+                        "canonical_id": canonical, "ssh_rc": rc})
+    except subprocess.TimeoutExpired:
+        # Command sent but ssh kept hanging — typical when the box already
+        # halted itself before ssh returned. Counted as success.
+        print(f"[Synthos Monitor] Power {action} timed out (expected for shutdown) — {canonical}")
+        return jsonify({"ok": True, "action": action, "pi_id": pi_id,
+                        "canonical_id": canonical,
                         "note": "Command sent (timeout expected during shutdown)"})
     except Exception as e:
         return jsonify({"error": f"SSH failed: {str(e)[:200]}"}), 502

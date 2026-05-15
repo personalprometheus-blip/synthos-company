@@ -27,6 +27,7 @@ Heartbeat POST body (JSON):
 """
 
 import json
+import sys
 import os
 import shutil
 import sqlite3
@@ -8195,29 +8196,15 @@ def api_behavior_baseline_proxy():
 
     pi5's IP is read from the heartbeat registry (no IP guessing).
     """
-    # Find the retail Pi from the registry. The pi_id is set by the
-    # heartbeat poster (retail_heartbeat.py) — current value is
-    # 'synthos-pi-retail' but match liberally on 'retail' in either
-    # pi_id or label so a future rename doesn't break this lookup.
-    retail_pi = None
-    with registry_lock:
-        for pid, p in pi_registry.items():
-            if 'retail' in str(p.get("pi_id", "")).lower() \
-               or 'retail' in str(p.get("label", "")).lower():
-                retail_pi = p
-                break
-    if not retail_pi:
-        return jsonify({"error": "Retail Pi not found in registry — waiting for heartbeat"}), 503
-    # Heartbeat stores requester IP under key 'ip' (set from
-    # request.remote_addr at heartbeat time). Older code paths
-    # used 'pi_ip' — check both for compatibility.
-    pi_ip = retail_pi.get("ip") or retail_pi.get("pi_ip")
-    if not pi_ip:
-        return jsonify({"error": "Retail Pi IP unknown — waiting for heartbeat"}), 503
+    # 2026-05-14 hardware refactor: process-1 doesn't post HTTP heartbeats
+    # (its long-running daemons publish via MQTT instead), so pi_registry
+    # lookup is unreliable. RETAIL_PORTAL_URL is the explicit config-level
+    # answer — set in company.env, points to the process node's retail
+    # portal. Use it directly.
     try:
         import requests as _req
         r = _req.get(
-            f"http://{pi_ip}:5001/api/behavior-baseline",
+            f"{RETAIL_PORTAL_URL}/api/behavior-baseline",
             headers={"Authorization": f"Bearer {SECRET_TOKEN}"},
             timeout=5,
         )
@@ -8225,7 +8212,7 @@ def api_behavior_baseline_proxy():
             return jsonify(r.json())
         return jsonify({"error": f"Retail returned {r.status_code}"}), 503
     except Exception as e:
-        return jsonify({"error": f"Could not reach retail at {pi_ip}:5001 — {e}"}), 503
+        return jsonify({"error": f"Could not reach retail at {RETAIL_PORTAL_URL} — {e}"}), 503
 
 
 @app.route("/api/auditor/ticker-state")
@@ -8238,22 +8225,13 @@ def api_auditor_ticker_state():
     Cross-node proxy — same pattern as /api/audit/<pi_id> and
     /api/behavior-baseline. Uses SECRET_TOKEN bearer auth.
     """
-    retail_pi = None
-    with registry_lock:
-        for pid, p in pi_registry.items():
-            if 'retail' in str(p.get("pi_id", "")).lower() \
-               or 'retail' in str(p.get("label", "")).lower():
-                retail_pi = p
-                break
-    if not retail_pi:
-        return jsonify({"issues": [], "error": "Retail Pi not found in registry"}), 200
-    pi_ip = retail_pi.get("ip") or retail_pi.get("pi_ip")
-    if not pi_ip:
-        return jsonify({"issues": [], "error": "Retail Pi IP unknown"}), 200
+    # Same pattern as behavior-baseline proxy — use RETAIL_PORTAL_URL
+    # config (process-1 doesn't post HTTP heartbeats, so pi_registry lookup
+    # was returning trader-1's IP after the 2026-05-14 refactor).
     try:
         import requests as _req
         r = _req.get(
-            f"http://{pi_ip}:5001/api/ticker-state-audit",
+            f"{RETAIL_PORTAL_URL}/api/ticker-state-audit",
             headers={"Authorization": f"Bearer {SECRET_TOKEN}"},
             timeout=10,
         )
@@ -8802,9 +8780,14 @@ async function kmDiscoverNodes() {
       return;
     }
     var shortMap = {
+      // Canonical (post-2026-05-14 refactor)
+      'companypi': 'pi4b',
+      'process-1': 'pi5',
+      'trader-1': 'pi5',
+      'pi2w-monitor': 'pi2w',
+      // Legacy
       'pi4b-company': 'pi4b',
       'synthos-pi-retail': 'pi5',
-      'pi2w-monitor': 'pi2w',
     };
     container.innerHTML = '';
     ids.forEach(function(id) {
@@ -8902,10 +8885,18 @@ def api_maintenance_notify():
 # ── NODE POWER MANAGEMENT ─────────────────────────────────────────────────────
 
 # SSH alias map: pi_id → (ssh_host, user)
+# 2026-05-14 hardware refactor: pi4b → companypi (10.0.0.42), pi5 → process-1
+# (10.0.0.11) + trader-1 (10.0.0.168, idle until 2026-05-15 cutover). Legacy keys kept so
+# heartbeats from agents not yet rolled over still resolve.
 _NODE_SSH_MAP = {
-    "pi4b-company":      ("localhost", "pi"),
-    "synthos-pi-retail":  ("10.0.0.11", "pi516gb"),
+    # Canonical (post-refactor)
+    "companypi":          ("localhost", "pi"),
+    "process-1":          ("10.0.0.11", "pi516gb"),
+    "trader-1":           ("10.0.0.168", "pi516gb"),
     "pi2w-monitor":       ("10.0.0.12", "pi-02w"),
+    # Legacy — drop after all producers have rolled over (~1 release cycle)
+    "pi4b-company":       ("localhost", "pi"),
+    "synthos-pi-retail":  ("10.0.0.11", "pi516gb"),
 }
 
 @app.route("/api/node/<pi_id>/power", methods=["POST"])
@@ -9169,7 +9160,12 @@ def api_node_keys(node):
     automatically.
     """
     # Map well-known node aliases to canonical pi_id (manifest node_id).
-    canon = {"pi4b": "pi4b-company", "pi5": "synthos-pi-retail", "pi2w": "pi2w-monitor"}
+    canon = {
+        # short-alias  →  canonical pi_id
+        "pi4b": "companypi", "pi5": "process-1", "pi2w": "pi2w-monitor",
+        # legacy canonical IDs map to themselves so they still resolve
+        "pi4b-company": "pi4b-company", "synthos-pi-retail": "synthos-pi-retail",
+    }
     canon_id = canon.get(node, node)
 
     expected = _expected_keys_for_node(canon_id)
@@ -9184,7 +9180,12 @@ def api_node_keys(node):
             return jsonify({"error": f"Unknown node: {node}"}), 404
 
     # Read raw keys from node (same dispatch as before by short alias)
-    short = {"pi4b-company": "pi4b", "synthos-pi-retail": "pi5", "pi2w-monitor": "pi2w"}.get(canon_id, node)
+    short = {
+        # canonical → short
+        "companypi": "pi4b", "process-1": "pi5", "pi2w-monitor": "pi2w",
+        # legacy
+        "pi4b-company": "pi4b", "synthos-pi-retail": "pi5",
+    }.get(canon_id, node)
     if short == 'pi4b':
         raw = _read_env()
     elif short == 'pi5':
@@ -9237,9 +9238,15 @@ def api_node_keys_update(node):
     backup_value = data.get('backup_value')
     notes = data.get('notes')
 
-    canon = {"pi4b": "pi4b-company", "pi5": "synthos-pi-retail", "pi2w": "pi2w-monitor"}
+    canon = {
+        "pi4b": "companypi", "pi5": "process-1", "pi2w": "pi2w-monitor",
+        "pi4b-company": "pi4b-company", "synthos-pi-retail": "synthos-pi-retail",
+    }
     canon_id = canon.get(node, node)
-    short = {"pi4b-company": "pi4b", "synthos-pi-retail": "pi5", "pi2w-monitor": "pi2w"}.get(canon_id, node)
+    short = {
+        "companypi": "pi4b", "process-1": "pi5", "pi2w-monitor": "pi2w",
+        "pi4b-company": "pi4b", "synthos-pi-retail": "pi5",
+    }.get(canon_id, node)
     if short not in {"pi4b", "pi5", "pi2w"}:
         return jsonify({"error": f"Unknown node: {node}"}), 404
     node = short  # use short alias for the dispatch below
@@ -10810,7 +10817,7 @@ async function buildNodeTabs() {
     const r = await fetch('/api/status', {headers:{}});
     const pis = await r.json();
     const tabsEl = document.getElementById('node-tabs');
-    const skip = new Set(['pi4b-company','pi2w-monitor']);
+    const skip = new Set(['pi4b-company','companypi','pi2w-monitor']);
     Object.entries(pis).forEach(([pi_id, pi]) => {
       if (skip.has(pi_id)) return;
       const label = pi.label || pi_id;

@@ -1,12 +1,17 @@
 {
-  "synthos-pi-retail": {
-    "ssh_target": "SentinelRetail",
+  "process-1": {
+    "ssh_target": "pi516gb@10.0.0.11",
     "manifest_path": "~/manifest.json",
-    "_comment": "Pi5 retail node. Fetched via SSH host alias defined in pi4b's ~/.ssh/config."
+    "_comment": "Process node (renamed from synthos-pi-retail in 2026-05-14 hardware refactor). Ingestion + MQTT broker + dispatcher."
+  },
+  "trader-1": {
+    "ssh_target": "pi516gb@10.0.0.168",
+    "manifest_path": "~/manifest.json",
+    "_comment": "Trader node (10.0.0.168 confirmed 2026-05-14 by heartbeat). Stateless trader_server only. Cutover to live trading: 2026-05-15."
   },
   "pi2w-monitor": {
-    "ssh_target": "pi0-2monitor",
+    "ssh_target": "pi-02w@10.0.0.12",
     "manifest_path": "~/manifest.json",
-    "_comment": "Pi Zero 2W sentinel. Heartbeats only, no MQTT publishing yet."
+    "_comment": "Pi Zero 2W sentinel. Offline since 2026-05-14 pending redeploy; IP placeholder."
   }
 }

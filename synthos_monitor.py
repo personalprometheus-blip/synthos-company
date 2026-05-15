@@ -776,11 +776,20 @@ def _metrics_history_init():
         conn.close()
 
 def metrics_recorder():
-    """Snapshot pi_registry every 30s into auditor.db.metrics_history; prune > 24h.
+    """Snapshot per-canonical-node system metrics every 30s into
+    auditor.db.metrics_history; prune > 24h.
 
-    One row per (node_id, 30s-bucket). INSERT OR REPLACE is idempotent within
-    the same bucket — if the loop runs twice in the same window (clock jitter),
-    the latest sample wins instead of duplicating.
+    Phase 2 (2026-05-15): keyed by canonical_id (not raw pi_id) so the
+    chart matches the /api/status / Node Roster shape. Pulls system
+    metrics with the same source-priority as /api/status:
+      1. MQTT node_metrics topic (fresh = <5 min old) — primary
+      2. pi_registry (freshest alias)                — fallback
+      3. neither fresh → skip the bucket (creates a gap in chart,
+         correctly shows "offline" instead of replaying stale values)
+
+    INSERT OR REPLACE is idempotent within a 30s bucket. Stale legacy
+    rows (pre-Phase-2 raw pi_ids) get cleaned by a one-time DELETE on
+    startup AND by the regular 24h retention sweep below.
     """
     try:
         _metrics_history_init()
@@ -788,27 +797,80 @@ def metrics_recorder():
         print(f"metrics_recorder init failed: {e}", file=sys.stderr)
         return
     auditor_db = os.getenv("AUDITOR_DB_PATH", "/home/pi/synthos-company/data/auditor.db")
+
+    # One-time cleanup: drop legacy raw-pi_id rows that are NOT canonical ids.
+    # After Phase 2, the chart fetches by canonical_id; non-canonical rows
+    # would never be queried and just bloat the table.
+    try:
+        canonical_ids = [n["id"] for n in CANONICAL_NODES]
+        conn = sqlite3.connect(auditor_db, timeout=5)
+        placeholders = ",".join("?" * len(canonical_ids))
+        rc = conn.execute(
+            f"DELETE FROM metrics_history WHERE node_id NOT IN ({placeholders})",
+            canonical_ids,
+        ).rowcount
+        conn.commit()
+        conn.close()
+        if rc:
+            print(f"[metrics_recorder] one-time cleanup: dropped {rc} non-canonical rows", flush=True)
+    except Exception as e:
+        print(f"[metrics_recorder] cleanup failed: {e}", file=sys.stderr)
+
+    _STALE_THRESHOLD_S = 300  # 5 min — beyond this, treat as offline (no sample)
+
     while True:
         try:
             now = int(time.time())
             bucket = (now // _METRICS_BUCKET_SEC) * _METRICS_BUCKET_SEC
+            snapshot = []
+
+            # Snapshot pi_registry under registry_lock briefly, then drop the
+            # lock for SQLite + MQTT reads.
             with registry_lock:
-                snapshot = []
-                for pi_id, data in pi_registry.items():
-                    cpu = data.get("cpu_percent")
-                    if cpu is None:
-                        # No hardware metrics yet from this node — skip the bucket.
-                        continue
-                    load_avg = data.get("load_avg")
-                    load_1m = (load_avg[0] if isinstance(load_avg, (list, tuple)) and load_avg
-                               else load_avg if isinstance(load_avg, (int, float)) else None)
-                    snapshot.append((
-                        pi_id, bucket, cpu,
-                        data.get("ram_percent"),
-                        data.get("disk_percent"),
-                        data.get("cpu_temp"),
-                        load_1m,
-                    ))
+                registry_copy = {k: dict(v) for k, v in pi_registry.items()}
+
+            # Build the per-canonical view, same way /api/status does.
+            for node in CANONICAL_NODES:
+                canonical_id = node["id"]
+
+                # 1. MQTT node_metrics overlay (preferred)
+                mqtt_extra = _mqtt_node_metrics_for(canonical_id, max_age_s=_STALE_THRESHOLD_S)
+
+                # 2. pi_registry freshest alias
+                aliases = set(_aliases_for(canonical_id))
+                regs = [registry_copy[k] for k in registry_copy if k in aliases]
+                regs.sort(key=lambda d: d.get("last_seen") or 0, reverse=True)
+                reg = regs[0] if regs else None
+
+                # Decide fresh-source:
+                cpu = mqtt_extra.get("cpu_percent")
+                ram = mqtt_extra.get("ram_percent")
+                disk = mqtt_extra.get("disk_percent")
+                temp = mqtt_extra.get("cpu_temp")
+                load_avg = mqtt_extra.get("load_avg")
+
+                if cpu is None and reg is not None:
+                    # MQTT had nothing — check if pi_registry data is fresh
+                    last_seen = reg.get("last_seen")
+                    if last_seen:
+                        from datetime import datetime as _dt
+                        age = (now_utc() - last_seen).total_seconds()
+                        if age <= _STALE_THRESHOLD_S:
+                            cpu = reg.get("cpu_percent")
+                            ram = reg.get("ram_percent")
+                            disk = reg.get("disk_percent")
+                            temp = reg.get("cpu_temp")
+                            load_avg = reg.get("load_avg")
+
+                if cpu is None:
+                    # Neither source had a fresh sample — skip the bucket so
+                    # the chart shows a gap (correctly indicating offline).
+                    continue
+
+                load_1m = (load_avg[0] if isinstance(load_avg, (list, tuple)) and load_avg
+                           else load_avg if isinstance(load_avg, (int, float)) else None)
+                snapshot.append((canonical_id, bucket, cpu, ram, disk, temp, load_1m))
+
             if snapshot:
                 conn = sqlite3.connect(auditor_db, timeout=5)
                 try:

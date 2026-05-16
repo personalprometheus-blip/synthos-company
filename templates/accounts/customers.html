@@ -216,8 +216,36 @@
   padding:7px 10px;border-radius:6px;background:rgba(255,75,110,0.05);
   border:1px solid rgba(255,75,110,0.16);font-size:11px;color:rgba(255,255,255,0.78);
   display:flex;gap:8px;align-items:flex-start;
+  flex-direction:column;cursor:pointer;transition:background 0.15s, border-color 0.15s;
 }
+.ac-iss-r:hover{background:rgba(255,75,110,0.08);border-color:rgba(255,75,110,0.28)}
+.ac-iss-r-head{display:flex;gap:8px;align-items:center;width:100%}
 .ac-iss-r-key{font-family:'JetBrains Mono',monospace;color:#ff7a90;font-weight:600;min-width:88px}
+.ac-iss-r-chevron{margin-left:auto;font-size:9px;color:rgba(255,255,255,0.35);transition:transform 0.2s;font-family:'JetBrains Mono',monospace}
+.ac-iss-r.expanded .ac-iss-r-chevron{transform:rotate(90deg);color:rgba(255,255,255,0.7)}
+.ac-iss-r-desc{
+  display:none;margin-top:8px;padding:8px 10px;
+  background:rgba(0,0,0,0.25);border-radius:5px;border-left:2px solid rgba(255,75,110,0.4);
+  font-size:11.5px;color:rgba(255,255,255,0.78);line-height:1.55;font-family:Inter,system-ui,sans-serif;
+}
+.ac-iss-r.expanded .ac-iss-r-desc{display:block;animation:acIssRevealFade 0.18s ease-out}
+.ac-iss-r-desc-effect{margin-top:5px;font-size:10.5px;color:rgba(255,255,255,0.6);font-style:italic}
+.ac-iss-r-desc-effect strong{color:#ffb347;font-weight:600;font-style:normal}
+.ac-iss-r-noinfo{color:rgba(255,255,255,0.4);font-style:italic;font-size:11px}
+@keyframes acIssRevealFade{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:translateY(0)}}
+/* Verdict card: same click-to-expand pattern, wired to the verdict pill */
+.ac-iss-verdict-card{position:relative}
+.ac-iss-verdict-card.clickable{cursor:pointer;transition:background 0.15s}
+.ac-iss-verdict-card.clickable:hover{background:rgba(255,255,255,0.02)}
+.ac-iss-verdict-desc{
+  display:none;margin-top:9px;padding:9px 11px;
+  background:rgba(0,0,0,0.25);border-radius:5px;
+  font-size:11.5px;color:rgba(255,255,255,0.82);line-height:1.55;font-family:Inter,system-ui,sans-serif;
+}
+.ac-iss-verdict-card.expanded .ac-iss-verdict-desc{display:block;animation:acIssRevealFade 0.18s ease-out}
+.ac-iss-verdict-card.go.expanded .ac-iss-verdict-desc{border-left:2px solid rgba(0,245,212,0.5)}
+.ac-iss-verdict-card.caution.expanded .ac-iss-verdict-desc{border-left:2px solid rgba(245,166,35,0.5)}
+.ac-iss-verdict-card.nogo.expanded .ac-iss-verdict-desc,.ac-iss-verdict-card.degraded.expanded .ac-iss-verdict-desc{border-left:2px solid rgba(255,75,110,0.5)}
 .ac-iss-alert{
   padding:10px 12px;border-radius:8px;background:rgba(255,255,255,0.02);
   border:1px solid rgba(255,255,255,0.06);margin-bottom:7px;
@@ -616,31 +644,52 @@
               : verdict === 'GO' ? 'go' : 'unknown';
     const restrictions = Array.isArray(v.restrictions) ? v.restrictions : [];
 
+    const verdictInfo = VALIDATOR_CODES[verdict] || null;
+    const verdictDescBody = verdictInfo
+      ? '<div>' + escHtml(verdictInfo.desc) + '</div>'
+        + (verdictInfo.effect ? '<div class="ac-iss-r-desc-effect"><strong>Trader behavior:</strong> ' + escHtml(verdictInfo.effect) + '</div>' : '')
+      : '';
     let validatorHtml = `
       <div class="ac-iss-section">
         <div class="ac-iss-secH">Validator
           <span class="ac-iss-secH-count">${verdict === 'GO' ? 'clean' : 'flagged'}</span>
         </div>
-        <div class="ac-iss-verdict-card ${vcls}">
+        <div class="ac-iss-verdict-card ${vcls}${verdictInfo ? ' clickable' : ''}" ${verdictInfo ? 'onclick="acToggleVerdict(this)"' : ''}>
           <span class="ac-iss-verdict-pill ${vcls}">${escHtml(verdict.replace('_',' '))}</span>
           <div class="ac-iss-verdict-meta">
             ${restrictions.length} restriction${restrictions.length === 1 ? '' : 's'}
             ${v.updated_at ? ' · updated ' + escHtml(fmtTs(v.updated_at)) : ''}
+            ${verdictInfo ? '<span style="margin-left:8px;font-size:9.5px;color:rgba(255,255,255,0.4)">▶ click for details</span>' : ''}
           </div>
+          ${verdictInfo ? '<div class="ac-iss-verdict-desc">' + verdictDescBody + '</div>' : ''}
         </div>`;
     if (restrictions.length) {
       validatorHtml += '<div class="ac-iss-rlist">';
       restrictions.forEach(function(r){
         // Restrictions can be strings OR objects depending on agent version.
+        let code, msg;
         if (typeof r === 'string') {
-          validatorHtml += '<div class="ac-iss-r"><div>' + escHtml(r) + '</div></div>';
+          code = r;
+          msg = '';
         } else if (r && typeof r === 'object') {
-          const key = r.code || r.reason || r.id || 'restriction';
-          const desc = r.message || r.detail || r.description || JSON.stringify(r);
-          validatorHtml += '<div class="ac-iss-r">'
-                        + '<div class="ac-iss-r-key">' + escHtml(String(key)) + '</div>'
-                        + '<div>' + escHtml(String(desc)) + '</div></div>';
+          code = r.code || r.reason || r.id || 'restriction';
+          msg = r.message || r.detail || r.description || '';
+        } else {
+          return;
         }
+        const info = VALIDATOR_CODES[String(code).toUpperCase()] || null;
+        const descBody = info
+          ? '<div>' + escHtml(info.desc) + '</div>'
+            + (info.effect ? '<div class="ac-iss-r-desc-effect"><strong>Trader behavior:</strong> ' + escHtml(info.effect) + '</div>' : '')
+          : '<div class="ac-iss-r-noinfo">No description in catalog for ' + escHtml(String(code)) + ' — contact ops to add one.</div>';
+        validatorHtml += '<div class="ac-iss-r" onclick="acToggleRestriction(this)">'
+                      + '<div class="ac-iss-r-head">'
+                      +   '<div class="ac-iss-r-key">' + escHtml(String(code)) + '</div>'
+                      +   (msg ? '<div>' + escHtml(String(msg)) + '</div>' : '')
+                      +   '<div class="ac-iss-r-chevron">▶</div>'
+                      + '</div>'
+                      + '<div class="ac-iss-r-desc">' + descBody + '</div>'
+                      + '</div>';
       });
       validatorHtml += '</div>';
     }
@@ -733,12 +782,140 @@
     }
   }
 
+  // ── VALIDATOR CODE CATALOG ───────────────────────────────────────────
+  // Source: agents/retail_validator_stack_agent.py — GateStatus enum,
+  // MARKET_STATE_THRESHOLDS, MACRO_REGIME_MAP, plus the individual gate
+  // implementations. Each entry has:
+  //   desc:   1-2 sentence plain-language explanation of the code
+  //   effect: what the trader does differently because of this code
+  // Update both when a new restriction code is introduced upstream.
+  const VALIDATOR_CODES = {
+    // ── Verdicts (GateStatus) ───────────────────────────────────────
+    'GO': {
+      desc: 'All validator gates passed without flagging concerns.',
+      effect: 'Trader can take new entries normally.'
+    },
+    'CAUTION': {
+      desc: 'One or more validator gates flagged a soft concern (e.g. market state, bias warnings, partial data). The chain still permits trading.',
+      effect: 'Trader proceeds, but applies any restrictions listed below to size, entry selection, or sector filtering.'
+    },
+    'NO_GO': {
+      desc: 'A blocking gate failed (e.g. system fault, RISK_OFF regime, crisis macro). The validator chain is hard-stopped.',
+      effect: 'No new positions will be opened on the next cycle. Existing positions can still exit normally.'
+    },
+    'DEGRADED': {
+      desc: 'Validator chain ran with partial or stale data and could not complete every gate cleanly. Verdict is provisional.',
+      effect: 'Trader proceeds but with reduced confidence; the per-gate DEGRADED_* restrictions below explain which data was missing.'
+    },
+    'UNKNOWN': {
+      desc: 'No validator verdict on record for this customer. Validator agent may not have run yet, or its output was lost.',
+      effect: 'No restrictions applied. Worth investigating if this persists across multiple cycles.'
+    },
+
+    // ── Gate 1: System Health ───────────────────────────────────────
+    'SYSTEM_CRITICAL': {
+      desc: 'Gate 1 (System Health) found a CRITICAL fault during the recent fault scan.',
+      effect: 'Verdict drops to NO_GO. Investigate the corresponding admin alert before next market open.'
+    },
+    'SYSTEM_WARNINGS_ACTIVE': {
+      desc: 'Gate 1 found WARNING-level faults (no criticals). Recoverable conditions, but trader is informed.',
+      effect: 'Trader proceeds with CAUTION verdict — operator should review the underlying admin alerts.'
+    },
+    'DEGRADED_NO_FAULT_DATA': {
+      desc: 'Gate 1 could not read fault-scan results. retail_fault_detection_agent may not have run yet today.',
+      effect: 'Verdict marked DEGRADED. Trader continues but the system-health check is effectively skipped.'
+    },
+    'DEGRADED_STALE_FAULT_SCAN': {
+      desc: 'Most recent fault scan is older than the freshness threshold (default 60 min in market hours).',
+      effect: 'Verdict DEGRADED. Recent system events may not be reflected — re-run fault scan if anything has changed.'
+    },
+    'DEGRADED_CORRUPT_FAULT_DATA': {
+      desc: 'Fault-scan output exists but failed to parse (malformed JSON or missing fields).',
+      effect: 'Verdict DEGRADED. Investigate fault agent — its writer may be emitting bad data.'
+    },
+
+    // ── Gate 2: Bias Guard ──────────────────────────────────────────
+    'BIAS_WARNINGS_ACTIVE': {
+      desc: 'Gate 2 (Bias Guard) detected behavioral biases in recent trade history — e.g. disposition effect (holding losers too long), loss aversion patterns, or single-sided P/L distribution.',
+      effect: 'Trader continues with CAUTION verdict. Operator should review the bias-detection report before flipping to LIVE trading. Does NOT change sizing or sector filtering by itself.'
+    },
+    'STALE_BIAS_PASSTHROUGH': {
+      desc: 'Bias detection scan is older than the freshness threshold (default 24h). Permitting trades to continue while flagging the staleness.',
+      effect: 'Verdict CAUTION. Operator should trigger a fresh bias scan when possible.'
+    },
+
+    // ── Gate 3: Market State ────────────────────────────────────────
+    'RISK_OFF':           { desc: 'Market state score 0-19. Extreme bearish/risk-off regime.', effect: 'NO_GO verdict; trader blocks all new entries, only exits run.' },
+    'CAUTIOUS_BEAR':      { desc: 'Market state score 20-39. Bearish but not extreme.', effect: 'CAUTION verdict with REDUCE_SIZE_50 and DEFENSIVE_PREFERRED restrictions.' },
+    'NEUTRAL':            { desc: 'Market state score 40-54. Sideways/neutral regime.', effect: 'CAUTION verdict with SELECTIVE_ENTRIES — only the highest-confidence signals pass.' },
+    'CAUTIOUS_BULL':      { desc: 'Market state score 55-74. Mildly bullish.', effect: 'GO verdict; no restrictions.' },
+    'RISK_ON':            { desc: 'Market state score 75-100. Strongly bullish/risk-on regime.', effect: 'GO verdict; no restrictions.' },
+    'DEGRADED_NO_MARKET_STATE':       { desc: 'Gate 3 found no _MARKET_STATE data in master DB. retail_market_state_agent may not have run yet.', effect: 'Verdict DEGRADED — gate effectively skipped.' },
+    'DEGRADED_STALE_MARKET_STATE':    { desc: 'Market state data is older than the freshness threshold (60m during market hours, 24h overnight).', effect: 'Verdict DEGRADED — score may not reflect current conditions.' },
+    'DEGRADED_INVALID_SCORE':         { desc: 'Market state score is outside the expected 0-100 range.', effect: 'Verdict DEGRADED — score is malformed; downstream regime mapping skipped.' },
+    'DEGRADED_UNKNOWN_MARKET_STATE':  { desc: 'Market state name is not in the known set (RISK_OFF/CAUTIOUS_BEAR/NEUTRAL/CAUTIOUS_BULL/RISK_ON).', effect: 'Verdict DEGRADED — unknown state can\'t be mapped to restrictions.' },
+    'DEGRADED_EMPTY_MARKET_STATE':    { desc: 'Market state data row exists but its content is empty.', effect: 'Verdict DEGRADED — gate could not evaluate.' },
+
+    // ── Gate 4: Macro Regime ────────────────────────────────────────
+    'CRISIS':       { desc: 'Macro regime: CRISIS. Top-level macro indicators signal a crisis.', effect: 'NO_GO verdict with NO_NEW_POSITIONS and CRISIS_MODE — full exits-only posture across the fleet.' },
+    'CONTRACTION':  { desc: 'Macro regime: CONTRACTION. Economy contracting; defensive posture warranted.', effect: 'CAUTION verdict with DEFENSIVE_ONLY and REDUCE_SIZE_50.' },
+    'LATE_CYCLE':   { desc: 'Macro regime: LATE_CYCLE. Expansion phase but late — increased fragility.', effect: 'CAUTION verdict with LATE_CYCLE_CAUTION — operator should consider tighter stops and smaller sizing.' },
+    'UNCERTAIN':    { desc: 'Macro regime: UNCERTAIN. Mixed signals; no clear directional bias.', effect: 'GO verdict with no restrictions — pass-through.' },
+    'RECOVERY':     { desc: 'Macro regime: RECOVERY. Economy exiting contraction.', effect: 'GO verdict with no restrictions.' },
+    'EXPANSION':    { desc: 'Macro regime: EXPANSION. Healthy expansion phase.', effect: 'GO verdict with no restrictions.' },
+
+    // ── Restriction codes (independent of which gate set them) ──────
+    'NO_NEW_POSITIONS': {
+      desc: 'Block opening any new positions on the next trader cycle.',
+      effect: 'Existing positions are unaffected and can still exit normally. Buy signals are dropped.'
+    },
+    'EXITS_ONLY': {
+      desc: 'Trader will only execute sell/exit signals. Buy signals are filtered out before order placement.',
+      effect: 'Same observable effect as NO_NEW_POSITIONS; emphasizes the exit-side execution path.'
+    },
+    'REDUCE_SIZE_50': {
+      desc: 'Cut entry size by 50% on every new position taken this cycle.',
+      effect: 'Limits exposure when conditions are deteriorating but not severe enough to block trades entirely.'
+    },
+    'DEFENSIVE_PREFERRED': {
+      desc: 'Prefer signals from defensive sectors (utilities, consumer staples, healthcare) over cyclicals.',
+      effect: 'Soft sector filter — cyclical signals still allowed but downweighted in selection.'
+    },
+    'DEFENSIVE_ONLY': {
+      desc: 'Only allow signals from defensive sectors. Cyclical/growth tickers are filtered out entirely.',
+      effect: 'Hard sector filter — non-defensive signals are dropped before scoring.'
+    },
+    'SELECTIVE_ENTRIES': {
+      desc: 'Tighten entry thresholds — only the highest-confidence signals get through.',
+      effect: 'Trader applies a stricter score floor on candidate signals; lower-confidence ideas are dropped.'
+    },
+    'CRISIS_MODE': {
+      desc: 'Fleet-wide crisis posture — companion restriction to NO_NEW_POSITIONS during macro CRISIS.',
+      effect: 'Pure exit-only mode. No new entries on any sector, regardless of signal score.'
+    },
+    'LATE_CYCLE_CAUTION': {
+      desc: 'Late-cycle macro regime advisory. Higher fragility than mid-cycle.',
+      effect: 'Operator should consider tightening trailing stops and reducing per-position sizing. No automatic enforcement.'
+    },
+  };
+
+  function acToggleRestriction(el) {
+    if (!el) return;
+    el.classList.toggle('expanded');
+  }
+  function acToggleVerdict(el) {
+    if (!el) return;
+    el.classList.toggle('expanded');
+  }
+
   // Expose for onclick attributes
   window.acViewAsCustomer = viewAsCustomer;
   window.acCopyUuid       = copyUuid;
   window.acCloseModal     = closeModal;
   window.acRowClick       = rowClick;
   window.acCloseIssues    = closeIssuesModal;
+  window.acToggleRestriction = acToggleRestriction;
+  window.acToggleVerdict     = acToggleVerdict;
 
   // ── DIRECTORY ──────────────────────────────────────────────────────────
   // Split fetch + render so loadFlags() can re-render once flags arrive

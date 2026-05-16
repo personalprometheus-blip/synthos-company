@@ -6787,9 +6787,27 @@ def _get_admin_session_cookie():
     r = s.post(f"{RETAIL_PORTAL_URL}/login",
                data={'email': admin_email, 'password': admin_pw},
                allow_redirects=False, timeout=10)
+    # 2026-05-15: pi5 sets `synthos_s=...; Secure; SameSite=Strict` on
+    # login. The `requests` library strips Secure cookies received over
+    # plain HTTP (we talk to pi5 over LAN at http://10.0.0.11:5001), so
+    # s.cookies.get('synthos_s') was returning None even when login
+    # succeeded (302 → /). Extract from Set-Cookie header directly to
+    # bypass the browser-grade Secure check — safe here because we
+    # control both endpoints + the connection runs entirely on the LAN.
     cookie = s.cookies.get('synthos_s') or s.cookies.get('session')
     if not cookie:
-        raise RuntimeError("Failed to authenticate with retail portal")
+        import re as _re
+        set_cookie_hdr = r.headers.get('Set-Cookie', '') or ''
+        m = _re.search(r'synthos_s=([^;]+)', set_cookie_hdr)
+        if m:
+            cookie = m.group(1)
+        else:
+            # Login actually failed (no Set-Cookie at all, or wrong cookie name)
+            location = r.headers.get('Location', '')
+            raise RuntimeError(
+                f"Failed to authenticate with retail portal "
+                f"(status={r.status_code}, redirect_to={location!r})"
+            )
 
     cache['session'] = cookie
     cache['expires'] = now + 3500  # ~1 hour

@@ -2372,7 +2372,6 @@ document.getElementById('dbg-js').style.color = '#00f5d4';
         <a href="/admin/alerts" class="hmenu-item">Alerts Center</a>
         <a href="/logs" class="hmenu-item">Logs</a>
         <a href="/accounts" class="hmenu-item">Accounts</a>
-        <a href="/customers" class="hmenu-item">Customers <span id="appr-badge" style="display:none;background:var(--amber);color:#000;font-size:9px;font-weight:800;padding:1px 5px;border-radius:99px;margin-left:3px"></span></a>
         <a href="/company-finances" class="hmenu-item">Company Finances</a>
         <a href="/reports" class="hmenu-item">Reports</a>
         <div style="height:1px;background:rgba(255,255,255,0.07);margin:4px 0"></div>
@@ -2940,7 +2939,7 @@ async function approveSignup(id) {
   if (!confirm('Approve this signup? Creates their account and database.')) return;
   const r = await fetch('/api/proxy/approve-signup',{method:'POST',headers:{'Content-Type':'application/json','X-Token':SECRET_TOKEN},body:JSON.stringify({signup_id:id})});
   const d = await r.json();
-  if (d.ok) { toast('Account approved: '+(d.email||''),'ok'); loadApprovals(); checkPendingBadge();
+  if (d.ok) { toast('Account approved: '+(d.email||''),'ok'); loadApprovals();
 // Auto-open approvals if ?approvals=1 in URL
 if (new URLSearchParams(window.location.search).get("approvals") === "1") {
   toggleApprovals();
@@ -2952,20 +2951,12 @@ async function rejectSignup(id) {
   if (!confirm('Reject this signup request?')) return;
   const r = await fetch('/api/proxy/reject-signup',{method:'POST',headers:{'Content-Type':'application/json','X-Token':SECRET_TOKEN},body:JSON.stringify({signup_id:id})});
   const d = await r.json();
-  if (d.ok) { toast('Signup rejected','ok'); loadApprovals(); checkPendingBadge(); }
+  if (d.ok) { toast('Signup rejected','ok'); loadApprovals(); }
   else toast('Error: '+(d.error||'Unknown'),'err');
 }
 
-async function checkPendingBadge() {
-  try {
-    const r = await fetch('/api/proxy/pending-signups?status=PENDING',{headers:{'X-Token':SECRET_TOKEN}});
-    const d = await r.json();
-    const badge = document.getElementById('appr-badge');
-    if (badge && d.signups && d.signups.length>0) { badge.textContent=d.signups.length; badge.style.display='inline'; }
-    else if (badge) { badge.style.display='none'; }
-  } catch(e) {}
-}
-checkPendingBadge();
+// 2026-05-16: checkPendingBadge() removed with /customers nav link. The
+// approvals UI lives on /monitor as an inline togglable section now.
 let allTodos = [];
 let pendingDelete = null;
 let modalPiId = null;
@@ -4443,41 +4434,25 @@ async function loadMonNotifications(){
       var d1 = await r1.json();
       var sg = d1.pending || d1.signups || [];
       if (Array.isArray(sg) && sg.length) {
+        // 2026-05-16: notification cards no longer wrapped in <a href="/approvals">
+        // because /approvals was deleted with the /customers tree. Approve from
+        // the inline Approvals section on /monitor (toggle button above the grid).
         sg.slice(0, 3).forEach(function(s){
           var rc = _readClass(s.created_at || s.signup_date || s.timestamp);
-          html += '<a href="/approvals" style="text-decoration:none">'
-            + '<div class="mon-notif' + rc + '">'
+          html += '<div class="mon-notif' + rc + '" onclick="toggleApprovals()" style="cursor:pointer">'
             + '<div class="mon-notif-dot" style="background:var(--amber)"></div>'
             + '<div class="mon-notif-body">'
             + '<div class="mon-notif-title">' + (s.name || 'New Signup') + '</div>'
             + '<div class="mon-notif-sub">Pending approval</div>'
-            + '</div></div></a>';
+            + '</div></div>';
         });
       }
     }
   } catch(e) {}
 
-  try {
-    var r2 = await fetch('/api/proxy/support/all-tickets',
-                         {headers:{'X-Token':SECRET_TOKEN}});
-    if (r2.ok) {
-      var d2 = await r2.json();
-      var tks = (d2.tickets || []).filter(function(t){ return t.status === 'open'; });
-      if (tks.length) {
-        tks.slice(0, 5).forEach(function(t){
-          var dc = t.category === 'direct_message' ? 'var(--teal)' : 'var(--pink)';
-          var rc = _readClass(t.created_at || t.updated_at || t.timestamp);
-          html += '<a href="/support-queue" style="text-decoration:none">'
-            + '<div class="mon-notif' + rc + '">'
-            + '<div class="mon-notif-dot" style="background:' + dc + '"></div>'
-            + '<div class="mon-notif-body">'
-            + '<div class="mon-notif-title">' + (t.customer_name || 'Customer') + '</div>'
-            + '<div class="mon-notif-sub">' + (t.subject || 'Support ticket') + '</div>'
-            + '</div></div></a>';
-        });
-      }
-    }
-  } catch(e) {}
+  // 2026-05-16: support-ticket notification block removed with /customers tree.
+  // The admin-side support inbox UI is gone; this dashboard tile depended on
+  // it. Tickets still arrive at pi5 retail portal — query directly if needed.
 
   try {
     var r3 = await fetch('/api/queue?status=pending',
@@ -4565,18 +4540,9 @@ function _updateBellBadge(){(async function(){
     }
   } catch(e) {}
 
-  try {
-    var r2 = await fetch('/api/proxy/support/all-tickets',
-                         {headers:{'X-Token':SECRET_TOKEN}});
-    if (r2.ok) {
-      var d2 = await r2.json();
-      total += (d2.tickets || [])
-        .filter(function(t){ return t.status === 'open'; })
-        .filter(function(t){
-          return _isAfterAck(t.created_at || t.updated_at || t.timestamp);
-        }).length;
-    }
-  } catch(e) {}
+  // 2026-05-16: support-ticket unread-count tracker removed with /customers
+  // tree. The /api/proxy/support/all-tickets endpoint was deleted; without an
+  // admin UI to act on tickets, the count had nowhere to surface.
 
   try {
     var r3 = await fetch('/api/queue?status=pending',
@@ -6153,7 +6119,6 @@ def _subpage_header(page_name):
         '<a href="/admin/alerts">Alerts Center</a>'
         '<a href="/logs">Logs</a>'
         '<a href="/accounts">Accounts</a>'
-        '<a href="/customers">Customers</a>'
         '<a href="/company-finances">Company Finances</a>'
         '<a href="/reports">Reports</a>'
         '<div style="height:1px;background:rgba(255,255,255,0.07);margin:4px 0"></div>'
@@ -8038,21 +8003,15 @@ def api_monitor_settings():
 # the URL hash (#approvals etc.) so refresh preserves the active tab.
 # Old standalone routes below still work; phase 6 will redirect them.
 
-@app.route("/customers")
-def customers_page():
-    """Consolidated customer admin: Approvals / Support / Activity / Billing."""
-    if not _authorized():
-        return redirect(url_for("login"))
-    return _subpage_header('Customers') + render_template(
-        'customers.html',
-        secret_token=SECRET_TOKEN,
-    )
-
-
 # ── ACCOUNTS PAGE ────────────────────────────────────────────────────────────
-# New consolidated /accounts page (2026-05-08). v1 ships with the Customers
-# tab active — directory robbed from /customers#activity, plus a "View as
-# customer" button per row that opens the customer's pi5 portal in read-only
+# /customers page retired 2026-05-16. Its 4 sub-pages (approvals, support,
+# activity, billing) were either migrated into /accounts > Customers (billing)
+# or removed entirely (approvals, support, activity). Pending signups can
+# still be approved via SQL on auth.db; the operational UI is gone.
+#
+# /accounts is the consolidated admin destination going forward. v1 ships with
+# the Customers tab active — directory robbed from /customers#activity, plus
+# a "View as customer" button per row that opens the customer's pi5 portal in read-only
 # impersonation mode. Employees + Tests tabs are placeholders waiting on
 # PROJ-employee-access-v1 to ship. /customers is kept alive during the
 # transition; will be retired once everything has migrated to /accounts.
@@ -8191,26 +8150,8 @@ def policy_eod_page():
     )
 
 
-# ── APPROVALS PAGE ────────────────────────────────────────────────────────────
-
-@app.route("/approvals")
-def approvals_page():
-    """Phase 6b (2026-05-05) — legacy route, redirects to consolidated
-    /customers page hash-anchor. Kept so old bookmarks and external
-    links don't 404. The standalone body lives at
-    templates/customers/approvals.html and is reachable via
-    _approvals_legacy_page() if rollback is needed."""
-    return redirect("/customers#approvals", code=301)
-
-
-def _approvals_legacy_page():
-    """Original standalone approvals page body — no longer routed but
-    preserved for rollback. Body extracted to
-    templates/customers/approvals.html in Phase 0 of consolidation."""
-    if not _authorized():
-        return redirect(url_for("login"))
-    return _subpage_header('Approvals') + render_template('customers/approvals.html')
-
+# /approvals page retired with /customers on 2026-05-16. To approve a pending
+# signup post-retirement, run the relevant CLI against pi5 auth.db directly.
 
 
 @app.route("/monitor")
@@ -10092,76 +10033,11 @@ def proxy_send_notification():
     except Exception as e:
         return jsonify({"error": str(e)}), 502
 
-# ── CUSTOMER SUPPORT QUEUE ────────────────────────────────────────────────────
-
-@app.route("/api/proxy/support/all-tickets")
-def proxy_support_all_tickets():
-    token = request.headers.get('X-Token', '')
-    if token != SECRET_TOKEN and not _authorized():
-        return jsonify({"error": "unauthorized"}), 401
-    import requests as _req
-    try:
-        params = {}
-        if request.args.get('status'): params['status'] = request.args['status']
-        if request.args.get('category'): params['category'] = request.args['category']
-        cookie = _get_admin_session_cookie()
-        r = _req.get(f"{RETAIL_PORTAL_URL}/api/support/all-tickets",
-                     params=params, cookies={'synthos_s': cookie}, timeout=15)
-        return jsonify(r.json()), r.status_code
-    except Exception as e:
-        return jsonify({"error": str(e)}), 502
-
-
-@app.route("/api/proxy/support/ticket/<ticket_id>")
-def proxy_support_ticket_detail(ticket_id):
-    token = request.headers.get('X-Token', '')
-    if token != SECRET_TOKEN and not _authorized():
-        return jsonify({"error": "unauthorized"}), 401
-    import requests as _req
-    try:
-        cookie = _get_admin_session_cookie()
-        params = {}
-        if request.args.get('customer_id'):
-            params['customer_id'] = request.args['customer_id']
-        r = _req.get(f"{RETAIL_PORTAL_URL}/api/support/tickets/{ticket_id}",
-                     params=params, cookies={'synthos_s': cookie}, timeout=10)
-        return jsonify(r.json()), r.status_code
-    except Exception as e:
-        return jsonify({"error": str(e)}), 502
-
-
-@app.route("/api/proxy/support/reply/<ticket_id>", methods=["POST"])
-def proxy_support_reply(ticket_id):
-    token = request.headers.get('X-Token', '')
-    if token != SECRET_TOKEN and not _authorized():
-        return jsonify({"error": "unauthorized"}), 401
-    import requests as _req
-    try:
-        cookie = _get_admin_session_cookie()
-        data = request.get_json(force=True)
-        data['sender'] = 'admin'
-        r = _req.post(f"{RETAIL_PORTAL_URL}/api/support/tickets/{ticket_id}/reply",
-                      json=data, cookies={'synthos_s': cookie}, timeout=10)
-        return jsonify(r.json()), r.status_code
-    except Exception as e:
-        return jsonify({"error": str(e)}), 502
-
-
-@app.route("/api/proxy/support/status/<ticket_id>", methods=["POST"])
-def proxy_support_status(ticket_id):
-    token = request.headers.get('X-Token', '')
-    if token != SECRET_TOKEN and not _authorized():
-        return jsonify({"error": "unauthorized"}), 401
-    import requests as _req
-    try:
-        cookie = _get_admin_session_cookie()
-        data = request.get_json(force=True)
-        r = _req.post(f"{RETAIL_PORTAL_URL}/api/support/tickets/{ticket_id}/status",
-                      json=data, cookies={'synthos_s': cookie}, timeout=10)
-        return jsonify(r.json()), r.status_code
-    except Exception as e:
-        return jsonify({"error": str(e)}), 502
-
+# Customer support queue retired 2026-05-16 with /customers tree. The four
+# /api/proxy/support/* endpoints (all-tickets, ticket/<id>, reply/<id>,
+# status/<id>) all served the deleted /support-queue UI. Pi5's /api/support/*
+# endpoints remain live for the customer-facing portal; this proxy layer is
+# what's gone — admins no longer have a UI to read or reply to tickets.
 
 @app.route("/api/beta-tests", methods=["GET"])
 def api_beta_tests():
@@ -10260,26 +10136,8 @@ def proxy_direct_message():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
-@app.route("/support-queue")
-def support_queue_page():
-    """Customer support queue page.
+# /support-queue page retired 2026-05-16 with /customers tree.
 
-    Body extracted to templates/customers/support.html (2026-05-05,
-    Phase 0 of /customers consolidation). Behavior unchanged."""
-    if not _authorized():
-        return redirect(url_for("login"))
-    resp = make_response(
-        '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">'
-        '<meta name="viewport" content="width=device-width,initial-scale=1">'
-        '<title>Synthos — Customer Support</title>'
-        '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">'
-        '</head><body>'
-        + _subpage_header('Customer Support')
-        + render_template('customers/support.html')
-        + '</body></html>'
-    )
-    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
-    return resp
 
 
 
@@ -10577,67 +10435,12 @@ def reports_page():
 """
 
 
-# ── CUSTOMER ACTIVITY REPORT (V1, 2026-04-28) ────────────────────────────
-#
-# Operator-facing cross-customer trading activity report.
-#
-# Data flow:
-#   browser → /customer-activity page (form: dates + customer scope)
-#           → POST /api/proxy/activity-report
-#           → forwards to RETAIL_PORTAL_URL/api/admin/activity-report
-#               (with Bearer SECRET_TOKEN; bypasses customer-session auth)
-#           → retail engine reads stored data, returns structured JSON
-#           → cmd portal renders as HTML tables.
-#
-# Engine: synthos_build/tools/customer_activity_report.py on pi5.
-# Why on pi5: the per-customer signals.db files live there; pi4b is
-# a thin viewing surface.
-# No live Alpaca calls — everything from stored data per operator
-# preference.
-
-
-@app.route("/api/proxy/activity-report", methods=["POST"])
-def proxy_activity_report():
-    """Forward an activity-report request to retail portal.  POST body
-    is passed through unchanged; auth converted from session-cookie
-    (cmd portal) to Bearer SECRET_TOKEN (retail portal monitor auth)."""
-    if not _authorized():
-        return jsonify({"error": "unauthorized"}), 401
-    import requests as _req
-    body = request.get_json(silent=True) or {}
-    try:
-        r = _req.post(
-            f"{RETAIL_PORTAL_URL}/api/admin/activity-report",
-            json=body,
-            headers={"Authorization": f"Bearer {SECRET_TOKEN}"},
-            timeout=30,
-        )
-        try:
-            return jsonify(r.json()), r.status_code
-        except Exception:
-            return jsonify({"error": f"retail returned non-JSON ({r.status_code})",
-                            "body": r.text[:500]}), 502
-    except Exception as e:
-        return jsonify({"error": f"proxy failed: {e}"}), 502
-
-
-
-
-@app.route("/customer-activity")
-def customer_activity_page():
-    """Phase 6b (2026-05-05) — legacy route, redirects to /customers#activity.
-    Body lives in templates/customers/activity.html (extracted Phase 0)
-    and is reachable via _customer_activity_legacy_page() for rollback."""
-    return redirect("/customers#activity", code=301)
-
-
-def _customer_activity_legacy_page():
-    """Original standalone customer-activity page — no longer routed."""
-    if not _authorized():
-        return redirect(url_for("login"))
-    return (_subpage_header('Customer Activity')
-            + render_template('customers/activity.html',
-                              secret_token=SECRET_TOKEN))
+# Customer Activity Report (V1, 2026-04-28) retired 2026-05-16 with /customers
+# tree. /customer-activity page, _customer_activity_legacy_page helper, and
+# /api/proxy/activity-report endpoint all removed — they only served the
+# deleted Activity tab. The retail-side engine at /api/admin/activity-report
+# on pi5 (synthos_build/tools/customer_activity_report.py) is still live for
+# any direct API consumer / future re-introduction.
 
 
 # ── PILL USAGE TELEMETRY (Phase G, 2026-04-27) ────────────────────────────────
@@ -10831,23 +10634,10 @@ def pill_usage_page():
     return _subpage_header('Pill Usage') + _PILL_USAGE_TEMPLATE
 
 
-# ── CUSTOMER BILLING PAGE ─────────────────────────────────────────────────────
-
-@app.route("/customer-billing")
-def customer_billing_page():
-    """Phase 6b (2026-05-05) — legacy route, redirects to /customers#billing.
-    Body lives in templates/customers/billing.html and is reachable via
-    _customer_billing_legacy_page() for rollback."""
-    return redirect("/customers#billing", code=301)
-
-
-def _customer_billing_legacy_page():
-    """Original standalone customer-billing page — no longer routed."""
-    if not _authorized():
-        return redirect(url_for("login"))
-    return _subpage_header('Customer Billing') + render_template('customers/billing.html')
-
-
+# Customer billing page retired 2026-05-16. Billing info migrated into
+# /accounts > Customers tab (KPI strip + per-row past-due highlight + Billing
+# section in the row-click modal). /api/proxy/billing/all-customers is still
+# live and remains the data source for the new location.
 
 
 AUDIT_PAGE_HTML = """

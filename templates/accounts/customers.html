@@ -37,6 +37,44 @@
 .ac-dir-table tbody tr.flagged-degraded:hover td{ background: rgba(255,75,110,0.08); }
 .ac-dir-table tbody tr.flagged-caution:hover td { background: rgba(245,166,35,0.09); }
 .ac-dir-table tbody tr.flagged-soft:hover td    { background: rgba(255,75,110,0.05); }
+/* Billing row highlight (2026-05-16 — billing migration from /customers).
+   Applied only when there is NO validator flag — validator flags are more
+   urgent for trading and should win the left-bar. */
+.ac-dir-table tbody tr.billing-past:not([class*="flagged-"]) td   { background: rgba(245,166,35,0.06); box-shadow: inset 3px 0 0 #f5a623; }
+.ac-dir-table tbody tr.billing-cancel:not([class*="flagged-"]) td { background: rgba(255,75,110,0.05); box-shadow: inset 3px 0 0 #ff4b6e; }
+.ac-dir-table tbody tr.billing-past:not([class*="flagged-"]):hover td   { background: rgba(245,166,35,0.10); }
+.ac-dir-table tbody tr.billing-cancel:not([class*="flagged-"]):hover td { background: rgba(255,75,110,0.09); }
+
+/* Billing KPI strip — above the directory table */
+.ac-bill-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:16px}
+.ac-bill-kpi{padding:12px 14px;border-radius:10px;border:1px solid rgba(255,255,255,0.07);background:rgba(255,255,255,0.02);transition:border-color 0.15s}
+.ac-bill-kpi.active{border-color:rgba(0,245,212,0.20)}
+.ac-bill-kpi.trial{border-color:rgba(123,97,255,0.20)}
+.ac-bill-kpi.past{border-color:rgba(245,166,35,0.28)}
+.ac-bill-kpi.cancel{border-color:rgba(255,75,110,0.24)}
+.ac-bill-kpi-lab{font-size:9px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:rgba(255,255,255,0.4);margin-bottom:4px}
+.ac-bill-kpi.active  .ac-bill-kpi-lab{color:rgba(0,245,212,0.7)}
+.ac-bill-kpi.trial   .ac-bill-kpi-lab{color:rgba(167,139,250,0.85)}
+.ac-bill-kpi.past    .ac-bill-kpi-lab{color:#f5a623}
+.ac-bill-kpi.cancel  .ac-bill-kpi-lab{color:#ff7a90}
+.ac-bill-kpi-val{font-size:24px;font-weight:700;font-family:'JetBrains Mono',monospace;line-height:1;color:rgba(255,255,255,0.92)}
+.ac-bill-kpi.active  .ac-bill-kpi-val{color:#00f5d4}
+.ac-bill-kpi.trial   .ac-bill-kpi-val{color:#a78bfa}
+.ac-bill-kpi.past    .ac-bill-kpi-val{color:#f5a623}
+.ac-bill-kpi.cancel  .ac-bill-kpi-val{color:#ff4b6e}
+.ac-bill-kpi-sub{font-size:9px;color:rgba(255,255,255,0.3);margin-top:3px;font-family:'JetBrains Mono',monospace}
+
+/* Modal Billing section — two-column key/value grid + trading-mode toggle */
+.ac-bill-grid{display:grid;grid-template-columns:max-content 1fr;gap:6px 16px;padding:10px 14px;border:1px solid rgba(255,255,255,0.07);border-radius:9px;background:rgba(255,255,255,0.02);font-size:12px;line-height:1.5}
+.ac-bill-grid .k{color:rgba(255,255,255,0.4);font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.02em}
+.ac-bill-grid .v{color:rgba(255,255,255,0.88);text-align:left}
+.ac-bill-actions{display:flex;gap:8px;margin-top:10px;align-items:center;flex-wrap:wrap}
+.ac-bill-tm-btn{padding:5px 13px;border-radius:7px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;letter-spacing:0.04em;transition:all 0.15s;border:1px solid;background:transparent}
+.ac-bill-tm-btn.live  {color:#00f5d4;border-color:rgba(0,245,212,0.3);background:rgba(0,245,212,0.06)}
+.ac-bill-tm-btn.paper {color:#a78bfa;border-color:rgba(123,97,255,0.3);background:rgba(123,97,255,0.06)}
+.ac-bill-tm-btn:hover {filter:brightness(1.2)}
+.ac-bill-tm-btn:disabled{opacity:0.5;cursor:wait}
+.ac-bill-tm-hint{font-size:10px;color:rgba(255,255,255,0.4);font-style:italic}
 
 /* Glow badge in the validator column (only shows for non-GO rows) */
 .ac-flag-badge{
@@ -285,11 +323,30 @@
 
   <div class="ac-help">
     <strong>Click any row</strong> to see that customer's open issues (validator
-    flags, restrictions, admin alerts, recent events). Rows with active issues
-    glow red. Click <strong>View</strong> to open their portal dashboard in
+    flags, restrictions, admin alerts, billing status, recent events). Rows with
+    active issues glow red; rows past-due on billing glow amber. Click
+    <strong>View</strong> to open their portal dashboard in
     <span style="color:#a78bfa">read-only impersonation mode</span> — exactly as
     they see it. All write actions are blocked. View-as session expires after
     30 minutes of idle. Every view-as is logged.
+  </div>
+
+  <!-- Billing KPI strip — migrated from /customers#billing on 2026-05-16.
+       Counts come from billing API's summary{} block. MRR card omitted because
+       there is no per-customer price field in the source data yet. -->
+  <div class="ac-bill-strip" id="ac-bill-strip">
+    <div class="ac-bill-kpi active"><div class="ac-bill-kpi-lab">Active</div>
+      <div class="ac-bill-kpi-val" id="ac-bill-active">—</div>
+      <div class="ac-bill-kpi-sub">subscription paying</div></div>
+    <div class="ac-bill-kpi trial"><div class="ac-bill-kpi-lab">Trialing</div>
+      <div class="ac-bill-kpi-val" id="ac-bill-trial">—</div>
+      <div class="ac-bill-kpi-sub">in trial period</div></div>
+    <div class="ac-bill-kpi past"><div class="ac-bill-kpi-lab">Past Due</div>
+      <div class="ac-bill-kpi-val" id="ac-bill-past">—</div>
+      <div class="ac-bill-kpi-sub">payment overdue</div></div>
+    <div class="ac-bill-kpi cancel"><div class="ac-bill-kpi-lab">Cancelled</div>
+      <div class="ac-bill-kpi-val" id="ac-bill-cancel">—</div>
+      <div class="ac-bill-kpi-sub">no active sub</div></div>
   </div>
 
   <div class="ac-dir" id="ac-dir-wrap">
@@ -581,7 +638,56 @@
          + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
   }
 
-  function renderIssuesBody(d){
+  // Billing section for the row-click modal. Sourced from the local
+  // _customers cache (already-fetched billing API) — no extra request.
+  // Renders status / tier / trading_mode / operating_mode / has_alpaca /
+  // joined date + a click-to-flip trading-mode button.
+  // 2026-05-16 migration target for /customers#billing.
+  function renderBillingSection(c){
+    if (!c) return '';
+    const status = c.subscription_status || 'inactive';
+    const tier = c.pricing_tier || 'standard';
+    const tradingMode = c.trading_mode || 'PAPER';
+    const opMode = c.operating_mode || '—';
+    const joined = c.created_at ? fmtTs(c.created_at) : '—';
+    const daysOnPlatform = c.created_at
+      ? Math.max(0, Math.floor((Date.now() - new Date(c.created_at).getTime()) / 86400000))
+      : null;
+    const headlineCount = (status === 'past_due') ? 'past due'
+                        : (status === 'cancelled') ? 'cancelled'
+                        : (status === 'trialing') ? 'trial'
+                        : (status === 'active') ? 'active'
+                        : 'inactive';
+    const tmBtnCls = (tradingMode === 'LIVE') ? 'live' : 'paper';
+    const tmBtnNext = (tradingMode === 'LIVE') ? 'paper' : 'live';
+    const custIdJs = String(c.id || '').replace(/'/g, "\\'");
+    const custNameJs = String(c.name || '').replace(/'/g, "\\'");
+    return ''
+      + '<div class="ac-iss-section">'
+      + '  <div class="ac-iss-secH">Billing'
+      + '    <span class="ac-iss-secH-count">' + escHtml(headlineCount) + '</span>'
+      + '  </div>'
+      + '  <div class="ac-bill-grid">'
+      + '    <div class="k">Status</div>      <div class="v">' + fmtStatus(status) + '</div>'
+      + '    <div class="k">Plan</div>        <div class="v">' + fmtTier(tier) + '</div>'
+      + '    <div class="k">Trading mode</div><div class="v">' + fmtTradingMode(tradingMode) + '</div>'
+      + '    <div class="k">Operating mode</div><div class="v">' + escHtml(opMode) + '</div>'
+      + '    <div class="k">Alpaca linked</div><div class="v">' + (c.has_alpaca ? '<span style="color:#00f5d4">✓ connected</span>' : '<span style="color:rgba(255,255,255,0.35)">— not linked</span>') + '</div>'
+      + '    <div class="k">Joined</div>      <div class="v">' + escHtml(joined) + (daysOnPlatform != null ? ' <span style="color:rgba(255,255,255,0.4);font-size:11px">(' + daysOnPlatform + ' day' + (daysOnPlatform === 1 ? '' : 's') + ')</span>' : '') + '</div>'
+      + '  </div>'
+      + '  <div class="ac-bill-actions">'
+      + '    <button class="ac-bill-tm-btn ' + tmBtnCls + '"'
+      + '            onclick="acToggleTradingMode(\'' + custIdJs + '\', \'' + tradingMode + '\', \'' + custNameJs + '\', this)"'
+      + '            title="Click to switch trading mode (confirmation required)">'
+      + '      Switch to ' + tmBtnNext.toUpperCase()
+      + '    </button>'
+      + '    <span class="ac-bill-tm-hint">Currently <strong>' + tradingMode + '</strong>'
+      + '      ' + (tradingMode === 'LIVE' ? '(real money)' : '(simulated)') + '</span>'
+      + '  </div>'
+      + '</div>';
+  }
+
+  function renderIssuesBody(d, customerRow){
     if (!d || !d.ok) {
       return '<div class="ac-iss-empty">Failed to load issues — ' + escHtml((d && d.error) || 'unknown error') + '</div>';
     }
@@ -747,7 +853,12 @@
     }
     eventsHtml += '</div>';
 
-    return capHtml + validatorHtml + alertsHtml + eventsHtml;
+    // Order: capacity → billing → validator → alerts → events.
+    // Billing sits right after capacity because they're the two
+    // "who is this customer" context blocks; the validator/alerts/events
+    // sections below are the "what is wrong right now" detail.
+    const billingHtml = renderBillingSection(customerRow);
+    return capHtml + billingHtml + validatorHtml + alertsHtml + eventsHtml;
   }
 
   async function rowClick(ev, customerId, customerName){
@@ -758,6 +869,12 @@
     issNameEl().textContent = customerName || '—';
     issMetaEl().textContent = customerId + ' · loading…';
     issBodyEl().innerHTML = '<div class="ac-iss-loading">Loading issues…</div>';
+
+    // Look up the customer's billing row from our local _customers cache
+    // (already populated by loadDirectory) so the modal can render the
+    // Billing section without a second fetch. Cache miss returns null
+    // → Billing section degrades gracefully.
+    const custRow = (_customers || []).find(c => c.id === customerId) || null;
 
     try {
       const r = await fetch('/api/proxy/admin/customer-issues/' + encodeURIComponent(customerId),
@@ -775,10 +892,56 @@
       }
       issNameEl().textContent = (d.customer_name || customerName || '—');
       issMetaEl().textContent = (d.customer_email || '') + ' · ' + customerId;
-      issBodyEl().innerHTML = renderIssuesBody(d);
+      issBodyEl().innerHTML = renderIssuesBody(d, custRow);
     } catch(e) {
       console.error('issues fetch failed', e);
       issBodyEl().innerHTML = '<div class="ac-iss-empty" style="color:#ff4b6e">Failed to load issues: ' + escHtml(String(e.message || e)) + '</div>';
+    }
+  }
+
+  // ── TRADING-MODE TOGGLE ──────────────────────────────────────────────
+  // Migrated from /customers#billing on 2026-05-16. Confirms before flip
+  // (LIVE → real money, PAPER → simulated) then POSTs to the existing
+  // proxy. On success, updates the local _customers cache so the
+  // directory + modal both reflect the new mode without a full refetch.
+  async function acToggleTradingMode(custId, currentMode, custName, btn){
+    const next = (currentMode === 'LIVE') ? 'PAPER' : 'LIVE';
+    const msg = (next === 'LIVE')
+      ? 'Switch ' + (custName || custId) + ' to LIVE trading? Real money will be used.'
+      : 'Switch ' + (custName || custId) + ' back to PAPER trading?';
+    if (!confirm(msg)) return;
+    if (btn) { btn.disabled = true; btn.textContent = '…'; }
+    try {
+      const r = await fetch('/api/proxy/customer/' + encodeURIComponent(custId) + '/trading-mode', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-Token': SECRET_TOKEN},
+        body: JSON.stringify({mode: next}),
+      });
+      const j = await r.json();
+      if (!r.ok || !j.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      // Update local cache + re-render the modal Billing section in-place.
+      const row = (_customers || []).find(c => c.id === custId);
+      if (row) row.trading_mode = next;
+      // Re-render the table so the column pill updates too.
+      renderDirectory();
+      // Re-open the modal body so the new state is visible without
+      // requiring the user to close + re-click.
+      const updated = (_customers || []).find(c => c.id === custId);
+      if (updated) {
+        // Try-fetch the freshest issues payload; fall back to a partial
+        // re-render if it fails.
+        try {
+          const r2 = await fetch('/api/proxy/admin/customer-issues/' + encodeURIComponent(custId),
+                                  {headers:{'X-Token':SECRET_TOKEN}});
+          const d2 = await r2.json();
+          issBodyEl().innerHTML = renderIssuesBody(d2, updated);
+        } catch (_) {
+          // Modal stays as-is; user can close + reopen.
+        }
+      }
+    } catch (e) {
+      alert('Failed to switch trading mode: ' + (e.message || e));
+      if (btn) { btn.disabled = false; btn.textContent = currentMode; }
     }
   }
 
@@ -916,16 +1079,19 @@
   window.acCloseIssues    = closeIssuesModal;
   window.acToggleRestriction = acToggleRestriction;
   window.acToggleVerdict     = acToggleVerdict;
+  window.acToggleTradingMode = acToggleTradingMode;
 
   // ── DIRECTORY ──────────────────────────────────────────────────────────
   // Split fetch + render so loadFlags() can re-render once flags arrive
   // without re-fetching the customer list.
   async function loadDirectory(){
+    let summary = null;
     try {
       const r = await fetch('/api/proxy/billing/all-customers', {headers:{'X-Token':SECRET_TOKEN}});
       if (!r.ok) throw new Error('billing fetch ' + r.status);
       const d = await r.json();
       _customers = (d.customers || []).filter(c => c.id);
+      summary = d.summary || null;
     } catch(e) {
       _customers = [];
       const wrap = document.getElementById('ac-dir-wrap');
@@ -934,9 +1100,30 @@
     }
     // Sort newest first ONCE — re-renders driven by loadFlags reuse this order.
     _customers.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+    renderBillingStrip(summary);
     renderDirectory();
     // Kick off flags fetch in parallel — re-renders the table when it lands.
     loadFlags();
+  }
+
+  // Billing KPI strip — fills the 4 KPI cards above the directory table.
+  // Counts come from server-side summary{} when present (single source of
+  // truth); recompute locally as a fallback if absent so the cards still
+  // populate during back-compat windows.
+  function renderBillingStrip(summary){
+    let s = summary;
+    if (!s) {
+      s = {active:0, trialing:0, past_due:0, cancelled:0, inactive:0};
+      for (const c of (_customers || [])) {
+        const st = (c.subscription_status || 'inactive');
+        if (s[st] != null) s[st]++; else s.inactive++;
+      }
+    }
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = String(v == null ? 0 : v); };
+    set('ac-bill-active', s.active);
+    set('ac-bill-trial',  s.trialing);
+    set('ac-bill-past',   s.past_due);
+    set('ac-bill-cancel', s.cancelled);
   }
 
   function renderDirectory(){
@@ -967,8 +1154,17 @@
       const flagCls   = f ? rowFlagClass(f) : '';
       const flagBadge = f ? renderFlagBadge(f) : '<span class="ac-flag-badge mute">—</span>';
 
+      // Billing row highlight (2026-05-16). Layered alongside validator
+      // flag; CSS uses :not([class*="flagged-"]) so validator wins when
+      // both are present. Active/trialing/inactive get no extra class.
+      const st = c.subscription_status || 'inactive';
+      const billCls = (st === 'past_due')  ? 'billing-past'
+                    : (st === 'cancelled') ? 'billing-cancel'
+                    : '';
+      const rowCls = [flagCls, billCls].filter(Boolean).join(' ');
+
       return `
-        <tr class="${flagCls}" data-cid="${escHtml(uuid)}" data-name="${escHtml(name)}" onclick="acRowClick(event, '${uuidJs}', '${nameJs}')">
+        <tr class="${rowCls}" data-cid="${escHtml(uuid)}" data-name="${escHtml(name)}" onclick="acRowClick(event, '${uuidJs}', '${nameJs}')">
           <td><div class="ac-dir-name">${escHtml(name)}</div></td>
           <td class="col-email"><div class="ac-dir-email" title="${escHtml(email)}">${escHtml(email)}</div></td>
           <td class="col-validator">${flagBadge}</td>

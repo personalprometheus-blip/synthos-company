@@ -623,7 +623,14 @@ def _mqtt_node_metrics_for(canonical_id: str, max_age_s: int = 300) -> dict:
             return {}  # likely "offline" LWT marker
         if not isinstance(payload, dict):
             return {}
-        return payload.get("extra") or {}
+        out = dict(payload.get("extra") or {})
+        # 2026-05-15 Phase 2 fix: surface the MQTT topic timestamp so
+        # api_status can use it for age_secs + status when MQTT data is
+        # fresher than the pi_registry HTTP heartbeat. Without this,
+        # nodes whose long-running daemons only speak MQTT (process-1,
+        # trader-1) showed status=offline despite live telemetry.
+        out["_mqtt_last_seen_ts"] = ts
+        return out
     except Exception:
         return {}
 
@@ -1102,14 +1109,45 @@ def api_status():
 
         if data is not None:
             # Node has a pi_registry entry — use it as base
-            age_secs = int((now_utc() - data["last_seen"]).total_seconds())
+            registry_age_s = (now_utc() - data["last_seen"]).total_seconds()
+            # Phase 2 fix (2026-05-15): if MQTT node_metrics is fresher
+            # than the pi_registry HTTP heartbeat, use MQTT's timestamp
+            # for age + status. Otherwise process-1 + trader-1 (whose
+            # daemons publish MQTT only) read as offline despite live
+            # telemetry.
+            mqtt_ts = mqtt_extra.get("_mqtt_last_seen_ts")
+            if mqtt_ts:
+                import time as _t
+                mqtt_age_s = _t.time() - mqtt_ts
+                effective_age_s = min(registry_age_s, mqtt_age_s)
+                # When MQTT is the freshest signal, use it as last_seen
+                if mqtt_age_s < registry_age_s:
+                    from datetime import datetime as _dt, timezone as _tz
+                    effective_last_seen_iso = _dt.fromtimestamp(mqtt_ts, tz=_tz.utc).isoformat()
+                else:
+                    effective_last_seen_iso = data["last_seen"].isoformat()
+            else:
+                effective_age_s = registry_age_s
+                effective_last_seen_iso = data["last_seen"].isoformat()
+            age_secs = int(effective_age_s)
+            # status: fresh-MQTT → "active" regardless of legacy heartbeat
+            # staleness. Otherwise pi_status keeps the legacy fault/offline
+            # logic that considers SILENCE_WINDOW + agent fault flags.
+            if effective_age_s < SILENCE_WINDOW_HOURS * 3600:
+                # Re-check agents-fault using the legacy helper but with
+                # the fresher last_seen so the offline-by-age branch is
+                # short-circuited.
+                _proxy = dict(data); _proxy["last_seen"] = now_utc()
+                computed_status = pi_status(_proxy)
+            else:
+                computed_status = pi_status(data)
             entry = {
                 "pi_id":             canonical_id,
                 "label":             data.get("label") or label_default,
                 "email":             data.get("email", ""),
-                "last_seen":         data["last_seen"].isoformat(),
+                "last_seen":         effective_last_seen_iso,
                 "age_secs":          age_secs,
-                "status":            pi_status(data),
+                "status":            computed_status,
                 # Trading-side fields — pi_registry only (MQTT doesn't carry these yet)
                 "portfolio_value":   data.get("portfolio_value", data.get("portfolio", 0.0)),
                 "cash":              data.get("cash", 0.0),

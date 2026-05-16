@@ -8363,7 +8363,7 @@ def _build_auditors_summary():
         status, drift_state, drift_msg = _compute_drift(last_seen, expected_s=300, warn_mult=2.0, crit_mult=6.0)
         out.append({
             'name': 'company_auditor',
-            'node': 'pi4b',
+            'node': 'companypi',
             'role': 'auditor',
             'schedule': 'daemon · 5min poll',
             'expected_cadence_s': 300,
@@ -8377,7 +8377,7 @@ def _build_auditors_summary():
         })
     except Exception as e:
         out.append({
-            'name': 'company_auditor', 'node': 'pi4b', 'role': 'auditor',
+            'name': 'company_auditor', 'node': 'companypi', 'role': 'auditor',
             'schedule': 'daemon · 5min poll', 'expected_cadence_s': 300,
             'feeds_panel': 'AI Triage › Logs',
             'status': 'crit', 'drift_state': 'unknown', 'drift_message': 'auditor.db query failed',
@@ -8385,10 +8385,14 @@ def _build_auditors_summary():
             'desc': f'auditor.db query failed: {e}',
         })
 
-    # ── 2. retail_ticker_state_auditor (proxy to pi5) ─────────────────
+    # ── 2. retail_ticker_state_auditor (proxy to process-1) ───────────
+    # 2026-05-16: post-refactor cleanup. Was looking for 'retail' substring
+    # in pi_registry — process-1 doesn't match that, so the card was stuck
+    # at "pi5 not reachable". Now uses RETAIL_PORTAL_URL env var directly
+    # (already configured to http://10.0.0.11:5001 = process-1 retail portal).
     ts_card = {
         'name': 'retail_ticker_state_auditor',
-        'node': 'pi5',
+        'node': 'process-1',
         'role': 'auditor',
         'schedule': 'systemd timer · 02:35 ET nightly',
         'expected_cadence_s': 86400,  # 24h
@@ -8401,51 +8405,37 @@ def _build_auditors_summary():
         'desc': 'NULL-field gap audit on shared ticker_state',
     }
     try:
-        retail_pi = None
-        with registry_lock:
-            for pid, p in pi_registry.items():
-                if 'retail' in str(p.get("pi_id", "")).lower() \
-                   or 'retail' in str(p.get("label", "")).lower():
-                    retail_pi = p
-                    break
-        pi_ip = (retail_pi or {}).get("ip") or (retail_pi or {}).get("pi_ip")
-        if pi_ip:
-            import requests as _req
-            r = _req.get(
-                f"http://{pi_ip}:5001/api/ticker-state-audit",
-                headers={"Authorization": f"Bearer {SECRET_TOKEN}"},
-                timeout=10,
-            )
-            if r.status_code == 200:
-                report = r.json()
-                anoms  = report.get('anomalies') or []
-                ts_card['open_count'] = len(anoms)
-                ts_card['last_run']   = report.get('ts')
-                # Nightly: warn at >25h (4% over schedule), crit at >49h (>2 missed runs)
-                ts_card['status'], ts_card['drift_state'], ts_card['drift_message'] = \
-                    _compute_drift(ts_card['last_run'], expected_s=86400,
-                                   warn_mult=25/24, crit_mult=49/24)
-            else:
-                ts_card['desc'] = f'pi5 returned {r.status_code}'
-                ts_card['status'] = 'crit'
-                ts_card['drift_state'] = 'unknown'
-                ts_card['drift_message'] = f'pi5 returned {r.status_code}'
+        import requests as _req
+        r = _req.get(
+            f"{RETAIL_PORTAL_URL}/api/ticker-state-audit",
+            headers={"Authorization": f"Bearer {SECRET_TOKEN}"},
+            timeout=10,
+        )
+        if r.status_code == 200:
+            report = r.json()
+            anoms  = report.get('anomalies') or []
+            ts_card['open_count'] = len(anoms)
+            ts_card['last_run']   = report.get('ts')
+            # Nightly: warn at >25h (4% over schedule), crit at >49h (>2 missed runs)
+            ts_card['status'], ts_card['drift_state'], ts_card['drift_message'] = \
+                _compute_drift(ts_card['last_run'], expected_s=86400,
+                               warn_mult=25/24, crit_mult=49/24)
         else:
-            ts_card['desc'] = 'pi5 not in registry'
+            ts_card['desc'] = f'process-1 returned {r.status_code}'
             ts_card['status'] = 'crit'
             ts_card['drift_state'] = 'unknown'
-            ts_card['drift_message'] = 'pi5 not reachable'
+            ts_card['drift_message'] = f'process-1 returned {r.status_code}'
     except Exception as e:
-        ts_card['desc'] = f'pi5 unreachable: {e}'
+        ts_card['desc'] = f'process-1 unreachable: {e}'
         ts_card['status'] = 'crit'
         ts_card['drift_state'] = 'unknown'
-        ts_card['drift_message'] = 'pi5 unreachable'
+        ts_card['drift_message'] = 'process-1 unreachable'
     out.append(ts_card)
 
     # ── 3. retail_policy_auditor (no live feed; shadow/manual) ────────
     out.append({
         'name': 'retail_policy_auditor',
-        'node': 'pi5',
+        'node': 'process-1',
         'role': 'auditor',
         'schedule': 'manual only · shadow mode',
         'expected_cadence_s': None,
@@ -8466,9 +8456,9 @@ def api_auditors_summary():
     """Per-auditor inventory + live status. Backs the Auditor fleet rail
     on /audit. Three auditors today:
 
-      - company_auditor (pi4b, daemon) — local auditor.db
-      - retail_ticker_state_auditor (pi5, nightly 02:35 ET) — proxy to pi5
-      - retail_policy_auditor (pi5, manual / shadow) — no live data yet
+      - company_auditor (companypi, daemon) — local auditor.db
+      - retail_ticker_state_auditor (process-1, nightly 02:35 ET) — proxy to process-1
+      - retail_policy_auditor (process-1, manual / shadow) — no live data yet
 
     Each entry carries: name, node, schedule, expected_cadence_s, status
     (ok/warn/crit/dim), drift_state, drift_message, open_count, last_run,
@@ -11032,6 +11022,23 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 .audr-pill-spark svg{display:block}
 .audr-pill-spark-lab{font-size:8px;color:var(--dim);font-family:var(--mono);letter-spacing:0.04em;text-transform:uppercase}
 
+/* 2026-05-16 — click-to-expand auditor info panel */
+.audr-pill{cursor:pointer;transition:background 0.15s,border-color 0.15s}
+.audr-pill:hover{background:rgba(255,255,255,0.02)}
+.audr-pill.expanded{border-color:rgba(123,97,255,0.35);background:rgba(123,97,255,0.04)}
+.audr-pill-info{display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);
+                font-size:11px;line-height:1.55;color:var(--text)}
+.audr-pill.expanded .audr-pill-info{display:block;animation:audr-info-in 0.18s ease-out}
+@keyframes audr-info-in{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:translateY(0)}}
+.audr-info-head{font-size:10px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;
+                color:var(--purple);margin-top:8px;margin-bottom:4px}
+.audr-info-head:first-child{margin-top:0}
+.audr-info-body{color:rgba(255,255,255,0.78);font-size:11px;line-height:1.55}
+.audr-info-row{display:flex;gap:8px;padding:3px 0;font-size:10px;font-family:var(--mono);color:var(--muted)}
+.audr-info-row .k{flex:0 0 90px;color:rgba(255,255,255,0.35)}
+.audr-info-row .v{flex:1;color:var(--text);word-break:break-word}
+.audr-info-hint{font-size:9px;color:var(--dim);font-style:italic;margin-top:6px;letter-spacing:0.02em}
+
 /* V2.5 phase C — suppress button + suppressions drawer */
 .tr-actions{display:flex;flex-direction:column;gap:4px;flex-shrink:0}
 .auditor-suppress-btn{padding:4px 10px;border-radius:6px;border:1px solid var(--border2);
@@ -11161,7 +11168,7 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:va
 
   <div class="node-tabs" id="node-tabs">
     <button class="node-tab active" data-node="company" onclick="selectNode('company',this)">
-      pi4b &#x2014; Company <span class="tab-badge" id="badge-company">&#x2014;</span>
+      companypi &#x2014; Company <span class="tab-badge" id="badge-company">&#x2014;</span>
     </button>
   </div>
 
@@ -11510,6 +11517,71 @@ async function fetchAuditorHistory() {
   } catch(e) {}
 }
 
+// ─── AUDITOR INFO CATALOG ─── click-to-expand descriptions ─── 2026-05-16 ───
+// Each auditor card on this page is opaque without context: the user sees a
+// name + a number + a sparkline but no explanation of what's being audited or
+// why they should care. This catalog provides the long-form description for
+// each auditor, surfaced via click-to-expand on the pill.
+//
+// Keys are exact auditor.name values from /api/auditors/summary.
+// To add a new auditor card, just add an entry here; the toggle handler
+// reads from this object by name.
+const AUDITOR_INFO = {
+  'company_auditor': {
+    purpose: 'Cross-node log scanner. Watches journalctl on every node for ERROR/WARN patterns and persists deduplicated findings to auditor.db so transient errors don\\'t spam the dashboard.',
+    checks: 'Every 5 minutes, SSHes to process-1 and pi2w-monitor, tails new log lines (tracked by byte offset in scan_state), grep-matches ERROR/CRITICAL/WARN patterns, and UPSERTs into detected_issues. Same pattern + source = same row, hit_count increments.',
+    where: 'Findings list below in the By Node panel (Unresolved Issues), plus AI Triage → Logs source.',
+    source: 'agents/company_auditor.py on companypi',
+    why: 'Catches recurring system errors before they cascade. Every alert here is a real journalctl WARN/ERROR — not synthetic.',
+  },
+  'retail_ticker_state_auditor': {
+    purpose: 'NULL-field gap audit on the shared ticker_state worldview table. Catches silent data loss at the dict-key boundary — when an enricher writes partial data, fields go NULL and propagate into validators + bias guards.',
+    checks: 'Walks every ticker in the priced universe; per ticker, counts how many critical fields (price, market_cap, sector, regime, etc.) are NULL or stale beyond their freshness window. Anomalies = tickers where ≥1 field is silently missing.',
+    where: 'Findings flow into AI Triage → Ticker State filter.',
+    source: 'agents/retail_ticker_state_auditor.py on process-1, served via /api/ticker-state-audit on retail_portal.py',
+    why: 'NULL ticker fields silently degrade signal coverage. This auditor is the safety net for the enrichment pipeline — every gap it reports is a customer whose validator may be flying blind on that ticker.',
+  },
+  'retail_policy_auditor': {
+    purpose: 'Shadow audit of Tier-80 policy decisions (the trader\\'s exit + rotation rules). Will eventually re-evaluate every policy verdict before the trader acts on it, catching regressions in policy code before they affect customers.',
+    checks: 'Currently shadow-only and manual. When fully wired: re-runs Tier-80 policy logic against the same inputs the live trader saw and flags any divergence in verdict or sizing.',
+    where: 'Findings list deferred — portal + timer pending Q-3 enforcement rollout.',
+    source: 'agents/retail_policy_auditor.py on process-1 (manual invocation only)',
+    why: 'Trader-V1 enforcement is the next quarter\\'s headline work. This auditor is the pre-flight check that has to ship before enforcement goes live.',
+  },
+};
+
+function _renderAuditorInfo(name) {
+  const info = AUDITOR_INFO[name];
+  if (!info) {
+    return '<div class="audr-info-body" style="color:var(--muted);font-style:italic">'
+         + 'No description registered for <code>' + escHtml(name) + '</code>. '
+         + 'Add an entry to AUDITOR_INFO in synthos_monitor.py.</div>';
+  }
+  return ''
+    + '<div class="audr-info-head">What it does</div>'
+    + '<div class="audr-info-body">' + escHtml(info.purpose) + '</div>'
+    + '<div class="audr-info-head">What it checks</div>'
+    + '<div class="audr-info-body">' + escHtml(info.checks) + '</div>'
+    + '<div class="audr-info-head">Where findings appear</div>'
+    + '<div class="audr-info-body">' + escHtml(info.where) + '</div>'
+    + '<div class="audr-info-head">Source</div>'
+    + '<div class="audr-info-row"><span class="k">file</span><span class="v">' + escHtml(info.source) + '</span></div>'
+    + '<div class="audr-info-head">Why it matters</div>'
+    + '<div class="audr-info-body">' + escHtml(info.why) + '</div>'
+    + '<div class="audr-info-hint">Click the card again to collapse.</div>';
+}
+
+function toggleAuditorInfo(name, ev) {
+  if (ev) ev.stopPropagation();
+  const pill = document.querySelector('.audr-pill[data-auditor="' + name + '"]');
+  if (!pill) return;
+  // Collapse any others first (one-at-a-time so the rail doesn't get noisy).
+  document.querySelectorAll('.audr-pill.expanded').forEach(p => {
+    if (p !== pill) p.classList.remove('expanded');
+  });
+  pill.classList.toggle('expanded');
+}
+
 async function fetchAuditors() {
   const rail = document.getElementById('auditor-rail');
   if (!rail) return;
@@ -11574,9 +11646,18 @@ async function fetchAuditors() {
         : (hist.length === 1
            ? '<div class="audr-pill-spark"><span class="audr-pill-spark-lab">24h · 1 sample, sparkline at next cycle</span></div>'
            : '<div class="audr-pill-spark"><span class="audr-pill-spark-lab">24h · awaiting first samples</span></div>');
-      const tooltip = (a.desc||'') + '\\nschedule: ' + (a.schedule||'—') + '\\nlast run: ' + ageSince(a.last_run) + (a.drift_message?'\\n' + a.drift_message:'');
+      const tooltip = 'Click to expand · ' + (a.schedule||'—') + ' · last run ' + ageSince(a.last_run);
+      // Per-auditor extra rows: live status + schedule + open count.
+      // Same fields as the pill row, but explicit + labeled — easier to read once expanded.
+      const infoExtras = ''
+        + '<div class="audr-info-head">Live status</div>'
+        + '<div class="audr-info-row"><span class="k">status</span><span class="v">' + escHtml(status) + '</span></div>'
+        + '<div class="audr-info-row"><span class="k">schedule</span><span class="v">' + escHtml(a.schedule||'—') + '</span></div>'
+        + '<div class="audr-info-row"><span class="k">last run</span><span class="v">' + ageSince(a.last_run) + ' (' + escHtml(a.drift_message||'on schedule') + ')</span></div>'
+        + '<div class="audr-info-row"><span class="k">open findings</span><span class="v">' + (a.open_count == null ? '—' : a.open_count) + '</span></div>'
+        + '<div class="audr-info-row"><span class="k">feeds panel</span><span class="v">' + escHtml(a.feeds_panel||'—') + '</span></div>';
       return ''
-        + '<div class="audr-pill" title="' + escHtml(tooltip) + '">'
+        + '<div class="audr-pill" data-auditor="' + escHtml(a.name||'') + '" title="' + escHtml(tooltip) + '" onclick="toggleAuditorInfo(\\'' + escHtml(a.name||'') + '\\', event)">'
         + '  <div class="audr-pill-row">'
         + '    <span class="audr-dot ' + status + '"></span>'
         + '    <span class="audr-pill-name">' + escHtml(shortName) + ' <span style="color:var(--dim);font-weight:400">· ' + escHtml(a.node||'') + '</span></span>'
@@ -11585,6 +11666,7 @@ async function fetchAuditors() {
         + '  </div>'
         + driftLine
         + sparkline
+        + '  <div class="audr-pill-info">' + _renderAuditorInfo(a.name) + infoExtras + '</div>'
         + '</div>';
     }).join('');
   } catch(e) {
@@ -11599,7 +11681,7 @@ let triageFilter = 'all';
 
 function _fromCompanyIssue(i) {
   return {
-    id: i.id, source: 'logs', node: 'pi4b',
+    id: i.id, source: 'logs', node: 'companypi',
     severity: (i.severity||'low').toLowerCase(),
     title: i.context || '(no context)',
     file: i.source_file || '',
@@ -11613,7 +11695,7 @@ function _fromCompanyIssue(i) {
 function _fromTickerStateIssue(i) {
   // /api/auditor/ticker-state already returns {context, severity, source_file, last_seen, hit_count}
   return {
-    id: i.id, source: 'ticker_state', node: 'pi5',
+    id: i.id, source: 'ticker_state', node: 'process-1',
     severity: (i.severity||'low').toLowerCase(),
     title: i.context || '(no context)',
     file: i.source_file || 'ticker_state',
@@ -11844,7 +11926,7 @@ render = function(d) {
     updateYesterdayKpi(d.morning_report);
   }
   const lab = document.getElementById('issues-node-label');
-  if (lab) lab.textContent = currentNode === 'company' ? 'pi4b' : currentNode;
+  if (lab) lab.textContent = currentNode === 'company' ? 'companypi' : currentNode;
 };
 
 fetchAuditors();

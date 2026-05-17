@@ -220,7 +220,7 @@ def _notify_scoop_for_stale(agent_key: str, stale_s: int, *, recovery: bool = Fa
                 " audience, status, queued_at, payload) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (eid, 'mqtt_listener_stale', priority, subject, body,
-                 'mqtt_listener', 'ops', 'queued', queued_at, payload),
+                 'mqtt_listener', 'ops', 'PENDING', queued_at, payload),
             )
             conn.commit()
         finally:

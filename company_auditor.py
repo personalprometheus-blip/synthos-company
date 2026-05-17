@@ -761,7 +761,7 @@ def _notify_scoop(subject: str, body: str, severity: str = 'high'):
             " audience, status, queued_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (eid, 'auditor_alert', priority, subject, body,
-             'company_auditor', 'ops', 'queued', queued_at),
+             'company_auditor', 'ops', 'PENDING', queued_at),
         )
         conn.commit()
         conn.close()

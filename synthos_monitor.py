@@ -2825,48 +2825,11 @@ function toggleApprovals() {
   if (_approvalsOpen) loadApprovals();
 }
 
-async function generateInvite(){
-  const r=await fetch('/api/proxy/generate-invite',{method:'POST',headers:{'X-Token':SECRET_TOKEN,'Content-Type':'application/json'}});
-  const d=await r.json();
-  if(d.ok){
-    document.getElementById('gen-code').textContent=d.code;
-    var gb=document.getElementById('gen-box');if(gb)gb.style.display='block';
-    toast('Invite code generated: '+d.code,'ok');
-    loadInvites();
-  } else toast('Error: '+(d.error||'Unknown'),'err');
-}
-
-function copyCode(){
-  const code=document.getElementById('gen-code').textContent;
-  if(code) navigator.clipboard.writeText(code).then(()=>toast('Copied to clipboard','ok'));
-}
-
-async function loadInvites(){
-  try{
-    const r=await fetch('/api/proxy/invite-codes',{headers:{'X-Token':SECRET_TOKEN}});
-    const d=await r.json();
-    const el=document.getElementById('invite-list');
-    if(!el) return;
-    if(!d.codes||!d.codes.length){el.innerHTML='<div style="text-align:center;padding:20px;color:rgba(255,255,255,0.3)">No invite codes yet</div>';return}
-    el.innerHTML=d.codes.map(function(c){
-      var ts=c.created_at?new Date(c.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'\u2014';
-      var used=c.is_used;
-      var sc=used?'rgba(255,255,255,0.3)':'#00f5d4';
-      var bg=used?'rgba(255,255,255,0.02)':'rgba(0,245,212,0.04)';
-      var stClr=used?'rgba(255,75,110,0.7)':'rgba(0,245,212,0.7)';
-      var stTxt=used?'Used'+(c.used_by?' by '+c.used_by:''):'Available';
-      return '<div style="display:flex;align-items:center;gap:14px;padding:10px 16px;border:1px solid rgba(255,255,255,0.05);border-radius:10px;margin-bottom:6px;background:'+bg+'">'
-        +'<span style="font-family:monospace;font-size:13px;font-weight:700;color:'+sc+';letter-spacing:0.04em;min-width:120px">'+c.code+'</span>'
-        +'<span style="font-size:10px;color:rgba(255,255,255,0.3)">'+ts+'</span>'
-        +'<span style="font-size:10px;color:'+stClr+'">'+stTxt+'</span>'
-        +'</div>';
-    }).join('');
-  }catch(e){
-    console.error('loadApprovals error:',e);
-    var list=document.getElementById('appr-list');
-    if(list) list.innerHTML='<div class="appr-empty">Failed to load signups</div>';
-  }
-}
+/* 2026-05-17 — generateInvite/copyCode/loadInvites JS removed.
+   These three orphan functions were defined but never called — the HTML
+   panel they targeted (gen-box, gen-code, invite-list) was removed in
+   a prior cleanup. Companion: backend routes /api/generate-invite +
+   /api/invite-codes deleted from retail_portal.py same day. */
 
 async function loadApprovals() {
   try {
@@ -6430,42 +6393,15 @@ def proxy_reject_signup():
         return jsonify({"error": str(e)}), 502
 
 
-@app.route("/api/proxy/generate-invite", methods=["POST"])
-def proxy_generate_invite():
-    """Proxy invite code generation to retail portal on pi5."""
-    token = request.headers.get('X-Token', '')
-    if token != SECRET_TOKEN and not _authorized():
-        return jsonify({"error": "unauthorized"}), 401
-    import requests as _req
-    try:
-        r = _req.post(
-            f"{RETAIL_PORTAL_URL}/api/generate-invite",
-            json={},
-            timeout=10,
-            cookies={'synthos_s': _get_admin_session_cookie()},
-            headers={'Content-Type': 'application/json'}
-        )
-        return jsonify(r.json()), r.status_code
-    except Exception as e:
-        return jsonify({"error": str(e)}), 502
-
-
-@app.route("/api/proxy/invite-codes")
-def proxy_invite_codes():
-    """Proxy invite code listing to retail portal on pi5."""
-    token = request.headers.get('X-Token', '')
-    if token != SECRET_TOKEN and not _authorized():
-        return jsonify({"error": "unauthorized"}), 401
-    import requests as _req
-    try:
-        r = _req.get(
-            f"{RETAIL_PORTAL_URL}/api/invite-codes",
-            timeout=8,
-            cookies={'synthos_s': _get_admin_session_cookie()},
-        )
-        return jsonify(r.json()), r.status_code
-    except Exception as e:
-        return jsonify({"error": str(e)}), 502
+# 2026-05-17 — /api/proxy/generate-invite + /api/proxy/invite-codes
+# routes removed. Their backend counterparts on pi5 (auth.generate_invite_code,
+# auth.list_invite_codes) were deleted 2026-05-06 when the legacy /signup
+# code-based flow was deprecated in favor of /request-access. The pi5
+# routes were kept as stubs (the GET was patched with an inline SELECT
+# 2026-05-15) until today's INVITE-CODES-DEAD-PATH-REMOVAL closure.
+# The companion JS functions (generateInvite, copyCode, loadInvites)
+# are also removed below. The invite_notes table + /api/invite-notes
+# infrastructure are SEPARATE — left in place pending its own audit.
 
 
 

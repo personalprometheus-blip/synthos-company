@@ -176,15 +176,6 @@ def init_support_db():
                 updated_at TEXT NOT NULL,
                 UNIQUE(node, key_name)
             );
-            CREATE TABLE IF NOT EXISTS invite_notes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                code TEXT NOT NULL UNIQUE,
-                recipient_name TEXT,
-                recipient_email TEXT,
-                sent_at TEXT,
-                note TEXT,
-                created_at TEXT NOT NULL
-            );
         """)
     # Migrate data from company.db if support.db tables are empty
     try:
@@ -278,15 +269,6 @@ def init_db():
                 notes TEXT,
                 updated_at TEXT NOT NULL,
                 UNIQUE(node, key_name)
-            );
-            CREATE TABLE IF NOT EXISTS invite_notes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                code TEXT NOT NULL UNIQUE,
-                recipient_name TEXT,
-                recipient_email TEXT,
-                sent_at TEXT,
-                note TEXT,
-                created_at TEXT NOT NULL
             );
         """)
         # Migration: add columns to scoop_queue that may be missing from older schemas
@@ -6405,108 +6387,13 @@ def proxy_reject_signup():
 
 
 
-# ── Invite Code Notes + Email ─────────────────────────────────────────────────
-
-@app.route("/api/invite-notes")
-def api_invite_notes():
-    """Return all invite code notes."""
-    if not _authorized():
-        return jsonify({"error": "unauthorized"}), 401
-    try:
-        with _support_conn() as conn:
-            rows = conn.execute(
-                "SELECT code, recipient_name, recipient_email, sent_at, note, created_at "
-                "FROM invite_notes ORDER BY created_at DESC"
-            ).fetchall()
-        return jsonify({"ok": True, "notes": {r["code"]: dict(r) for r in rows}})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/invite-note", methods=["POST"])
-def api_invite_note_save():
-    """Save or update a note for an invite code."""
-    if not _authorized():
-        return jsonify({"error": "unauthorized"}), 401
-    data = request.get_json(force=True) or {}
-    code = (data.get("code") or "").strip()
-    note = (data.get("note") or "").strip()
-    if not code:
-        return jsonify({"error": "code required"}), 400
-    from datetime import datetime as _dt
-    try:
-        with _support_conn() as conn:
-            existing = conn.execute("SELECT id FROM invite_notes WHERE code=?", (code,)).fetchone()
-            if existing:
-                conn.execute("UPDATE invite_notes SET note=? WHERE code=?", (note, code))
-            else:
-                conn.execute(
-                    "INSERT INTO invite_notes (code, note, created_at) VALUES (?,?,?)",
-                    (code, note, _dt.now().strftime("%Y-%m-%d %H:%M:%S")))
-        return jsonify({"ok": True})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/invite-send-email", methods=["POST"])
-def api_invite_send_email():
-    """Send an invite code to a recipient via Resend."""
-    if not _authorized():
-        return jsonify({"error": "unauthorized"}), 401
-    data = request.get_json(force=True) or {}
-    code = (data.get("code") or "").strip()
-    email = (data.get("email") or "").strip()
-    recipient_name = (data.get("recipient_name") or "").strip()
-    if not code or not email:
-        return jsonify({"error": "code and email required"}), 400
-    if not RESEND_API_KEY:
-        return jsonify({"error": "Resend API key not configured"}), 500
-    import requests as _req
-    from datetime import datetime as _dt
-    try:
-        greeting = f"Hi {recipient_name}," if recipient_name else "Hi,"
-        r = _req.post(
-            "https://api.resend.com/emails",
-            headers={
-                "Authorization": f"Bearer {RESEND_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "from": ALERT_FROM,
-                "to": [email],
-                "subject": "Your Synthos Access Code",
-                "html": (
-                    '<div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:24px">'
-                    '<h2 style="color:#0a0c14;margin-bottom:8px">Synthos Invite</h2>'
-                    f"<p>{greeting}</p>"
-                    "<p>You&#39;ve been invited to join Synthos. Use the code below when signing up:</p>"
-                    '<div style="background:#0a0c14;color:#00f5d4;font-family:monospace;font-size:22px;'
-                    'font-weight:700;letter-spacing:0.08em;padding:16px 24px;border-radius:10px;'
-                    f'text-align:center;margin:16px 0">{code}</div>'
-                    '<p style="color:#666;font-size:13px">This code is single-use and will expire once redeemed.</p>'
-                    "</div>"
-                ),
-            },
-            timeout=10,
-        )
-        if r.status_code in (200, 201):
-            now_str = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
-            with _support_conn() as conn:
-                existing = conn.execute("SELECT id FROM invite_notes WHERE code=?", (code,)).fetchone()
-                if existing:
-                    conn.execute(
-                        "UPDATE invite_notes SET recipient_email=?, recipient_name=?, sent_at=? WHERE code=?",
-                        (email, recipient_name, now_str, code))
-                else:
-                    conn.execute(
-                        "INSERT INTO invite_notes (code, recipient_email, recipient_name, sent_at, created_at) VALUES (?,?,?,?,?)",
-                        (code, email, recipient_name, now_str, now_str))
-            return jsonify({"ok": True, "message": f"Sent to {email}"})
-        else:
-            return jsonify({"error": f"Resend API error {r.status_code}: {r.text}"}), 502
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
+# 2026-05-17 — invite_notes infrastructure (table + 3 routes) removed.
+# Operator-notes feature tied to invite codes; since codes can no longer
+# be generated (INVITE-CODES-DEAD-PATH-REMOVAL closed earlier today),
+# the notes had no upstream source. Verified: invite_notes table held
+# 0 rows; zero JS handlers called these routes. Backend was unreachable
+# dead code. The table itself on company.db is left in place (still 0
+# rows; can be DROP TABLE'd later if desired, doesn't cost anything).
 
 @app.route("/api/proxy/market-activity")
 def proxy_market_activity():
